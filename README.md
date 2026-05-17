@@ -1,0 +1,134 @@
+# @davehardy20/pi-quality-gates
+
+Pi quality-gates bundle: post-turn linting, LSP diagnostics, and automated code review.
+
+## What it adds
+
+### Post-Turn Linter
+
+- Automatically runs lint checks on files modified during each agent turn
+- Supports: markdownlint, biome, ruff, cppcheck, tflint, cargo clippy
+- Optional LSP diagnostics integration (typescript-language-server, pyright, etc.)
+- Auto-fix follow-up turns for findings
+- `/post-turn-linter-run` — Run linter now (optionally pass file paths)
+- `/post-turn-linter-fix` — Start a fix turn for the latest findings
+- `/post-turn-linter-status` — Show current linter state
+
+### Post-Turn Reviewer
+
+- After the linter reports clean, spawns a headless Pi child process to review changes
+- 7-domain checklist: task completion, correctness, error handling, security, quality, testing, documentation
+- Severity levels: CRITICAL (auto-fix loop), WARNING (advisory), NIT (info only)
+- Re-review after fixes with configurable max passes
+- `/reviewer-status` — Show reviewer state machine
+- `/reviewer-run` — Manually trigger a review
+- `/reviewer-model` — Switch review model mid-session
+- `/reviewer-toggle` — Enable or disable the reviewer
+
+### Workflow
+
+```
+Agent modifies files → turn_end fires
+  → Post-turn-linter runs (mechanical checks)
+    → findings → auto-fix turn → linter re-runs (loop)
+    → clean   → triggers post-turn-reviewer
+      → PASS       → done
+      → CRITICAL   → fix-up turn → linter → reviewer re-runs (max 1 loop)
+      → WARNING    → advisory message
+      → max loops  → escalate to user
+```
+
+## Install
+
+From a local checkout during development:
+
+```bash
+pi install /Users/dave/tools/pi-quality-gates
+```
+
+From git:
+
+```bash
+pi install git:github.com/davehardy20/pi-quality-gates
+```
+
+For one run only:
+
+```bash
+pi -e /Users/dave/tools/pi-quality-gates
+```
+
+## Configuration
+
+### Linter
+
+Create `.pi/linter.config.json` in your project root:
+
+```jsonc
+{
+  "cooldownMs": 15000,
+  "reportMode": "auto-follow-up",
+  "lsp": {
+    "enabled": false,
+    "settleMs": 500,
+    "minSeverity": "warning"
+  }
+}
+```
+
+### Reviewer
+
+Create `.pi/reviewer.config.json` in your project root:
+
+```jsonc
+{
+  "model": null,
+  "enabled": true,
+  "minChangedLines": 5,
+  "maxChangedLines": 500,
+  "maxReReviewPasses": 1,
+  "autoFixThreshold": "critical",
+  "timeoutMs": 120000,
+  "respectGitignore": true,
+  "skipFile": ".pi/reviewer.skip",
+  "reviewDelayMs": 10000
+}
+```
+
+Create `.pi/reviewer.skip` (gitignore format) to exclude files from review:
+
+```gitignore
+*.generated.ts
+dist/
+vendor/**
+```
+
+## Notes
+
+- The reviewer spawns a child Pi process with `--no-extensions` and read-only tools only.
+- LSP diagnostics are optional and disabled by default. Enable via linter config.
+- If commands appear twice, Pi is probably loading both this package and the old local extension files. Disable or remove the old local extensions before testing.
+- Both extensions share package-local copies of LSP helpers — they do not reach back into `~/.pi/agent/extensions/shared/*`.
+
+## Update flow
+
+1. Update the package repo
+2. Push to GitHub
+3. Run `pi update --extensions` or reinstall the package
+4. Run `/reload`
+
+`/reload` alone does not fetch newer package commits.
+
+## Troubleshooting
+
+- Run `/post-turn-linter-status` to check linter state
+- Run `/reviewer-status` to check reviewer state
+- Check `~/.pi/lsp-config.yaml` for LSP server configuration
+
+## Build and test
+
+```bash
+npm run typecheck
+npm run test
+npm run build
+```

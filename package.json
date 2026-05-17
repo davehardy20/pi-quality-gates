@@ -1,0 +1,88 @@
+{
+  "name": "@davehardy20/pi-quality-gates",
+  "version": "0.1.0",
+  "description": "Pi quality-gates bundle: post-turn linting, LSP diagnostics, and automated code review.",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "quality-gates",
+    "linting",
+    "code-review",
+    "post-turn-linter",
+    "post-turn-reviewer"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/davehardy20/pi-quality-gates.git"
+  },
+  "bugs": {
+    "url": "https://github.com/davehardy20/pi-quality-gates/issues"
+  },
+  "homepage": "https://github.com/davehardy20/pi-quality-gates#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE",
+    "package.json"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "ignore": "^6.0.0",
+    "markdownlint": "^0.38.0",
+    "minimatch": "^10.0.0",
+    "remark": "^15.0.1",
+    "remark-lint": "^10.0.1",
+    "remark-lint-maximum-line-length": "^4.1.1",
+    "remark-lint-no-literal-urls": "^4.0.1",
+    "remark-lint-no-missing-blank-lines": "^4.0.1",
+    "remark-preset-lint-consistent": "^6.0.1",
+    "remark-preset-lint-recommended": "^7.0.1",
+    "unified": "^11.0.5",
+    "vfile-message": "^4.0.3",
+    "vscode-jsonrpc": "^8.2.0",
+    "yaml": "^2.7.1"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": false
+    },
+    "@earendil-works/pi-ai": {
+      "optional": false
+    },
+    "@earendil-works/pi-tui": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": false
+    }
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.74.0",
+    "@earendil-works/pi-ai": "^0.74.0",
+    "@types/node": "^24.7.2",
+    "typebox": "^1.1.24",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  }
+}
