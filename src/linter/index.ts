@@ -16,6 +16,7 @@ import { runQueuedLspChecks } from "./lsp.js";
 import {
 	buildSummaryFirstLintMessage,
 	deriveSessionId,
+	isQualityGatesSubAgentRuntime,
 	type LinterReportSidecarMetadata,
 	type LinterReportSidecarWriteResult,
 	parseReportRecoveryArgs,
@@ -38,6 +39,7 @@ interface PostTurnLinterDependencies {
 	statSync: (path: string) => { mtimeMs: number; size: number };
 	writeLinterReportSidecar: typeof writeLinterReportSidecar;
 	recoverLinterReportSidecar: typeof recoverLinterReportSidecar;
+	isQualityGatesSubAgentRuntime: typeof isQualityGatesSubAgentRuntime;
 }
 
 interface State {
@@ -56,6 +58,7 @@ interface State {
 	reportMode: ReportMode;
 	recentlyClean: Map<string, { mtimeMs: number; size: number }>;
 	lspConfig: LspDiagnosticsConfig;
+	isSubAgentRuntime: boolean;
 }
 
 function normalizeFilePath(path: string | undefined): string | null {
@@ -294,6 +297,7 @@ export function createPostTurnLinter(
 		statSync,
 		writeLinterReportSidecar,
 		recoverLinterReportSidecar,
+		isQualityGatesSubAgentRuntime,
 	},
 ) {
 	const state: State = {
@@ -312,6 +316,7 @@ export function createPostTurnLinter(
 		reportMode: DEFAULT_CONFIG.reportMode ?? "report-only",
 		recentlyClean: new Map<string, { mtimeMs: number; size: number }>(),
 		lspConfig: DEFAULT_CONFIG.lsp ?? { enabled: false },
+		isSubAgentRuntime: deps.isQualityGatesSubAgentRuntime(),
 	};
 
 	const cwd = () => process.cwd();
@@ -336,9 +341,11 @@ export function createPostTurnLinter(
 	}
 
 	function buildFixInstruction(): string {
-		const sidecarHint = state.latestReportSidecar
-			? "Full redacted report recovery is available with /post-turn-linter-report preview or /post-turn-linter-report slice --offset=0 --length=4000 if the concise summary is insufficient."
-			: "No linter sidecar is available; use the concise summary already in session context.";
+		const sidecarHint = !state.latestReportSidecar
+			? "No linter sidecar is available; use the concise summary already in session context."
+			: state.isSubAgentRuntime
+				? "Full redacted report recovery is available inside this sub-agent with /post-turn-linter-report full. Keep any response to the parent bounded and summary-first."
+				: "Full redacted report recovery is available with /post-turn-linter-report preview or /post-turn-linter-report slice --offset=0 --length=4000 if the concise summary is insufficient.";
 		return [
 			"Fix the issues reported by the most recent post-turn-linter summary.",
 			"",
@@ -569,6 +576,10 @@ export function createPostTurnLinter(
 		state.lspConfig = persistedLspConfig ??
 			config.lsp ??
 			DEFAULT_CONFIG.lsp ?? { enabled: false };
+		state.isSubAgentRuntime = deps.isQualityGatesSubAgentRuntime(
+			process.env,
+			config.runtimeMode ?? DEFAULT_CONFIG.runtimeMode ?? "auto",
+		);
 
 		safeSetStatus(ctx, "post-turn-linter: ready");
 	});
@@ -778,7 +789,7 @@ export function createPostTurnLinter(
 
 	pi.registerCommand("post-turn-linter-report", {
 		description:
-			"Recover the latest redacted post-turn-linter sidecar. Usage: /post-turn-linter-report [metadata|preview|slice|full] [--offset=N] [--length=N] [--ack-context-cost]",
+			"Recover the latest redacted post-turn-linter sidecar. Usage: /post-turn-linter-report [metadata|preview|slice|full] [--offset=N] [--length=N] [--ack-context-cost]. Full mode requires ack in parent sessions but is allowed in sub-agent runtime mode.",
 		handler: async (args, ctx) => {
 			if (!state.latestReportSidecar) {
 				safeNotify(
@@ -795,6 +806,7 @@ export function createPostTurnLinter(
 					recordPath: state.latestReportSidecar.path,
 					mode: parsed.mode,
 					acknowledgeContextCost: parsed.acknowledgeContextCost,
+					allowFullWithoutAck: state.isSubAgentRuntime,
 					offset: parsed.offset,
 					length: parsed.length,
 				});
@@ -841,6 +853,7 @@ export function createPostTurnLinter(
 					`latestReportId: ${state.latestReportId}`,
 					`pendingFixReportId: ${state.pendingFixReportId ?? "none"}`,
 					`latestReportSidecar: ${state.latestReportSidecar?.id ?? "none"}`,
+					`subAgentRuntime: ${state.isSubAgentRuntime}`,
 				].join(" | "),
 				"info",
 			);

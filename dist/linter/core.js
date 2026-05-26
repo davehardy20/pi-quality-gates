@@ -12,6 +12,7 @@ export const DEFAULT_CONFIG = {
     cooldownMs: 15_000,
     timeoutMs: 60_000,
     reportMode: "auto-follow-up",
+    runtimeMode: "auto",
     lsp: {
         enabled: false,
         settleMs: 500,
@@ -371,6 +372,7 @@ export async function loadLinterConfig(directory) {
                 cooldownMs: userConfig.cooldownMs ?? DEFAULT_CONFIG.cooldownMs,
                 timeoutMs: userConfig.timeoutMs ?? DEFAULT_CONFIG.timeoutMs,
                 reportMode: userConfig.reportMode ?? DEFAULT_CONFIG.reportMode,
+                runtimeMode: userConfig.runtimeMode ?? DEFAULT_CONFIG.runtimeMode,
                 lsp: {
                     ...(DEFAULT_CONFIG.lsp ?? {}),
                     ...(userConfig.lsp ?? {}),

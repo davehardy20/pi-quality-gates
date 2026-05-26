@@ -14,6 +14,7 @@ import {
 import { __test__ as linterTest } from "../src/linter/index.js";
 import {
 	buildSummaryFirstLintMessage,
+	isQualityGatesSubAgentRuntime,
 	recoverLinterReportSidecar,
 	writeLinterReportSidecar,
 } from "../src/linter/report-hygiene.js";
@@ -304,6 +305,14 @@ describe("post-turn-linter: core helpers", () => {
 			}),
 		).rejects.toThrow(/requires --ack-context-cost/);
 
+		const subAgentFull = await recoverLinterReportSidecar({
+			recordPath: sidecar.metadata.path,
+			mode: "full",
+			allowFullWithoutAck: true,
+		});
+		expect(subAgentFull.content).toContain("[REDACTED");
+		expect(subAgentFull.content).not.toContain(secretValue);
+
 		const full = await recoverLinterReportSidecar({
 			recordPath: sidecar.metadata.path,
 			mode: "full",
@@ -311,6 +320,200 @@ describe("post-turn-linter: core helpers", () => {
 		});
 		expect(full.content).toContain("[REDACTED");
 		expect(full.content).not.toContain(secretValue);
+	});
+
+	it("detects orchestrator sub-agent runtime with an explicit override", () => {
+		expect(
+			isQualityGatesSubAgentRuntime({
+				PI_QUALITY_GATES_SUBAGENT_MODE: "1",
+			}),
+		).toBe(true);
+		expect(
+			isQualityGatesSubAgentRuntime({
+				PI_QUALITY_GATES_SUBAGENT_MODE: "0",
+				PI_ORCH_ROLE: "worker",
+			}),
+		).toBe(false);
+		expect(
+			isQualityGatesSubAgentRuntime({
+				PI_ORCH_RUN_ID: "run-1",
+				PI_ORCH_AGENT_ID: "agent-1",
+				PI_ORCH_TASK_ID: "task-1",
+			}),
+		).toBe(true);
+		expect(isQualityGatesSubAgentRuntime({}, "sub-agent")).toBe(true);
+		expect(
+			isQualityGatesSubAgentRuntime(
+				{ PI_QUALITY_GATES_SUBAGENT_MODE: "1" },
+				"parent",
+			),
+		).toBe(false);
+	});
+
+	it("requires ack for parent full recovery but not sub-agent recovery", async () => {
+		type MockMessage = {
+			customType: string;
+			content: string;
+			display?: boolean;
+		};
+		type MockContext = {
+			hasUI: false;
+			isIdle: () => boolean;
+			sessionManager: {
+				getBranch: () => unknown[];
+				getSessionFile: () => string;
+			};
+		};
+		type Handler = (
+			event: Record<string, unknown>,
+			ctx: MockContext,
+		) => Promise<void> | void;
+		type CommandHandler = (
+			args: string | undefined,
+			ctx: MockContext,
+		) => Promise<void> | void;
+
+		const sidecarMetadata = {
+			id: "sidecar-full",
+			toolName: "post-turn-linter" as const,
+			sessionId: "session-1",
+			path: "/tmp/sidecar-full.json",
+			createdAt: "2026-05-26T00:00:00.000Z",
+			originalChars: 10_000,
+			originalBytes: 10_000,
+			redactedChars: 9_000,
+			redactedBytes: 9_000,
+			originalSha256: "original",
+			redactedSha256: "redacted",
+			summaryMode: "post-turn-linter-summary" as const,
+		};
+		const branch = [
+			{
+				type: "custom_message",
+				customType: "post-turn-linter",
+				content: "bounded summary only",
+				details: {
+					summary: {
+						reportId: 3,
+						sidecar: sidecarMetadata,
+						affectedFiles: ["/repo/src/a.ts"],
+					},
+				},
+			},
+		];
+
+		const createHarness = (isSubAgent: boolean) => {
+			const messages: MockMessage[] = [];
+			const handlers = new Map<string, Handler>();
+			const commands = new Map<string, CommandHandler>();
+			let allowFullWithoutAck: boolean | undefined;
+
+			createPostTurnLinter(
+				{
+					on: (eventName: string, handler: Handler) => {
+						handlers.set(eventName, handler);
+					},
+					registerCommand: (
+						name: string,
+						command: { handler: CommandHandler },
+					) => {
+						commands.set(name, command.handler);
+					},
+					sendMessage: (message: MockMessage) => {
+						messages.push(message);
+					},
+					sendUserMessage: () => undefined,
+				} as never,
+				{
+					existsSync: () => true,
+					loadLinterConfig: async () => LinterDefaultConfig,
+					runQueuedLintChecks: async () => ({
+						kind: "clean",
+						report: "",
+						affectedFiles: [],
+						signature: "clean",
+						reportMode: "report-only",
+					}),
+					runQueuedLspChecks: async () => ({
+						kind: "clean",
+						report: "",
+						affectedFiles: [],
+						signature: "lsp-clean",
+					}),
+					mergeValidationOutcomes: (args) => ({
+						kind: args.results[0]?.kind ?? "clean",
+						report: args.results[0]?.report ?? "",
+						affectedFiles: args.results[0]?.affectedFiles ?? [],
+						signature: args.results[0]?.signature ?? "",
+						reportMode: args.reportMode,
+					}),
+					setTimeout: (callback) => {
+						callback();
+						return undefined;
+					},
+					statSync: () => ({ mtimeMs: 1, size: 1 }),
+					writeLinterReportSidecar: async () => ({
+						ok: true,
+						metadata: sidecarMetadata,
+					}),
+					recoverLinterReportSidecar: async (options) => {
+						allowFullWithoutAck = options.allowFullWithoutAck;
+						if (
+							options.mode === "full" &&
+							!options.acknowledgeContextCost &&
+							!options.allowFullWithoutAck
+						) {
+							throw new Error("requires --ack-context-cost");
+						}
+						return {
+							mode: options.mode,
+							content: "FULL REDACTED REPORT",
+							metadata: sidecarMetadata,
+						};
+					},
+					isQualityGatesSubAgentRuntime: () => isSubAgent,
+				} satisfies Parameters<typeof createPostTurnLinter>[1],
+			);
+
+			const ctx: MockContext = {
+				hasUI: false,
+				isIdle: () => true,
+				sessionManager: {
+					getBranch: () => branch,
+					getSessionFile: () => "/tmp/session-1.jsonl",
+				},
+			};
+			return {
+				allowFullWithoutAck: () => allowFullWithoutAck,
+				commands,
+				ctx,
+				handlers,
+				messages,
+			};
+		};
+
+		const parent = createHarness(false);
+		await parent.handlers.get("session_start")?.({}, parent.ctx);
+		await parent.commands.get("post-turn-linter-report")?.("full", parent.ctx);
+		expect(parent.allowFullWithoutAck()).toBe(false);
+		expect(parent.messages.at(-1)?.customType).toBe(
+			"post-turn-linter-report-status",
+		);
+		expect(parent.messages.at(-1)?.content).toContain(
+			"requires --ack-context-cost",
+		);
+
+		const subAgent = createHarness(true);
+		await subAgent.handlers.get("session_start")?.({}, subAgent.ctx);
+		await subAgent.commands.get("post-turn-linter-report")?.(
+			"full",
+			subAgent.ctx,
+		);
+		expect(subAgent.allowFullWithoutAck()).toBe(true);
+		expect(subAgent.messages.at(-1)?.customType).toBe(
+			"post-turn-linter-report",
+		);
+		expect(subAgent.messages.at(-1)?.content).toBe("FULL REDACTED REPORT");
 	});
 
 	it("emits bounded custom messages while keeping full reports in sidecars", async () => {
@@ -408,6 +611,7 @@ describe("post-turn-linter: core helpers", () => {
 					content: "",
 					metadata: sidecarMetadata,
 				}),
+				isQualityGatesSubAgentRuntime: () => false,
 			} satisfies Parameters<typeof createPostTurnLinter>[1],
 		);
 

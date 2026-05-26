@@ -7,6 +7,7 @@ import { normalizeAndSortPaths, normalizePath } from "../shared/path-utils.js";
 import type {
 	CombinedValidationOutcome,
 	LspDiagnosticsConfig,
+	QualityGatesRuntimeMode,
 	ReportMode,
 	ValidationKind,
 	ValidationOutcome,
@@ -80,6 +81,7 @@ export interface LinterConfig {
 	cooldownMs?: number;
 	timeoutMs?: number;
 	reportMode?: ReportMode;
+	runtimeMode?: QualityGatesRuntimeMode;
 	lsp?: LspDiagnosticsConfig;
 }
 
@@ -92,6 +94,7 @@ export const DEFAULT_CONFIG: LinterConfig = {
 	cooldownMs: 15_000,
 	timeoutMs: 60_000,
 	reportMode: "auto-follow-up",
+	runtimeMode: "auto",
 	lsp: {
 		enabled: false,
 		settleMs: 500,
@@ -520,6 +523,7 @@ export async function loadLinterConfig(
 				cooldownMs: userConfig.cooldownMs ?? DEFAULT_CONFIG.cooldownMs,
 				timeoutMs: userConfig.timeoutMs ?? DEFAULT_CONFIG.timeoutMs,
 				reportMode: userConfig.reportMode ?? DEFAULT_CONFIG.reportMode,
+				runtimeMode: userConfig.runtimeMode ?? DEFAULT_CONFIG.runtimeMode,
 				lsp: {
 					...(DEFAULT_CONFIG.lsp ?? {}),
 					...(userConfig.lsp ?? {}),

@@ -17,3 +17,4 @@ export interface LspDiagnosticsConfig {
     extensions?: string[];
     maxFilesPerWorkspace?: number;
 }
+export type QualityGatesRuntimeMode = "auto" | "parent" | "sub-agent";

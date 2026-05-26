@@ -1,4 +1,4 @@
-import type { CombinedValidationOutcome, LspDiagnosticsConfig, ReportMode, ValidationKind, ValidationOutcome } from "./types.js";
+import type { CombinedValidationOutcome, LspDiagnosticsConfig, QualityGatesRuntimeMode, ReportMode, ValidationKind, ValidationOutcome } from "./types.js";
 export type ApiLinterRunner = (filePaths: string[], config?: unknown) => Promise<LinterResult>;
 export type LintOutcomeKind = ValidationKind;
 export interface LinterResult {
@@ -54,6 +54,7 @@ export interface LinterConfig {
     cooldownMs?: number;
     timeoutMs?: number;
     reportMode?: ReportMode;
+    runtimeMode?: QualityGatesRuntimeMode;
     lsp?: LspDiagnosticsConfig;
 }
 export declare const DEFAULT_MARKDOWNLINT_CONFIG: MarkdownlintConfig;

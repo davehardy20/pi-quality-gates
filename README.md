@@ -76,6 +76,7 @@ Create `.pi/linter.config.json` in your project root:
 {
   "cooldownMs": 15000,
   "reportMode": "auto-follow-up",
+  "runtimeMode": "auto",
   "lsp": {
     "enabled": false,
     "settleMs": 500,
@@ -116,6 +117,11 @@ vendor/**
 - The reviewer spawns a child Pi process with `--no-extensions` and read-only
   tools only.
 - LSP diagnostics are optional and disabled by default. Enable via linter config.
+- Linter sidecar `full` recovery requires `--ack-context-cost` in parent
+  sessions. In orchestrator/sub-agent sessions, `runtimeMode: "auto"` detects
+  `PI_QUALITY_GATES_SUBAGENT_MODE=1` or `PI_ORCH_*` worker env and allows full
+  redacted recovery without the parent-session acknowledgement; set
+  `runtimeMode` to `"parent"` or `"sub-agent"` to override detection.
 - If commands appear twice, Pi may be loading both this package and old local
   extension files.
   Disable or remove old local extensions before testing.

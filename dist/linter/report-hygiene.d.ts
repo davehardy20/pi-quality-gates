@@ -1,3 +1,4 @@
+import type { QualityGatesRuntimeMode } from "./types.js";
 export type LinterReportRecoveryMode = "metadata" | "preview" | "slice" | "full";
 export interface LinterReportSidecarMetadata {
     id: string;
@@ -29,6 +30,7 @@ export interface LinterReportRecoveryOptions {
     recordPath: string;
     mode: LinterReportRecoveryMode;
     acknowledgeContextCost?: boolean;
+    allowFullWithoutAck?: boolean;
     offset?: number;
     length?: number;
     previewChars?: number;
@@ -76,6 +78,7 @@ export interface LinterReportSummaryResult {
     message: string;
     details: LinterReportSummaryDetails;
 }
+export declare function isQualityGatesSubAgentRuntime(env?: Record<string, string | undefined>, mode?: QualityGatesRuntimeMode): boolean;
 export declare function defaultLinterReportSidecarDir(): string;
 export declare function redactSecrets(input: string): string;
 export declare function deriveSessionId(ctx: {

@@ -1,6 +1,6 @@
 {
   "name": "@davehardy20/pi-quality-gates",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Pi quality-gates bundle: post-turn linting, LSP diagnostics, and automated code review.",
   "type": "module",
   "keywords": [

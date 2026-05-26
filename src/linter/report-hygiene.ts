@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, relative, resolve } from "node:path";
+import type { QualityGatesRuntimeMode } from "./types.js";
 
 export type LinterReportRecoveryMode =
 	| "metadata"
@@ -42,6 +43,7 @@ export interface LinterReportRecoveryOptions {
 	recordPath: string;
 	mode: LinterReportRecoveryMode;
 	acknowledgeContextCost?: boolean;
+	allowFullWithoutAck?: boolean;
 	offset?: number;
 	length?: number;
 	previewChars?: number;
@@ -108,6 +110,38 @@ const DEFAULT_SLICE_CHARS = 4000;
 const MAX_SINGLE_SIDECAR_BYTES = 10 * 1024 * 1024;
 const ESCAPE_CHAR = String.fromCharCode(27);
 const ANSI_PATTERN = new RegExp(`${ESCAPE_CHAR}\\[[0-9;]*m`, "g");
+const TRUE_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
+const FALSE_ENV_VALUES = new Set(["0", "false", "no", "off"]);
+
+function parseOptionalBooleanEnv(value: string | undefined): boolean | null {
+	const normalized = value?.trim().toLowerCase();
+	if (!normalized) return null;
+	if (TRUE_ENV_VALUES.has(normalized)) return true;
+	if (FALSE_ENV_VALUES.has(normalized)) return false;
+	return null;
+}
+
+export function isQualityGatesSubAgentRuntime(
+	env: Record<string, string | undefined> = process.env,
+	mode: QualityGatesRuntimeMode = "auto",
+): boolean {
+	if (mode === "sub-agent") return true;
+	if (mode === "parent") return false;
+
+	const explicit = parseOptionalBooleanEnv(env.PI_QUALITY_GATES_SUBAGENT_MODE);
+	if (explicit !== null) return explicit;
+
+	const role = env.PI_ORCH_ROLE?.trim().toLowerCase();
+	if (role === "worker" || role === "subagent" || role === "sub-agent") {
+		return true;
+	}
+
+	return Boolean(
+		env.PI_ORCH_RUN_ID?.trim() &&
+			env.PI_ORCH_AGENT_ID?.trim() &&
+			env.PI_ORCH_TASK_ID?.trim(),
+	);
+}
 
 export function defaultLinterReportSidecarDir(): string {
 	const configured = process.env.PI_QUALITY_GATES_SIDECAR_DIR?.trim();
@@ -246,7 +280,7 @@ export async function recoverLinterReportSidecar(
 	}
 
 	if (options.mode === "full") {
-		if (!options.acknowledgeContextCost) {
+		if (!options.acknowledgeContextCost && !options.allowFullWithoutAck) {
 			throw new Error(
 				"full linter report recovery requires --ack-context-cost; use preview or slice first",
 			);

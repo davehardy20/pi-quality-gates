@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { loadLinterConfig, mergeValidationOutcomes, runQueuedLintChecks } from "./core.js";
 import { runQueuedLspChecks } from "./lsp.js";
-import { recoverLinterReportSidecar, writeLinterReportSidecar } from "./report-hygiene.js";
+import { isQualityGatesSubAgentRuntime, recoverLinterReportSidecar, writeLinterReportSidecar } from "./report-hygiene.js";
 interface PostTurnLinterDependencies {
     existsSync: typeof existsSync;
     loadLinterConfig: typeof loadLinterConfig;
@@ -16,6 +16,7 @@ interface PostTurnLinterDependencies {
     };
     writeLinterReportSidecar: typeof writeLinterReportSidecar;
     recoverLinterReportSidecar: typeof recoverLinterReportSidecar;
+    isQualityGatesSubAgentRuntime: typeof isQualityGatesSubAgentRuntime;
 }
 declare function detectModifiedFilesFromToolEvent(event: {
     toolName?: string;
