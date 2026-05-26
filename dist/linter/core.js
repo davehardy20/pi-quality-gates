@@ -97,6 +97,18 @@ const WORKSPACE_ROOT_MARKERS = [
     ".tflint.hcl.json",
     ".git",
 ];
+export const BUILT_IN_IGNORED_AGENT_ARTIFACT_GLOBS = [
+    "**/agent/plans/*.md",
+    "**/agent/plans/archive/*.md",
+];
+export function isBuiltInIgnoredAgentArtifact(filePath) {
+    const normalized = normalizePath(resolve(filePath));
+    return (/(?:^|\/)agent\/plans\/[^/]+\.md$/i.test(normalized) ||
+        /(?:^|\/)agent\/plans\/archive\/[^/]+\.md$/i.test(normalized));
+}
+export function filterBuiltInIgnoredFiles(filePaths) {
+    return filePaths.filter((filePath) => !isBuiltInIgnoredAgentArtifact(filePath));
+}
 export function parseJsoncConfig(configData) {
     let inString = false;
     let escaped = false;
@@ -545,7 +557,7 @@ export function mergeValidationOutcomes(args) {
 }
 export async function runQueuedLintChecks(filePaths, directory, providedConfig) {
     const config = providedConfig ?? (await loadLinterConfig(directory));
-    const filesByLinter = groupFilesByLinter(new Set(filePaths), config);
+    const filesByLinter = groupFilesByLinter(new Set(filterBuiltInIgnoredFiles(filePaths)), config);
     const entries = Array.from(filesByLinter.entries());
     const results = [];
     for (const [, groupedFiles] of entries) {
@@ -687,6 +699,8 @@ async function buildCodeExcerptSection(report, directory) {
 async function filterExistingFiles(filePaths) {
     const existingFiles = [];
     for (const filePath of filePaths) {
+        if (isBuiltInIgnoredAgentArtifact(filePath))
+            continue;
         try {
             await fs.access(filePath);
             existingFiles.push(filePath);
@@ -756,5 +770,7 @@ export const __test__ = {
     formatMarkdownlintResults,
     findProjectRoot,
     mergeValidationOutcomes,
+    isBuiltInIgnoredAgentArtifact,
+    filterBuiltInIgnoredFiles,
     buildCombinedSignature,
 };

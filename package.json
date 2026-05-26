@@ -1,6 +1,6 @@
 {
   "name": "@davehardy20/pi-quality-gates",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Pi quality-gates bundle: post-turn linting, LSP diagnostics, and automated code review.",
   "type": "module",
   "keywords": [
@@ -49,7 +49,7 @@
     "remark-preset-lint-recommended": "^7.0.1",
     "unified": "^11.0.5",
     "vfile-message": "^4.0.3",
-    "vscode-jsonrpc": "^8.2.0",
+    "vscode-jsonrpc": "^8.2.1",
     "yaml": "^2.7.1"
   },
   "peerDependencies": {

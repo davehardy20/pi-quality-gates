@@ -1,6 +1,7 @@
 # @davehardy20/pi-quality-gates
 
-Pi quality-gates bundle: post-turn linting, LSP diagnostics, and automated code review.
+Pi quality-gates bundle: post-turn linting, LSP diagnostics, and automated code
+review.
 
 ## What it adds
 
@@ -10,14 +11,21 @@ Pi quality-gates bundle: post-turn linting, LSP diagnostics, and automated code 
 - Supports: markdownlint, biome, ruff, cppcheck, tflint, cargo clippy
 - Optional LSP diagnostics integration (typescript-language-server, pyright, etc.)
 - Auto-fix follow-up turns for findings
+- Summary-first finding reports that keep parent context bounded by default
+- Full redacted linter reports are written to sidecars for manual recovery
+- Built-in ignores for generated `agent/plans/*.md` and archived plan files
 - `/post-turn-linter-run` — Run linter now (optionally pass file paths)
 - `/post-turn-linter-fix` — Start a fix turn for the latest findings
+- `/post-turn-linter-report` — Recover the latest sidecar report
+  preview/slice/full
 - `/post-turn-linter-status` — Show current linter state
 
 ### Post-Turn Reviewer
 
-- After the linter reports clean, spawns a headless Pi child process to review changes
-- 7-domain checklist: task completion, correctness, error handling, security, quality, testing, documentation
+- After the linter reports clean, spawns a headless Pi child process to review
+  changes
+- 7-domain checklist: task completion, correctness, error handling, security,
+  quality, testing, documentation
 - Severity levels: CRITICAL (auto-fix loop), WARNING (advisory), NIT (info only)
 - Re-review after fixes with configurable max passes
 - `/reviewer-status` — Show reviewer state machine
@@ -27,7 +35,7 @@ Pi quality-gates bundle: post-turn linting, LSP diagnostics, and automated code 
 
 ### Workflow
 
-```
+```text
 Agent modifies files → turn_end fires
   → Post-turn-linter runs (mechanical checks)
     → findings → auto-fix turn → linter re-runs (loop)
@@ -105,10 +113,14 @@ vendor/**
 
 ## Notes
 
-- The reviewer spawns a child Pi process with `--no-extensions` and read-only tools only.
+- The reviewer spawns a child Pi process with `--no-extensions` and read-only
+  tools only.
 - LSP diagnostics are optional and disabled by default. Enable via linter config.
-- If commands appear twice, Pi is probably loading both this package and the old local extension files. Disable or remove the old local extensions before testing.
-- Both extensions share package-local copies of LSP helpers — they do not reach back into `~/.pi/agent/extensions/shared/*`.
+- If commands appear twice, Pi may be loading both this package and old local
+  extension files.
+  Disable or remove old local extensions before testing.
+- Both extensions share package-local copies of LSP helpers — they do not reach
+  back into `~/.pi/agent/extensions/shared/*`.
 
 ## Update flow
 

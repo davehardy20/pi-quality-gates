@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { stopAllLspClients } from "../shared/lsp-service.js";
 import { DEFAULT_CONFIG, loadLinterConfig, MAX_MODIFIED_FILES, mergeValidationOutcomes, runQueuedLintChecks, } from "./core.js";
 import { runQueuedLspChecks } from "./lsp.js";
+import { buildSummaryFirstLintMessage, deriveSessionId, parseReportRecoveryArgs, recoverLinterReportSidecar, writeLinterReportSidecar, } from "./report-hygiene.js";
 function normalizeFilePath(path) {
     if (!path)
         return null;
@@ -85,16 +86,6 @@ function detectModifiedFilesFromToolResult(event) {
 function buildReportSignature(files, report) {
     return JSON.stringify({ files: [...files].sort(), report });
 }
-function buildLintMessage(report) {
-    return [
-        "Post-turn lint check completed.",
-        "",
-        "Review the findings and code excerpts below, then fix the reported issues in the affected files.",
-        "If a lint finding is ambiguous, ask a clarifying question instead of guessing.",
-        "",
-        report,
-    ].join("\n");
-}
 function getFileStats(filePath, statFn) {
     try {
         const s = statFn(filePath);
@@ -132,6 +123,29 @@ function reconstructLspConfig(ctx) {
         if (details?.lspConfig) {
             return details.lspConfig;
         }
+    }
+    return null;
+}
+function reconstructLatestReport(ctx) {
+    const branch = ctx.sessionManager?.getBranch?.() ?? [];
+    for (let i = branch.length - 1; i >= 0; i--) {
+        const entry = branch[i];
+        if (entry.type !== "custom_message")
+            continue;
+        if (entry.customType !== "post-turn-linter")
+            continue;
+        const details = entry.details;
+        const reportId = details?.summary?.reportId;
+        if (typeof reportId !== "number" || !Number.isFinite(reportId)) {
+            continue;
+        }
+        const content = entry.content;
+        return {
+            reportId,
+            sidecar: details?.summary?.sidecar ?? null,
+            affectedFiles: details?.summary?.affectedFiles ?? [],
+            message: typeof content === "string" ? content : null,
+        };
     }
     return null;
 }
@@ -184,6 +198,8 @@ export function createPostTurnLinter(pi, deps = {
     mergeValidationOutcomes,
     setTimeout,
     statSync,
+    writeLinterReportSidecar,
+    recoverLinterReportSidecar,
 }) {
     const state = {
         modifiedFiles: new Set(),
@@ -195,6 +211,7 @@ export function createPostTurnLinter(pi, deps = {
         latestLintMessage: null,
         latestFiles: [],
         latestReportId: 0,
+        latestReportSidecar: null,
         pendingFixReportId: null,
         cooldownMs: DEFAULT_CONFIG.cooldownMs ?? 15_000,
         reportMode: DEFAULT_CONFIG.reportMode ?? "report-only",
@@ -213,10 +230,17 @@ export function createPostTurnLinter(pi, deps = {
         }
     }
     function buildFixInstruction() {
+        const sidecarHint = state.latestReportSidecar
+            ? "Full redacted report recovery is available with /post-turn-linter-report preview or /post-turn-linter-report slice --offset=0 --length=4000 if the concise summary is insufficient."
+            : "No linter sidecar is available; use the concise summary already in session context.";
         return [
-            "Fix the issues reported by the most recent post-turn-linter message.",
+            "Fix the issues reported by the most recent post-turn-linter summary.",
+            "",
+            "Bounded post-turn-linter summary:",
+            state.latestLintMessage,
+            "",
             `Affected files: ${state.latestFiles.join(", ") || "unknown"}`,
-            "Use the existing post-turn-linter report and code excerpts already in session context as the source of truth.",
+            sidecarHint,
             "After fixing the files, stop.",
         ].join("\n");
     }
@@ -277,6 +301,7 @@ export function createPostTurnLinter(pi, deps = {
             state.latestLintMessage = null;
             state.latestFiles = [];
             state.pendingFixReportId = null;
+            state.latestReportSidecar = null;
             pi.sendMessage({
                 customType: "post-turn-linter-status",
                 content: `post-turn-linter: tool error (${filesToLint.length} file(s) checked)`,
@@ -292,6 +317,7 @@ export function createPostTurnLinter(pi, deps = {
             state.latestLintMessage = null;
             state.latestFiles = [];
             state.pendingFixReportId = null;
+            state.latestReportSidecar = null;
             pi.sendMessage({
                 customType: "post-turn-linter-status",
                 content: `post-turn-linter: clean (${filesToLint.length} file(s) checked)`,
@@ -323,17 +349,38 @@ export function createPostTurnLinter(pi, deps = {
             return;
         }
         state.lastReportedSignature = signature;
-        const message = buildLintMessage(report);
         state.latestReportId += 1;
+        const reportId = state.latestReportId;
+        let sidecar = null;
+        try {
+            sidecar = await deps.writeLinterReportSidecar({
+                report,
+                sessionId: deriveSessionId(ctx),
+            });
+        }
+        catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            safeNotify(ctx, `post-turn-linter: failed to write report sidecar: ${errorMessage}`, "warning");
+        }
+        const summary = buildSummaryFirstLintMessage({
+            report,
+            filesChecked: filesToLint,
+            affectedFiles: result.affectedFiles,
+            cwd: cwd(),
+            reportId,
+            sidecar,
+        });
+        const message = summary.message;
         state.latestLintMessage = message;
         state.latestFiles = result.affectedFiles;
+        state.latestReportSidecar = summary.details.sidecar ?? null;
         state.pendingFixReportId = null;
         const shouldTriggerTurn = options?.forceTriggerTurn ?? result.reportMode === "auto-follow-up";
         pi.sendMessage({
             customType: "post-turn-linter",
             content: message,
             display: true,
-            details: { lspConfig: state.lspConfig },
+            details: { lspConfig: state.lspConfig, summary: summary.details },
         });
         pi.sendMessage({
             customType: "post-turn-linter-status",
@@ -343,6 +390,7 @@ export function createPostTurnLinter(pi, deps = {
                 status: "findings",
                 files: filesToLint,
                 affectedFiles: result.affectedFiles,
+                summary: summary.details,
             },
         });
         if (shouldTriggerTurn) {
@@ -356,6 +404,7 @@ export function createPostTurnLinter(pi, deps = {
     pi.on("session_start", async (_event, ctx) => {
         const config = await deps.loadLinterConfig(cwd());
         const persistedLspConfig = reconstructLspConfig(ctx);
+        const persistedLatestReport = reconstructLatestReport(ctx);
         state.modifiedFiles.clear();
         state.pendingToolFiles.clear();
         state.lastRunAt = 0;
@@ -363,9 +412,10 @@ export function createPostTurnLinter(pi, deps = {
         state.shutDown = false;
         state.lastReportedSignature = null;
         state.cooldownMs = config.cooldownMs ?? DEFAULT_CONFIG.cooldownMs ?? 15_000;
-        state.latestLintMessage = null;
-        state.latestFiles = [];
-        state.latestReportId = 0;
+        state.latestLintMessage = persistedLatestReport?.message ?? null;
+        state.latestFiles = persistedLatestReport?.affectedFiles ?? [];
+        state.latestReportId = persistedLatestReport?.reportId ?? 0;
+        state.latestReportSidecar = persistedLatestReport?.sidecar ?? null;
         state.pendingFixReportId = null;
         state.recentlyClean.clear();
         state.reportMode =
@@ -391,6 +441,7 @@ export function createPostTurnLinter(pi, deps = {
         state.latestFiles = [];
         state.latestReportId = 0;
         state.pendingFixReportId = null;
+        state.latestReportSidecar = null;
         state.recentlyClean.clear();
         safeSetStatus(ctx, "");
     });
@@ -529,6 +580,50 @@ export function createPostTurnLinter(pi, deps = {
             pi.sendUserMessage(buildFixInstruction());
         },
     });
+    pi.registerCommand("post-turn-linter-report", {
+        description: "Recover the latest redacted post-turn-linter sidecar. Usage: /post-turn-linter-report [metadata|preview|slice|full] [--offset=N] [--length=N] [--ack-context-cost]",
+        handler: async (args, ctx) => {
+            if (!state.latestReportSidecar) {
+                safeNotify(ctx, "post-turn-linter-report: no latest report sidecar is available", "info");
+                return;
+            }
+            const parsed = parseReportRecoveryArgs(args);
+            try {
+                const recovered = await deps.recoverLinterReportSidecar({
+                    recordPath: state.latestReportSidecar.path,
+                    mode: parsed.mode,
+                    acknowledgeContextCost: parsed.acknowledgeContextCost,
+                    offset: parsed.offset,
+                    length: parsed.length,
+                });
+                pi.sendMessage({
+                    customType: "post-turn-linter-report",
+                    content: recovered.content,
+                    display: true,
+                    details: {
+                        mode: recovered.mode,
+                        reportId: state.latestReportId,
+                        sidecar: recovered.metadata,
+                    },
+                });
+            }
+            catch (error) {
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                safeNotify(ctx, `post-turn-linter-report: ${errorMessage}`, "error");
+                pi.sendMessage({
+                    customType: "post-turn-linter-report-status",
+                    content: `post-turn-linter-report: ${errorMessage}`,
+                    display: false,
+                    details: {
+                        status: "error",
+                        mode: parsed.mode,
+                        reportId: state.latestReportId,
+                        sidecar: state.latestReportSidecar,
+                    },
+                });
+            }
+        },
+    });
     pi.registerCommand("post-turn-linter-status", {
         description: "Show post-turn-linter state",
         handler: async (_args, ctx) => {
@@ -539,6 +634,7 @@ export function createPostTurnLinter(pi, deps = {
                 `runInProgress: ${state.runInProgress}`,
                 `latestReportId: ${state.latestReportId}`,
                 `pendingFixReportId: ${state.pendingFixReportId ?? "none"}`,
+                `latestReportSidecar: ${state.latestReportSidecar?.id ?? "none"}`,
             ].join(" | "), "info");
         },
     });

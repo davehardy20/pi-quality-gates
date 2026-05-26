@@ -60,6 +60,9 @@ export declare const DEFAULT_MARKDOWNLINT_CONFIG: MarkdownlintConfig;
 export declare const DEFAULT_CONFIG: LinterConfig;
 export declare const MAX_MODIFIED_FILES = 1000;
 export declare const BATCH_SIZE = 50;
+export declare const BUILT_IN_IGNORED_AGENT_ARTIFACT_GLOBS: readonly ["**/agent/plans/*.md", "**/agent/plans/archive/*.md"];
+export declare function isBuiltInIgnoredAgentArtifact(filePath: string): boolean;
+export declare function filterBuiltInIgnoredFiles(filePaths: string[]): string[];
 export declare function parseJsoncConfig(configData: string): MarkdownlintConfig;
 export declare function loadMarkdownlintConfig(directory: string): Promise<MarkdownlintConfig>;
 export declare function runMarkdownlint(filePaths: string[], config?: unknown): Promise<LinterResult>;
@@ -100,6 +103,8 @@ export declare const __test__: {
     formatMarkdownlintResults: typeof formatMarkdownlintResults;
     findProjectRoot: typeof findProjectRoot;
     mergeValidationOutcomes: typeof mergeValidationOutcomes;
+    isBuiltInIgnoredAgentArtifact: typeof isBuiltInIgnoredAgentArtifact;
+    filterBuiltInIgnoredFiles: typeof filterBuiltInIgnoredFiles;
     buildCombinedSignature: typeof buildCombinedSignature;
 };
 export {};
