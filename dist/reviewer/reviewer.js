@@ -5,6 +5,7 @@
 //   2. Spawn a headless child Pi process with the reviewer system prompt
 //   3. Parse the structured report from the child's output
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -236,6 +237,16 @@ function getPiInvocation(args) {
     }
     return { command: "pi", args };
 }
+function sha256Hex(value) {
+    return createHash("sha256").update(value).digest("hex");
+}
+function formatCommandArg(arg) {
+    return /^[A-Za-z0-9_./:=,@+-]+$/.test(arg) ? arg : JSON.stringify(arg);
+}
+export function buildSanitizedReviewerCommand(command, nonPromptArgs, taskPrompt) {
+    const rendered = [command, ...nonPromptArgs].map(formatCommandArg).join(" ");
+    return `${rendered} [taskPrompt omitted chars=${taskPrompt.length} sha256=${sha256Hex(taskPrompt)}]`;
+}
 /**
  * Spawn a headless child Pi process for the review.
  * Uses `--mode json --no-session` with read-only tools.
@@ -266,10 +277,12 @@ export async function spawnReviewer(taskPrompt, systemPrompt, config, cwd, signa
         }
         // NOTE: pi CLI does not support --max-tokens; maxTokens is config-only
         // and can be used by consumers for logging or provider-specific limits.
-        // The task is passed as the final argument (positional)
+        const invocationForCommand = getPiInvocation(piArgs);
+        const commandStr = buildSanitizedReviewerCommand(invocationForCommand.command, invocationForCommand.args, taskPrompt);
+        // The task is passed as the final argument (positional), but is omitted from
+        // ReviewerResult.command to avoid persisting task/diff text in appendEntry.
         piArgs.push(taskPrompt);
         const invocation = getPiInvocation(piArgs);
-        const commandStr = `${invocation.command} ${invocation.args.map((a) => (a.includes(" ") ? `"${a}"` : a)).join(" ")}`;
         return await new Promise((resolve) => {
             let buffer = "";
             let output = "";

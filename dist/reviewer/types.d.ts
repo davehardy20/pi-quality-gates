@@ -85,6 +85,11 @@ export interface ReviewConfig {
 }
 /** Sensible defaults used when config fields are missing. */
 export declare const DEFAULT_REVIEW_CONFIG: ReviewConfig;
+export interface ReviewerReportSidecarRef {
+    id: string;
+    path: string;
+    redactedChars: number;
+}
 /** Mutable state tracked across the session lifecycle. */
 export interface ReviewerState {
     /** Current phase in the state machine */
@@ -93,6 +98,8 @@ export interface ReviewerState {
     loopCount: number;
     /** The most recent parsed report, or null */
     lastReport: ReviewReport | null;
+    /** Latest redacted reviewer transcript sidecar, if available */
+    latestReportSidecar: ReviewerReportSidecarRef | null;
     /** Files that were modified in the current turn */
     pendingFiles: string[];
     /** Whether the post-turn-linter reported clean */

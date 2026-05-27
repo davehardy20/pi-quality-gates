@@ -28,8 +28,13 @@ review.
   quality, testing, documentation
 - Severity levels: CRITICAL (auto-fix loop), WARNING (advisory), NIT (info only)
 - Re-review after fixes with configurable max passes
+- Summary-first reviewer reports keep parent context bounded by default
+- Full redacted reviewer transcripts are written to sidecars for manual recovery
+- Parse-fail and timeout notices omit raw output/stderr from parent context
 - `/reviewer-status` — Show reviewer state machine
 - `/reviewer-run` — Manually trigger a review
+- `/reviewer-report` — Recover the latest reviewer sidecar report
+  metadata/preview/slice/full
 - `/reviewer-model` — Switch review model mid-session
 - `/reviewer-toggle` — Enable or disable the reviewer
 
@@ -117,11 +122,13 @@ vendor/**
 - The reviewer spawns a child Pi process with `--no-extensions` and read-only
   tools only.
 - LSP diagnostics are optional and disabled by default. Enable via linter config.
-- Linter sidecar `full` recovery requires `--ack-context-cost` in parent
-  sessions. In orchestrator/sub-agent sessions, `runtimeMode: "auto"` detects
+- Reviewer sidecar `full` recovery always requires `--ack-context-cost`,
+  including orchestrator/sub-agent sessions. Linter sidecar `full` recovery
+  requires `--ack-context-cost` in parent sessions; in orchestrator/sub-agent
+  sessions, linter `runtimeMode: "auto"` detects
   `PI_QUALITY_GATES_SUBAGENT_MODE=1` or `PI_ORCH_*` worker env and allows full
-  redacted recovery without the parent-session acknowledgement; set
-  `runtimeMode` to `"parent"` or `"sub-agent"` to override detection.
+  redacted recovery without the parent-session acknowledgement. Set linter
+  `runtimeMode` to `"parent"` or `"sub-agent"` to override linter detection.
 - If commands appear twice, Pi may be loading both this package and old local
   extension files.
   Disable or remove old local extensions before testing.

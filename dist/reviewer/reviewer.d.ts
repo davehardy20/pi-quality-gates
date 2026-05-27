@@ -105,6 +105,7 @@ export declare function readSystemPrompt(promptsDir: string): string;
  * Render the task template with placeholders replaced.
  */
 export declare function renderTaskTemplate(promptsDir: string, task: string, files: string[], diff: string): string;
+export declare function buildSanitizedReviewerCommand(command: string, nonPromptArgs: string[], taskPrompt: string): string;
 /**
  * Spawn a headless child Pi process for the review.
  * Uses `--mode json --no-session` with read-only tools.

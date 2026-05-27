@@ -17,6 +17,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { registerReviewerModelCommand } from "./commands/reviewer-model.js";
 import { loadReviewConfig } from "./config.js";
+import { buildBoundedReviewerFailureMessage, buildSummaryFirstReviewerMessage, deriveSessionId, parseReportRecoveryArgs, recoverReviewerReportSidecar, writeReviewerReportSidecar, } from "./report-hygiene.js";
 import { countDiffLinesFast, extractOriginalTask, gatherDiff, readSystemPrompt, renderTaskTemplate, spawnReviewer, } from "./reviewer.js";
 import { loadSkipFilter } from "./reviewer-skip.js";
 import { DEFAULT_REVIEW_CONFIG } from "./types.js";
@@ -60,53 +61,38 @@ function formatPhaseStatus(state, config) {
     }
     return lines.join("\n");
 }
-function formatAdvisoryMessage(report) {
-    const lines = [
-        "📋 **Post-Turn Reviewer — Advisory Report**",
-        "",
-        `Status: ${report.status} | Confidence: ${report.confidence}`,
-        "",
-    ];
-    for (const finding of report.findings) {
-        lines.push(`**[${finding.severity}]** ${finding.title}`, `  File: ${finding.file}`, `  Issue: ${finding.issue}`, "");
-    }
-    if (report.summary) {
-        lines.push(`Summary: ${report.summary}`);
-    }
-    return lines.join("\n");
+function formatAdvisoryMessage(report, sidecar = null) {
+    return buildSummaryFirstReviewerMessage({
+        report,
+        sidecar,
+        title: "📋 **Post-Turn Reviewer — Advisory Report**",
+    }).message;
 }
-function formatFixUpMessage(report) {
+function formatFixUpMessage(report, sidecar = null) {
     const criticalFindings = report.findings.filter((f) => f.severity === "CRITICAL");
     const warningFindings = report.findings.filter((f) => f.severity === "WARNING");
-    const lines = [
-        "🚨 **Post-Turn Reviewer — Issues Found**",
-        "",
-        `Status: ${report.status} | Confidence: ${report.confidence}`,
-        "",
-        "The following issues must be addressed:",
-        "",
-    ];
-    for (const finding of criticalFindings) {
-        lines.push(`**[CRITICAL] ${finding.title}**`, `  File: ${finding.file}`, `  Category: ${finding.domain}`, `  Issue: ${finding.issue}`, `  Suggestion: ${finding.suggestion}`, "");
-    }
-    for (const finding of warningFindings) {
-        lines.push(`**[WARNING] ${finding.title}**`, `  File: ${finding.file}`, `  Category: ${finding.domain}`, `  Issue: ${finding.issue}`, `  Suggestion: ${finding.suggestion}`, "");
-    }
-    lines.push("Fix the CRITICAL issues listed above. Focus on the specific files and lines cited.", "After fixing, the reviewer will re-check automatically.");
-    return lines.join("\n");
+    return buildSummaryFirstReviewerMessage({
+        report: {
+            ...report,
+            findings: [...criticalFindings, ...warningFindings],
+        },
+        sidecar,
+        title: "🚨 **Post-Turn Reviewer — Issues Found**",
+    }).message;
 }
-function formatEscalationMessage(report, loopCount) {
-    return [
-        "⚠️ **Post-Turn Reviewer — Max Re-Review Exceeded**",
-        "",
-        `After ${loopCount} re-review pass(es), issues persist:`,
-        "",
-        ...report.findings
-            .filter((f) => f.severity === "CRITICAL")
-            .map((f) => `- [CRITICAL] ${f.title} (${f.file})`),
-        "",
-        "Please review manually.",
-    ].join("\n");
+function formatEscalationMessage(report, loopCount, sidecar = null) {
+    return buildSummaryFirstReviewerMessage({
+        report,
+        sidecar,
+        title: `⚠️ **Post-Turn Reviewer — Max Re-Review Exceeded** after ${loopCount} pass(es).`,
+    }).message;
+}
+function buildReviewerTranscriptSidecarContent(rawOutput, stderr) {
+    if (!stderr || stderr === rawOutput)
+        return rawOutput;
+    if (!rawOutput)
+        return stderr;
+    return `${rawOutput}\n\n--- stderr ---\n${stderr}`;
 }
 // ── State Machine ──────────────────────────────────────────────────────
 function createInitialState(config) {
@@ -114,6 +100,7 @@ function createInitialState(config) {
         phase: "IDLE",
         loopCount: 0,
         lastReport: null,
+        latestReportSidecar: null,
         pendingFiles: [],
         linterClean: false,
         linterCleanAt: null,
@@ -135,6 +122,22 @@ export default function postTurnReviewerExtension(pi) {
         return {
             respectGitignore: state.config.respectGitignore,
             skipFilter,
+        };
+    }
+    async function writeLatestReviewerSidecar(ctx, report) {
+        const sidecar = await writeReviewerReportSidecar({
+            report,
+            sessionId: deriveSessionId(ctx),
+        });
+        state.latestReportSidecar = sidecar.ok ? sidecar.metadata : null;
+        return sidecar;
+    }
+    function latestReviewerSidecarWriteResult() {
+        if (!state.latestReportSidecar)
+            return null;
+        return {
+            ok: true,
+            metadata: state.latestReportSidecar,
         };
     }
     // ── session_start ──────────────────────────────────────────────────
@@ -275,7 +278,7 @@ export default function postTurnReviewerExtension(pi) {
         state.loopCount++;
         if (state.loopCount > state.config.maxReReviewPasses) {
             if (state.lastReport) {
-                const msg = formatEscalationMessage(state.lastReport, state.loopCount);
+                const msg = formatEscalationMessage(state.lastReport, state.loopCount, latestReviewerSidecarWriteResult());
                 pi.sendMessage({
                     customType: "post-turn-reviewer-escalation",
                     content: msg,
@@ -318,18 +321,18 @@ export default function postTurnReviewerExtension(pi) {
                 const modelInfo = state.config.model
                     ? `model: ${state.config.model}`
                     : "model: session default";
-                const stderrPreview = childOutput.stderr
-                    ? `\nStderr: ${childOutput.stderr.slice(0, 500)}`
-                    : "";
-                ctx.ui.notify(`🔍 Post-Turn Reviewer: timed out after ${state.config.timeoutMs / 1000}s (${modelInfo}). Try /reviewer-model to use a faster model, or increase timeout in .pi/reviewer.config.json.${stderrPreview}`, "warning");
+                const sidecar = await writeLatestReviewerSidecar(ctx, buildReviewerTranscriptSidecarContent(childOutput.rawOutput, childOutput.stderr));
+                ctx.ui.notify(`🔍 Post-Turn Reviewer: timed out after ${state.config.timeoutMs / 1000}s (${modelInfo}). Raw output/stderr omitted; use /reviewer-report preview or slice for redacted details.`, "warning");
                 pi.appendEntry("post-turn-reviewer-timeout", {
                     timeoutMs: state.config.timeoutMs,
                     exitCode: childOutput.exitCode,
                     partialOutputLength: childOutput.rawOutput.length,
+                    stderrLength: childOutput.stderr.length,
                     model: state.config.model ?? "session-default",
                     command: childOutput.command,
-                    stderr: childOutput.stderr,
                     promptLength: taskPrompt.length,
+                    sidecar: sidecar.ok ? sidecar.metadata : undefined,
+                    sidecarError: sidecar.ok ? undefined : sidecar.error,
                 });
                 transition(state, "IDLE");
                 ctx.ui.setStatus("post-turn-reviewer", "");
@@ -337,27 +340,36 @@ export default function postTurnReviewerExtension(pi) {
             }
             const report = childOutput.report;
             if (!report) {
-                const outputPreview = childOutput.rawOutput
-                    ? `\nOutput preview (${childOutput.rawOutput.length} chars): ${childOutput.rawOutput.slice(0, 300)}`
-                    : "\nNo output from child.";
-                const hasMarker = childOutput.rawOutput?.includes("## Review Report")
-                    ? ""
-                    : "\nMissing '## Review Report' marker — model may not have followed the output format.";
-                ctx.ui.notify(`🔍 Post-Turn Reviewer: could not parse review report from child output.${outputPreview}${hasMarker}`, "warning");
+                const hasReportMarker = childOutput.rawOutput?.includes("## Review Report") ?? false;
+                const sidecar = await writeLatestReviewerSidecar(ctx, buildReviewerTranscriptSidecarContent(childOutput.rawOutput, childOutput.stderr));
+                ctx.ui.notify(buildBoundedReviewerFailureMessage({
+                    title: "🔍 Post-Turn Reviewer: could not parse review report from child output.",
+                    rawOutput: childOutput.rawOutput,
+                    stderr: childOutput.stderr,
+                    sidecar,
+                    hints: hasReportMarker
+                        ? undefined
+                        : [
+                            "Missing '## Review Report' marker — model may not have followed the output format.",
+                        ],
+                }), "warning");
                 pi.appendEntry("post-turn-reviewer-parse-fail", {
                     rawOutputLength: childOutput.rawOutput.length,
-                    hasReportMarker: childOutput.rawOutput?.includes("## Review Report") ?? false,
+                    hasReportMarker,
                     stderrLength: childOutput.stderr.length,
                     exitCode: childOutput.exitCode,
                     command: childOutput.command,
+                    sidecar: sidecar.ok ? sidecar.metadata : undefined,
+                    sidecarError: sidecar.ok ? undefined : sidecar.error,
                 });
                 transition(state, "IDLE");
                 ctx.ui.setStatus("post-turn-reviewer", "");
                 return;
             }
+            const sidecar = await writeLatestReviewerSidecar(ctx, buildReviewerTranscriptSidecarContent(childOutput.rawOutput, childOutput.stderr));
             state.lastReport = report;
             ctx.ui.setStatus("post-turn-reviewer", "");
-            await processReport(report, ctx, isReReview);
+            await processReport(report, ctx, isReReview, sidecar);
         }
         catch (error) {
             const message = error instanceof Error ? error.message : String(error);
@@ -367,17 +379,24 @@ export default function postTurnReviewerExtension(pi) {
         }
     }
     // ── Process parsed report ─────────────────────────────────────────
-    async function processReport(report, ctx, isReReview) {
+    async function processReport(report, ctx, isReReview, sidecar) {
         pi.appendEntry("post-turn-reviewer-report", {
             status: report.status,
             confidence: report.confidence,
             findingsCount: report.findings.length,
             loopCount: state.loopCount,
             isReReview,
+            sidecar: sidecar?.ok ? sidecar.metadata : undefined,
+            sidecarError: sidecar?.ok ? undefined : sidecar?.error,
         });
         const hasActionableFindings = report.findings.some((f) => severityMeetsThreshold(f.severity, state.config.autoFixThreshold));
         if (report.status === "CANNOT_REVIEW") {
-            ctx.ui.notify(`🔍 Post-Turn Reviewer: could not review — ${report.summary}`, "warning");
+            ctx.ui.notify(buildSummaryFirstReviewerMessage({
+                report,
+                sidecar,
+                title: "🔍 Post-Turn Reviewer: could not complete review.",
+                maxFindings: 0,
+            }).message, "warning");
             transition(state, "IDLE");
             return;
         }
@@ -385,7 +404,7 @@ export default function postTurnReviewerExtension(pi) {
             if (report.findings.length > 0) {
                 pi.sendMessage({
                     customType: "post-turn-reviewer-advisory",
-                    content: formatAdvisoryMessage(report),
+                    content: formatAdvisoryMessage(report, sidecar),
                     display: true,
                 });
             }
@@ -398,7 +417,7 @@ export default function postTurnReviewerExtension(pi) {
         if (isReReview && state.loopCount >= state.config.maxReReviewPasses) {
             pi.sendMessage({
                 customType: "post-turn-reviewer-escalation",
-                content: formatEscalationMessage(report, state.loopCount),
+                content: formatEscalationMessage(report, state.loopCount, sidecar),
                 display: true,
             });
             transition(state, "IDLE");
@@ -406,7 +425,7 @@ export default function postTurnReviewerExtension(pi) {
         }
         pi.sendMessage({
             customType: "post-turn-reviewer-findings",
-            content: formatFixUpMessage(report),
+            content: formatFixUpMessage(report, sidecar),
             display: true,
         });
         state.linterClean = false;
@@ -477,6 +496,48 @@ export default function postTurnReviewerExtension(pi) {
             state.config = updater(state.config);
         },
     });
+    pi.registerCommand("reviewer-report", {
+        description: "Recover the latest redacted post-turn-reviewer sidecar. Usage: /reviewer-report [metadata|preview|slice|full] [--offset=N] [--length=N] [--ack-context-cost]. Full mode always requires --ack-context-cost.",
+        handler: async (args, ctx) => {
+            if (!state.latestReportSidecar) {
+                ctx.ui.notify("reviewer-report: no latest reviewer sidecar is available", "info");
+                return;
+            }
+            const parsed = parseReportRecoveryArgs(args);
+            try {
+                const recovered = await recoverReviewerReportSidecar({
+                    recordPath: state.latestReportSidecar.path,
+                    mode: parsed.mode,
+                    acknowledgeContextCost: parsed.acknowledgeContextCost,
+                    offset: parsed.offset,
+                    length: parsed.length,
+                });
+                pi.sendMessage({
+                    customType: "post-turn-reviewer-report",
+                    content: recovered.content,
+                    display: true,
+                    details: {
+                        mode: recovered.mode,
+                        sidecar: recovered.metadata,
+                    },
+                });
+            }
+            catch (error) {
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                ctx.ui.notify(`reviewer-report: ${errorMessage}`, "error");
+                pi.sendMessage({
+                    customType: "post-turn-reviewer-report-status",
+                    content: `reviewer-report: ${errorMessage}`,
+                    display: false,
+                    details: {
+                        status: "error",
+                        mode: parsed.mode,
+                        sidecar: state.latestReportSidecar,
+                    },
+                });
+            }
+        },
+    });
     pi.registerCommand("reviewer-toggle", {
         description: "Enable or disable the post-turn reviewer.",
         handler: async (args, ctx) => {
@@ -513,5 +574,6 @@ export const __test__ = {
     formatAdvisoryMessage,
     formatFixUpMessage,
     formatEscalationMessage,
+    buildReviewerTranscriptSidecarContent,
     LINTER_STATUS_CUSTOM_TYPE,
 };
