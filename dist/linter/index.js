@@ -1,9 +1,25 @@
+// biome-ignore-all format: generated build output
+
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { stopAllLspClients } from "../shared/lsp-service.js";
-import { DEFAULT_CONFIG, loadLinterConfig, MAX_MODIFIED_FILES, mergeValidationOutcomes, runQueuedLintChecks, } from "./core.js";
+import {
+    DEFAULT_CONFIG,
+    loadLinterConfig,
+    MAX_MODIFIED_FILES,
+    mergeValidationOutcomes,
+    runQueuedLintChecks,
+} from "./core.js";
 import { runQueuedLspChecks } from "./lsp.js";
-import { buildSummaryFirstLintMessage, deriveSessionId, isQualityGatesSubAgentRuntime, parseReportRecoveryArgs, recoverLinterReportSidecar, writeLinterReportSidecar, } from "./report-hygiene.js";
+import {
+    buildSummaryFirstLintMessage,
+    deriveSessionId,
+    isQualityGatesSubAgentRuntime,
+    parseReportRecoveryArgs,
+    recoverLinterReportSidecar,
+    writeLinterReportSidecar,
+} from "./report-hygiene.js";
+
 function normalizeFilePath(path) {
     if (!path)
         return null;
@@ -245,7 +261,7 @@ export function createPostTurnLinter(pi, deps = {
             "",
             `Affected files: ${state.latestFiles.join(", ") || "unknown"}`,
             sidecarHint,
-            "After fixing the files, stop.",
+            "After fixing the linter findings, continue the active user task.",
         ].join("\n");
     }
     function requestFixTurn(ctx, reportId = state.latestReportId) {
