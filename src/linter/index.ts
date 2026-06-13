@@ -354,7 +354,7 @@ export function createPostTurnLinter(
 			"",
 			`Affected files: ${state.latestFiles.join(", ") || "unknown"}`,
 			sidecarHint,
-			"After fixing the files, stop.",
+			"After fixing the linter findings, continue the active user task.",
 		].join("\n");
 	}
 
