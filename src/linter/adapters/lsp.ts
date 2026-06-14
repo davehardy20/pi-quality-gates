@@ -19,6 +19,7 @@ export function createLspAdapter(options: LspAdapterOptions): LinterAdapter {
 	const { config, ctx } = options;
 	return {
 		name: "LSP diagnostics",
+		key: "lsp",
 		run: async (filePaths: string[]): Promise<ValidationOutcome> => {
 			return runQueuedLspChecks(
 				{ filePaths, cwd: process.cwd(), ctx, config },

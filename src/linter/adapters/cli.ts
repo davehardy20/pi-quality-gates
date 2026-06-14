@@ -25,6 +25,7 @@ export function createCliAdapter(options: CliAdapterOptions): LinterAdapter {
 	const { linter, timeoutMs = 60_000 } = options;
 	return {
 		name: linter.name,
+		key: adapterKey(linter),
 		run: async (
 			filePaths: string[],
 			cwd: string,
@@ -38,6 +39,13 @@ export function createCliAdapter(options: CliAdapterOptions): LinterAdapter {
 			};
 		},
 	};
+}
+
+function adapterKey(linter: CliLinterDefinition): string {
+	if (linter.mode === "project-root" || linter.mode === "workspace") {
+		return `cli:${linter.command}:${linter.args.join(" ")}:mode=${linter.mode ?? "per-file"}:root=${linter.rootMarker ?? ""}`;
+	}
+	return `cli:${linter.command}:${linter.args.join(" ")}`;
 }
 
 interface CliRunResult {
@@ -67,62 +75,149 @@ async function runCliLinter(
 
 	const isWorkspace = linter.mode === "workspace";
 	const isProjectRoot = linter.mode === "project-root";
-	const batches =
-		isWorkspace || isProjectRoot
-			? [[] as string[]]
-			: Array.from(
-					{ length: Math.ceil(existingFiles.length / BATCH_SIZE) },
-					(_, i) => existingFiles.slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE),
-				);
 
-	const runDirectory = isProjectRoot
-		? findProjectRoot(resolve(existingFiles[0], ".."), linter.rootMarker)
-		: isWorkspace
-			? findProjectRoot(
-					resolve(existingFiles[0], ".."),
-					linter.rootMarker || WORKSPACE_ROOT_MARKERS,
-				)
-			: defaultCwd;
+	if (isWorkspace || isProjectRoot) {
+		const marker = isWorkspace
+			? linter.rootMarker || WORKSPACE_ROOT_MARKERS
+			: linter.rootMarker || ".git";
+		const rootGroups = groupFilesByRoot(existingFiles, marker);
+		const results = await Promise.all(
+			Array.from(rootGroups.entries()).map(([root, files]) =>
+				runCliCommand(files, linter, timeoutMs, root, true),
+			),
+		);
+		return mergeCliRunResults(results);
+	}
 
+	const batches = Array.from(
+		{ length: Math.ceil(existingFiles.length / BATCH_SIZE) },
+		(_, i) => existingFiles.slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE),
+	);
 	const outputs: string[] = [];
 
 	for (const batch of batches) {
-		const cmdParts =
-			isWorkspace || isProjectRoot
-				? [...linter.args]
-				: [...linter.args, ...batch];
-		const result = await spawnCommand(
-			linter.command,
-			cmdParts,
+		const result = await runCliCommand(
+			batch,
+			linter,
 			timeoutMs,
-			runDirectory,
+			defaultCwd,
+			false,
 		);
-
-		if (result.output.startsWith(`Error running ${linter.command}`)) {
-			return {
-				kind: "tool-error",
-				name: linter.name,
-				output: result.output,
-				fileCount: existingFiles.length,
-				affectedFiles: [],
-			};
+		if (result.kind === "tool-error") {
+			return result;
 		}
-
-		const normalizedOutput = normalizeCliOutput(
-			linter.command,
-			result.output,
-			result.exitCode,
-		);
-		if (normalizedOutput) outputs.push(normalizedOutput);
+		if (result.output) outputs.push(result.output);
 	}
 
-	const output = outputs.join("\n").trim();
+	const output = outputs.join("\n\n").trim();
 	return {
 		kind: output ? "findings" : "clean",
 		name: linter.name,
 		output,
 		fileCount: existingFiles.length,
-		affectedFiles: extractAffectedFiles(output, runDirectory),
+		affectedFiles: output ? extractAffectedFiles(output, defaultCwd) : [],
+	};
+}
+
+function groupFilesByRoot(
+	filePaths: string[],
+	marker: string | string[],
+): Map<string, string[]> {
+	const groups = new Map<string, string[]>();
+	for (const filePath of filePaths) {
+		const root = findProjectRoot(resolve(filePath, ".."), marker);
+		const group = groups.get(root) ?? [];
+		group.push(filePath);
+		groups.set(root, group);
+	}
+	return groups;
+}
+
+async function runCliCommand(
+	filePaths: string[],
+	linter: CliLinterDefinition,
+	timeoutMs: number,
+	cwd: string,
+	noFileArgs: boolean,
+): Promise<CliRunResult> {
+	if (filePaths.length === 0) {
+		return {
+			kind: "clean",
+			name: linter.name,
+			output: "",
+			fileCount: 0,
+			affectedFiles: [],
+		};
+	}
+
+	const cmdParts = noFileArgs
+		? [...linter.args]
+		: [...linter.args, ...filePaths];
+	const result = await spawnCommand(linter.command, cmdParts, timeoutMs, cwd);
+
+	if (result.output.startsWith(`Error running ${linter.command}`)) {
+		return {
+			kind: "tool-error",
+			name: linter.name,
+			output: result.output,
+			fileCount: filePaths.length,
+			affectedFiles: [],
+		};
+	}
+
+	const output = normalizeCliOutput(
+		linter.command,
+		result.output,
+		result.exitCode,
+	);
+	return {
+		kind: output ? "findings" : "clean",
+		name: linter.name,
+		output,
+		fileCount: filePaths.length,
+		affectedFiles: output ? extractAffectedFiles(output, cwd) : [],
+	};
+}
+
+function mergeCliRunResults(results: CliRunResult[]): CliRunResult {
+	if (results.length === 0) {
+		return {
+			kind: "clean",
+			name: "",
+			output: "",
+			fileCount: 0,
+			affectedFiles: [],
+		};
+	}
+
+	const name = results[0].name;
+	const toolErrors = results.filter((r) => r.kind === "tool-error");
+	if (toolErrors.length > 0) {
+		return {
+			kind: "tool-error",
+			name,
+			output: toolErrors
+				.map((r) => r.output)
+				.join("\n\n")
+				.trim(),
+			fileCount: results.reduce((sum, r) => sum + r.fileCount, 0),
+			affectedFiles: [],
+		};
+	}
+
+	const output = results
+		.map((r) => r.output)
+		.filter(Boolean)
+		.join("\n\n")
+		.trim();
+	return {
+		kind: output ? "findings" : "clean",
+		name,
+		output,
+		fileCount: results.reduce((sum, r) => sum + r.fileCount, 0),
+		affectedFiles: normalizeAndSortPaths(
+			results.flatMap((r) => r.affectedFiles),
+		),
 	};
 }
 
@@ -278,4 +373,6 @@ export const __test__ = {
 	extractAffectedFiles,
 	normalizeCliOutput,
 	findProjectRoot,
+	groupFilesByRoot,
+	mergeCliRunResults,
 };

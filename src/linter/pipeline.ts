@@ -16,6 +16,8 @@ import {
 	writeLinterReportSidecar,
 } from "./report-hygiene.js";
 import type {
+	ApiLinterDefinition,
+	CliLinterDefinition,
 	CombinedValidationOutcome,
 	LinterConfig,
 	LinterDefinition,
@@ -83,7 +85,15 @@ export function createLinterPipeline(
 		const filteredFiles = filePaths.filter(
 			(f) => !isBuiltInIgnoredAgentArtifact(f),
 		);
-		const groups = groupFilesByAdapter(filteredFiles, adapters, config);
+
+		const lspAdapter = adapters.find((a) => a.key === "lsp");
+		const extensionAdapters = adapters.filter((a) => a.key !== "lsp");
+
+		const groups = groupFilesByAdapter(
+			filteredFiles,
+			extensionAdapters,
+			config,
+		);
 
 		const results = await Promise.all(
 			Array.from(groups.entries()).map(async ([adapter, paths]) => {
@@ -91,6 +101,11 @@ export function createLinterPipeline(
 				return outcome;
 			}),
 		);
+
+		if (lspAdapter) {
+			const lspResult = await lspAdapter.run(filteredFiles, cwd);
+			results.push(lspResult);
+		}
 
 		const merged = mergeValidationOutcomes({
 			reportMode: config.reportMode ?? "auto-follow-up",
@@ -165,7 +180,16 @@ function adapterHandles(
 ): boolean {
 	const linter = getLinterForFile(filePath, config);
 	if (!linter) return false;
-	return adapter.name === linter.name;
+	return adapter.key === definitionKey(linter);
+}
+
+function definitionKey(linter: LinterDefinition): string {
+	if (linter.type === "api") return `api:${linter.name}`;
+	const cli = linter as CliLinterDefinition;
+	if (cli.mode === "project-root" || cli.mode === "workspace") {
+		return `cli:${cli.command}:${cli.args.join(" ")}:mode=${cli.mode ?? "per-file"}:root=${cli.rootMarker ?? ""}`;
+	}
+	return `cli:${cli.command}:${cli.args.join(" ")}`;
 }
 
 function buildAdaptersFromConfig(
@@ -177,12 +201,16 @@ function buildAdaptersFromConfig(
 	const adapters: LinterAdapter[] = [];
 
 	for (const linter of Object.values(config.linters)) {
-		const key = adapterKey(linter);
+		const key = definitionKey(linter);
 		if (seen.has(key)) continue;
 		seen.add(key);
 
 		if (linter.type === "api" && linter.name === "markdownlint") {
-			adapters.push(createMarkdownlintAdapter());
+			adapters.push(
+				createMarkdownlintAdapter({
+					runner: (linter as ApiLinterDefinition).runner,
+				}),
+			);
 		} else if (linter.type === "cli") {
 			adapters.push(
 				createCliAdapter({
@@ -200,14 +228,6 @@ function buildAdaptersFromConfig(
 	return adapters;
 }
 
-function adapterKey(linter: LinterDefinition): string {
-	if (linter.type === "api") return `api:${linter.name}`;
-	if (linter.mode === "project-root" || linter.mode === "workspace") {
-		return `cli:${linter.command}:${linter.args.join(" ")}:mode=${linter.mode ?? "per-file"}:root=${linter.rootMarker ?? ""}`;
-	}
-	return `cli:${linter.command}:${linter.args.join(" ")}`;
-}
-
 function isBuiltInIgnoredAgentArtifact(filePath: string): boolean {
 	const normalized = filePath.replace(/\\/g, "/");
 	return (
@@ -218,6 +238,6 @@ function isBuiltInIgnoredAgentArtifact(filePath: string): boolean {
 
 export const __test__ = {
 	groupFilesByAdapter,
-	adapterKey,
+	definitionKey,
 	isBuiltInIgnoredAgentArtifact,
 };

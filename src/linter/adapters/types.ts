@@ -9,5 +9,6 @@ import type { ValidationOutcome } from "../types.js";
  */
 export interface LinterAdapter {
 	readonly name: string;
+	readonly key: string;
 	run(filePaths: string[], cwd: string): Promise<ValidationOutcome>;
 }
