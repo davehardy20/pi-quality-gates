@@ -53,26 +53,18 @@ describe("post-turn-linter: fix prompt", () => {
 					...DEFAULT_CONFIG,
 					reportMode: "auto-follow-up",
 				}),
-				runQueuedLintChecks: async () => ({
-					kind: "findings",
-					report: "/repo/src/example.ts:1:1 RULE0 detail",
-					affectedFiles: ["/repo/src/example.ts"],
-					signature: "signature",
-					reportMode: "auto-follow-up",
-				}),
-				runQueuedLspChecks: async () => ({
-					kind: "clean",
-					report: "",
-					affectedFiles: [],
-					signature: "lsp-clean",
-				}),
-				mergeValidationOutcomes: (args) => ({
-					kind: args.results[0]?.kind ?? "clean",
-					report: args.results[0]?.report ?? "",
-					affectedFiles: args.results[0]?.affectedFiles ?? [],
-					signature: args.results[0]?.signature ?? "",
-					reportMode: args.reportMode,
-				}),
+				createPipeline: () =>
+					({
+						runChecks: async () => ({
+							kind: "findings",
+							report: "/repo/src/example.ts:1:1 RULE0 detail",
+							affectedFiles: ["/repo/src/example.ts"],
+							signature: "signature",
+							reportMode: "auto-follow-up",
+						}),
+						summarize: () => ({ message: "", details: {} }) as never,
+						persist: async () => ({ ok: true, metadata: sidecarMetadata }),
+					}) as never,
 				setTimeout: (callback) => {
 					callback();
 					return undefined;

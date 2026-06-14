@@ -439,26 +439,18 @@ describe("post-turn-linter: core helpers", () => {
 				{
 					existsSync: () => true,
 					loadLinterConfig: async () => LinterDefaultConfig,
-					runQueuedLintChecks: async () => ({
-						kind: "clean",
-						report: "",
-						affectedFiles: [],
-						signature: "clean",
-						reportMode: "report-only",
-					}),
-					runQueuedLspChecks: async () => ({
-						kind: "clean",
-						report: "",
-						affectedFiles: [],
-						signature: "lsp-clean",
-					}),
-					mergeValidationOutcomes: (args) => ({
-						kind: args.results[0]?.kind ?? "clean",
-						report: args.results[0]?.report ?? "",
-						affectedFiles: args.results[0]?.affectedFiles ?? [],
-						signature: args.results[0]?.signature ?? "",
-						reportMode: args.reportMode,
-					}),
+					createPipeline: () =>
+						({
+							runChecks: async () => ({
+								kind: "clean",
+								report: "",
+								affectedFiles: [],
+								signature: "clean",
+								reportMode: "report-only",
+							}),
+							summarize: () => ({ message: "", details: {} }) as never,
+							persist: async () => ({ ok: true, metadata: sidecarMetadata }),
+						}) as never,
 					setTimeout: (callback) => {
 						callback();
 						return undefined;
@@ -589,26 +581,18 @@ describe("post-turn-linter: core helpers", () => {
 					...LinterDefaultConfig,
 					reportMode: "auto-follow-up",
 				}),
-				runQueuedLintChecks: async () => ({
-					kind: "findings",
-					report: fullReport,
-					affectedFiles: ["/repo/src/a.ts"],
-					signature: "signature",
-					reportMode: "auto-follow-up",
-				}),
-				runQueuedLspChecks: async () => ({
-					kind: "clean",
-					report: "",
-					affectedFiles: [],
-					signature: "lsp-clean",
-				}),
-				mergeValidationOutcomes: (args) => ({
-					kind: args.results[0]?.kind ?? "clean",
-					report: args.results[0]?.report ?? "",
-					affectedFiles: args.results[0]?.affectedFiles ?? [],
-					signature: args.results[0]?.signature ?? "",
-					reportMode: args.reportMode,
-				}),
+				createPipeline: () =>
+					({
+						runChecks: async () => ({
+							kind: "findings",
+							report: fullReport,
+							affectedFiles: ["/repo/src/a.ts"],
+							signature: "signature",
+							reportMode: "auto-follow-up",
+						}),
+						summarize: () => ({ message: "", details: {} }) as never,
+						persist: async () => ({ ok: true, metadata: sidecarMetadata }),
+					}) as never,
 				setTimeout: (callback) => {
 					callback();
 					return undefined;

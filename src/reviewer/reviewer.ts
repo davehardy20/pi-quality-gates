@@ -89,7 +89,7 @@ export function extractOriginalTask(
 		const entry = entries[i];
 		if (entry.type !== "message") continue;
 		const msg = entry.message;
-		if (!msg || msg.role !== "user") continue;
+		if (msg?.role !== "user") continue;
 
 		const content = msg.content;
 		if (!content) continue;

@@ -20,14 +20,14 @@ const MULTIPLE_SLASHES = /\/+/g;
  * Handles "..." and '...' wrappers.
  */
 function stripQuotes(value: string): string {
-  if (
-    value.length >= 2 &&
-    value[0] === value[value.length - 1] &&
-    (value[0] === '"' || value[0] === "'")
-  ) {
-    return value.slice(1, -1);
-  }
-  return value;
+	if (
+		value.length >= 2 &&
+		value[0] === value[value.length - 1] &&
+		(value[0] === '"' || value[0] === "'")
+	) {
+		return value.slice(1, -1);
+	}
+	return value;
 }
 
 /**
@@ -39,20 +39,20 @@ function stripQuotes(value: string): string {
  * - Strips trailing slashes (except for root `/`).
  */
 export function normalizePath(filePath: string): string {
-  // Convert backslashes first so path.normalize can resolve . and ..
-  // on any platform.
-  let normalized = filePath.replace(/\\/g, "/");
-  normalized = path.normalize(normalized);
-  // On Windows path.normalize converts forward slashes back to backslashes,
-  // so run a second pass to guarantee consistent forward-slash output.
-  normalized = normalized.replace(/\\/g, "/");
-  normalized = normalized.replace(MULTIPLE_SLASHES, "/");
-  normalized = path.normalize(normalized);
-  normalized = normalized.replace(MULTIPLE_SLASHES, "/");
-  if (normalized.length > 1 && normalized.endsWith("/")) {
-    normalized = normalized.slice(0, -1);
-  }
-  return normalized;
+	// Convert backslashes first so path.normalize can resolve . and ..
+	// on any platform.
+	let normalized = filePath.replace(/\\/g, "/");
+	normalized = path.normalize(normalized);
+	// On Windows path.normalize converts forward slashes back to backslashes,
+	// so run a second pass to guarantee consistent forward-slash output.
+	normalized = normalized.replace(/\\/g, "/");
+	normalized = normalized.replace(MULTIPLE_SLASHES, "/");
+	normalized = path.normalize(normalized);
+	normalized = normalized.replace(MULTIPLE_SLASHES, "/");
+	if (normalized.length > 1 && normalized.endsWith("/")) {
+		normalized = normalized.slice(0, -1);
+	}
+	return normalized;
 }
 
 /**
@@ -62,22 +62,22 @@ export function normalizePath(filePath: string): string {
  * case-insensitive comparison. On Linux it is case-sensitive.
  */
 export function pathsEqual(a: string, b: string): boolean {
-  const na = normalizePath(a);
-  const nb = normalizePath(b);
-  const caseInsensitive =
-    process.platform === "win32" || process.platform === "darwin";
-  return caseInsensitive ? na.toLowerCase() === nb.toLowerCase() : na === nb;
+	const na = normalizePath(a);
+	const nb = normalizePath(b);
+	const caseInsensitive =
+		process.platform === "win32" || process.platform === "darwin";
+	return caseInsensitive ? na.toLowerCase() === nb.toLowerCase() : na === nb;
 }
 
 /**
  * Expand `~` and `~user` prefixes using the OS home directory.
  */
 export function expandTilde(filePath: string): string {
-  if (filePath === "~") return os.homedir();
-  if (filePath.startsWith("~/")) {
-    return path.join(os.homedir(), filePath.slice(2));
-  }
-  return filePath;
+	if (filePath === "~") return os.homedir();
+	if (filePath.startsWith("~/")) {
+		return path.join(os.homedir(), filePath.slice(2));
+	}
+	return filePath;
 }
 
 /**
@@ -92,18 +92,18 @@ export function expandTilde(filePath: string): string {
  * Use this in `registerCommand` handlers when parsing file-path arguments.
  */
 export function resolveCommandPath(input: string, cwd: string): string | null {
-  let trimmed = input.trim();
-  if (!trimmed) return null;
+	let trimmed = input.trim();
+	if (!trimmed) return null;
 
-  trimmed = stripQuotes(trimmed).trim();
-  if (!trimmed) return null;
+	trimmed = stripQuotes(trimmed).trim();
+	if (!trimmed) return null;
 
-  const expanded = expandTilde(trimmed);
-  const absolute = path.isAbsolute(expanded)
-    ? expanded
-    : path.resolve(cwd, expanded);
+	const expanded = expandTilde(trimmed);
+	const absolute = path.isAbsolute(expanded)
+		? expanded
+		: path.resolve(cwd, expanded);
 
-  return normalizePath(absolute);
+	return normalizePath(absolute);
 }
 
 /**
@@ -113,18 +113,18 @@ export function resolveCommandPath(input: string, cwd: string): string | null {
  * correctly (e.g. `file:///C:/foo` → `C:/foo` after normalization).
  */
 export function uriToNormalizedPath(uri: string): string {
-  try {
-    let filePath = fileURLToPath(uri);
-    // On POSIX, fileURLToPath leaves a leading slash on Windows drive-letter
-    // URIs (e.g. file:///C:/foo → /C:/foo). Strip it so the path is usable.
-    if (/^\/[A-Za-z]:(?:\/|$)/.test(filePath)) {
-      filePath = filePath.slice(1);
-    }
-    return normalizePath(filePath);
-  } catch {
-    // Not a valid file URI — fall back to normalizing the raw string
-    return normalizePath(uri);
-  }
+	try {
+		let filePath = fileURLToPath(uri);
+		// On POSIX, fileURLToPath leaves a leading slash on Windows drive-letter
+		// URIs (e.g. file:///C:/foo → /C:/foo). Strip it so the path is usable.
+		if (/^\/[A-Za-z]:(?:\/|$)/.test(filePath)) {
+			filePath = filePath.slice(1);
+		}
+		return normalizePath(filePath);
+	} catch {
+		// Not a valid file URI — fall back to normalizing the raw string
+		return normalizePath(uri);
+	}
 }
 
 /**
@@ -134,22 +134,22 @@ export function uriToNormalizedPath(uri: string): string {
  * consistent output ordering and eliminate duplicates.
  */
 export function normalizeAndSortPaths(filePaths: string[]): string[] {
-  return Array.from(new Set(filePaths.map(normalizePath))).sort();
+	return Array.from(new Set(filePaths.map(normalizePath))).sort();
 }
 
 /**
  * Options for {@link resolvePath}.
  */
 export interface ResolvePathOptions {
-  /**
-   * When `true` (default), follow symlinks via `fs.realpathSync.native`.
-   * When `false`, skip symlink resolution and return the logical path.
-   *
-   * Set to `false` when you need the path the caller *intended* rather than
-   * its physical target (e.g. git secret scanning that should stay within
-   * the repo root).
-   */
-  followSymlinks?: boolean;
+	/**
+	 * When `true` (default), follow symlinks via `fs.realpathSync.native`.
+	 * When `false`, skip symlink resolution and return the logical path.
+	 *
+	 * Set to `false` when you need the path the caller *intended* rather than
+	 * its physical target (e.g. git secret scanning that should stay within
+	 * the repo root).
+	 */
+	followSymlinks?: boolean;
 }
 
 /**
@@ -163,23 +163,23 @@ export interface ResolvePathOptions {
  *   not exist yet).
  */
 export function resolvePath(
-  p: string,
-  cwd: string,
-  options?: ResolvePathOptions,
+	p: string,
+	cwd: string,
+	options?: ResolvePathOptions,
 ): string {
-  const followSymlinks = options?.followSymlinks ?? true;
-  if (p.startsWith("~")) {
-    p = path.join(os.homedir(), p.slice(1));
-  }
-  const resolved = path.resolve(cwd, p);
-  if (!followSymlinks) {
-    return resolved;
-  }
-  try {
-    return fs.realpathSync.native(resolved);
-  } catch {
-    return resolved;
-  }
+	const followSymlinks = options?.followSymlinks ?? true;
+	if (p.startsWith("~")) {
+		p = path.join(os.homedir(), p.slice(1));
+	}
+	const resolved = path.resolve(cwd, p);
+	if (!followSymlinks) {
+		return resolved;
+	}
+	try {
+		return fs.realpathSync.native(resolved);
+	} catch {
+		return resolved;
+	}
 }
 
 /**
@@ -195,55 +195,55 @@ export function resolvePath(
  * absolute, symlink-followed by default) before comparison.
  */
 export function isPathMatch(
-  targetPath: string,
-  pattern: string,
-  cwd: string,
-  options?: ResolvePathOptions,
+	targetPath: string,
+	pattern: string,
+	cwd: string,
+	options?: ResolvePathOptions,
 ): boolean {
-  const followSymlinks = options?.followSymlinks ?? true;
-  let resolvedPattern = pattern.startsWith("~")
-    ? path.join(os.homedir(), pattern.slice(1))
-    : pattern;
+	const followSymlinks = options?.followSymlinks ?? true;
+	let resolvedPattern = pattern.startsWith("~")
+		? path.join(os.homedir(), pattern.slice(1))
+		: pattern;
 
-  if (!path.isAbsolute(resolvedPattern)) {
-    resolvedPattern = path.resolve(cwd, resolvedPattern);
-  }
+	if (!path.isAbsolute(resolvedPattern)) {
+		resolvedPattern = path.resolve(cwd, resolvedPattern);
+	}
 
-  if (followSymlinks) {
-    try {
-      resolvedPattern = fs.realpathSync.native(resolvedPattern);
-    } catch {
-      // path may not exist; keep resolved value for glob/regex matching
-    }
-  }
+	if (followSymlinks) {
+		try {
+			resolvedPattern = fs.realpathSync.native(resolvedPattern);
+		} catch {
+			// path may not exist; keep resolved value for glob/regex matching
+		}
+	}
 
-  const isDirPattern = resolvedPattern.endsWith(path.sep);
-  const normPattern = isDirPattern
-    ? resolvedPattern.slice(0, -1)
-    : resolvedPattern;
-  const normTarget = targetPath.endsWith(path.sep)
-    ? targetPath.slice(0, -1)
-    : targetPath;
+	const isDirPattern = resolvedPattern.endsWith(path.sep);
+	const normPattern = isDirPattern
+		? resolvedPattern.slice(0, -1)
+		: resolvedPattern;
+	const normTarget = targetPath.endsWith(path.sep)
+		? targetPath.slice(0, -1)
+		: targetPath;
 
-  if (normTarget === normPattern) return true;
-  if (normTarget.startsWith(normPattern + path.sep)) return true;
+	if (normTarget === normPattern) return true;
+	if (normTarget.startsWith(normPattern + path.sep)) return true;
 
-  const relativePath = path.relative(cwd, targetPath);
-  const normRelative = relativePath.endsWith(path.sep)
-    ? relativePath.slice(0, -1)
-    : relativePath;
-  if (normRelative === normPattern) return true;
-  if (normRelative.startsWith(normPattern + path.sep)) return true;
+	const relativePath = path.relative(cwd, targetPath);
+	const normRelative = relativePath.endsWith(path.sep)
+		? relativePath.slice(0, -1)
+		: relativePath;
+	if (normRelative === normPattern) return true;
+	if (normRelative.startsWith(normPattern + path.sep)) return true;
 
-  const regexPattern = normPattern
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replace(/\*/g, ".*")
-    .replace(/\?/g, ".");
+	const regexPattern = normPattern
+		.replace(/[.+^${}()|[\]\\]/g, "\\$&")
+		.replace(/\*/g, ".*")
+		.replace(/\?/g, ".");
 
-  const sep = path.sep === "\\" ? "\\\\" : "/";
-  const regex = new RegExp(
-    `^${regexPattern}$|^${regexPattern}${sep}|${sep}${regexPattern}$|${sep}${regexPattern}${sep}`,
-  );
+	const sep = path.sep === "\\" ? "\\\\" : "/";
+	const regex = new RegExp(
+		`^${regexPattern}$|^${regexPattern}${sep}|${sep}${regexPattern}$|${sep}${regexPattern}${sep}`,
+	);
 
-  return regex.test(normTarget) || regex.test(normRelative);
+	return regex.test(normTarget) || regex.test(normRelative);
 }

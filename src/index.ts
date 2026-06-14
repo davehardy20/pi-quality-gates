@@ -34,10 +34,10 @@ import postTurnLinter from "./linter/index.js";
 import postTurnReviewerExtension from "./reviewer/index.js";
 
 interface PackageMetadata {
-  name: string;
-  version: string;
-  packageRoot: string;
-  sourcePath: string;
+	name: string;
+	version: string;
+	packageRoot: string;
+	sourcePath: string;
 }
 
 const sourcePath = fileURLToPath(import.meta.url);
@@ -45,44 +45,44 @@ const packageRoot = path.resolve(path.dirname(sourcePath), "..");
 let cachedPackageMetadata: PackageMetadata | null = null;
 
 function getPackageMetadata(): PackageMetadata {
-  if (cachedPackageMetadata) return cachedPackageMetadata;
+	if (cachedPackageMetadata) return cachedPackageMetadata;
 
-  let name = "pi-quality-gates";
-  let version = "0.1.0";
+	let name = "pi-quality-gates";
+	let version = "0.1.0";
 
-  try {
-    const packageJsonPath = path.join(packageRoot, "package.json");
-    const packageJson = JSON.parse(
-      fs.readFileSync(packageJsonPath, "utf8"),
-    ) as { name?: string; version?: string };
-    name = packageJson.name ?? name;
-    version = packageJson.version ?? version;
-  } catch {
-    // best-effort metadata only
-  }
+	try {
+		const packageJsonPath = path.join(packageRoot, "package.json");
+		const packageJson = JSON.parse(
+			fs.readFileSync(packageJsonPath, "utf8"),
+		) as { name?: string; version?: string };
+		name = packageJson.name ?? name;
+		version = packageJson.version ?? version;
+	} catch {
+		// best-effort metadata only
+	}
 
-  cachedPackageMetadata = { name, version, packageRoot, sourcePath };
-  return cachedPackageMetadata;
+	cachedPackageMetadata = { name, version, packageRoot, sourcePath };
+	return cachedPackageMetadata;
 }
 
 export default function qualityGatesExtension(pi: ExtensionAPI) {
-  postTurnLinter(pi);
-  postTurnReviewerExtension(pi);
+	postTurnLinter(pi);
+	postTurnReviewerExtension(pi);
 
-  pi.registerCommand("quality-gates-status", {
-    description: "Show pi-quality-gates package status and debug info",
-    handler: async (_args, _ctx) => {
-      const metadata = getPackageMetadata();
-      pi.sendMessage({
-        customType: "quality-gates-status",
-        content: [
-          `${metadata.name} v${metadata.version}`,
-          `source: ${metadata.sourcePath}`,
-          `packageRoot: ${metadata.packageRoot}`,
-        ].join("\n"),
-        details: metadata,
-        display: true,
-      });
-    },
-  });
+	pi.registerCommand("quality-gates-status", {
+		description: "Show pi-quality-gates package status and debug info",
+		handler: async (_args, _ctx) => {
+			const metadata = getPackageMetadata();
+			pi.sendMessage({
+				customType: "quality-gates-status",
+				content: [
+					`${metadata.name} v${metadata.version}`,
+					`source: ${metadata.sourcePath}`,
+					`packageRoot: ${metadata.packageRoot}`,
+				].join("\n"),
+				details: metadata,
+				display: true,
+			});
+		},
+	});
 }
