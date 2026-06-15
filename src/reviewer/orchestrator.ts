@@ -437,7 +437,9 @@ export function createReviewerOrchestrator(
 			);
 			state.reviewTimerId = setTimeout(() => {
 				state.reviewTimerId = null;
-				transition(state, "GATHERING");
+				if (!state.config.enabled || state.phase !== "GATHERING") {
+					return;
+				}
 				void runReview(ctx, false);
 			}, state.config.reviewDelayMs);
 			return;
@@ -492,7 +494,7 @@ export function createReviewerOrchestrator(
 				return;
 			}
 
-			transition(state, "REVIEWING");
+			transition(state, isReReview ? "RE_REVIEWING" : "REVIEWING");
 			safeSetStatus(
 				ctx,
 				isReReview
@@ -779,6 +781,14 @@ export function createReviewerOrchestrator(
 			ctx: ExtensionContext,
 			options: { isReReview?: boolean; files?: string[] } = {},
 		): Promise<void> {
+			if (state.phase !== "IDLE" && state.phase !== "FIX_REQUESTED") {
+				safeNotify(
+					ctx,
+					`🔍 Reviewer busy (phase: ${state.phase}). Wait for the current review to finish.`,
+					"warning",
+				);
+				return;
+			}
 			const isReReview = options.isReReview ?? false;
 			if (options.files && options.files.length > 0) {
 				state.pendingFiles = options.files;
@@ -897,6 +907,10 @@ export function createReviewerOrchestrator(
 						safeNotify(ctx, "🔍 Post-Turn Reviewer: enabled.", "info");
 					} else if (arg === "off" || arg === "disable") {
 						state.config = { ...state.config, enabled: false };
+						if (state.reviewTimerId) {
+							clearTimeout(state.reviewTimerId);
+							state.reviewTimerId = null;
+						}
 						if (state.phase !== "IDLE") {
 							transition(state, "IDLE");
 						}
@@ -906,8 +920,14 @@ export function createReviewerOrchestrator(
 							...state.config,
 							enabled: !state.config.enabled,
 						};
-						if (!state.config.enabled && state.phase !== "IDLE") {
-							transition(state, "IDLE");
+						if (!state.config.enabled) {
+							if (state.reviewTimerId) {
+								clearTimeout(state.reviewTimerId);
+								state.reviewTimerId = null;
+							}
+							if (state.phase !== "IDLE") {
+								transition(state, "IDLE");
+							}
 						}
 						safeNotify(
 							ctx,

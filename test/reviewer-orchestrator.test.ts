@@ -1,5 +1,5 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, type Mock, vi } from "vitest";
 import {
 	createReviewerOrchestrator,
 	type ReviewerOrchestratorDeps,
@@ -387,5 +387,152 @@ describe("ReviewerOrchestrator", () => {
 		await Promise.all([first, second]);
 
 		expect(deps.runReview).toHaveBeenCalledTimes(1);
+	});
+
+	it("cancels a pending delayed review when disabled", async () => {
+		vi.useFakeTimers();
+		const pi = createMockPi();
+		const deps = createFakeDeps({
+			loadConfig: { ...DEFAULT_REVIEW_CONFIG, reviewDelayMs: 100 },
+			runReview: passReport(),
+		});
+		const orchestrator = createReviewerOrchestrator(pi as never, deps);
+		const ctx = createMockContext({
+			sessionManager: {
+				getBranch: () => [
+					{
+						type: "message",
+						message: { role: "user", content: "Do the thing" },
+					},
+				],
+				getSessionFile: () => "/tmp/session.jsonl",
+			},
+		});
+
+		await orchestrator.initialize(ctx);
+		orchestrator.onLinterClean(["src/a.ts"]);
+		const turnEndPromise = orchestrator.onTurnEnd(ctx);
+		await vi.advanceTimersByTimeAsync(50);
+		expect(deps.runReview).not.toHaveBeenCalled();
+
+		orchestrator.registerCommands(pi as never);
+		await pi.commands.get("reviewer-toggle")?.(
+			"off",
+			ctx as unknown as MockContext,
+		);
+		await vi.advanceTimersByTimeAsync(200);
+		await turnEndPromise;
+
+		expect(deps.runReview).not.toHaveBeenCalled();
+		expect(orchestrator.getStateSnapshot().phase).toBe("IDLE");
+		vi.useRealTimers();
+	});
+
+	it("stays in RE_REVIEWING while a re-review is pending", async () => {
+		const pi = createMockPi();
+		const deps = createFakeDeps({ runReview: issuesReport() });
+		const orchestrator = createReviewerOrchestrator(pi as never, deps);
+		const ctx = createMockContext({
+			sessionManager: {
+				getBranch: () => [
+					{
+						type: "message",
+						message: { role: "user", content: "Do the thing" },
+					},
+				],
+				getSessionFile: () => "/tmp/session.jsonl",
+			},
+		});
+
+		await orchestrator.initialize(ctx);
+		orchestrator.onLinterClean(["src/a.ts"]);
+		await orchestrator.onTurnEnd(ctx);
+		expect(orchestrator.getStateSnapshot().phase).toBe("FIX_REQUESTED");
+
+		let resolveRun: (
+			value: Awaited<ReturnType<typeof deps.runReview>>,
+		) => void = () => undefined;
+		(deps.runReview as Mock).mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					resolveRun = resolve;
+				}) as ReturnType<typeof deps.runReview>,
+		);
+
+		orchestrator.onLinterClean(["src/a.ts"]);
+		const reReview = orchestrator.onTurnEnd(ctx);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(orchestrator.getStateSnapshot().phase).toBe("RE_REVIEWING");
+
+		resolveRun({
+			report: passReport(),
+			rawOutput: "",
+			exitCode: 0,
+			timedOut: false,
+			stderr: "",
+			command: "pi --mode json",
+		});
+		await reReview;
+
+		expect(orchestrator.getStateSnapshot().phase).toBe("IDLE");
+	});
+
+	it("guards concurrent direct requestReview calls", async () => {
+		const pi = createMockPi();
+		const deps = createFakeDeps({ runReview: passReport() });
+		const orchestrator = createReviewerOrchestrator(pi as never, deps);
+		const ctx = createMockContext({
+			hasUI: true,
+			sessionManager: {
+				getBranch: () => [
+					{
+						type: "message",
+						message: { role: "user", content: "Do the thing" },
+					},
+				],
+				getSessionFile: () => "/tmp/session.jsonl",
+			},
+		});
+
+		await orchestrator.initialize(ctx);
+
+		let resolveRun: (
+			value: Awaited<ReturnType<typeof deps.runReview>>,
+		) => void = () => undefined;
+		(deps.runReview as Mock).mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					resolveRun = resolve;
+				}) as ReturnType<typeof deps.runReview>,
+		);
+
+		const first = orchestrator.requestReview(ctx, { files: ["src/a.ts"] });
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		const second = orchestrator.requestReview(ctx, { files: ["src/b.ts"] });
+		expect(
+			(ctx.ui.notify as Mock).mock.calls.some((call) =>
+				(call[0] as string).includes("Reviewer busy"),
+			),
+		).toBe(true);
+
+		resolveRun({
+			report: passReport(),
+			rawOutput: "",
+			exitCode: 0,
+			timedOut: false,
+			stderr: "",
+			command: "pi --mode json",
+		});
+		await first;
+		await second;
+
+		expect(deps.runReview).toHaveBeenCalledTimes(1);
+		expect(deps.runReview).toHaveBeenCalledWith(
+			expect.any(String),
+			["src/a.ts"],
+			"/repo",
+			expect.any(Object),
+			expect.any(Object),
+		);
 	});
 });
