@@ -1,14 +1,14 @@
 import { existsSync } from "node:fs";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { loadLinterConfig, mergeValidationOutcomes, runQueuedLintChecks } from "./core.js";
-import { runQueuedLspChecks } from "./lsp.js";
-import { isQualityGatesSubAgentRuntime, recoverLinterReportSidecar, writeLinterReportSidecar } from "./report-hygiene.js";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { isQualityGatesSubAgentRuntime } from "../shared/runtime-detection.js";
+import { loadLinterConfig } from "./core.js";
+import { type LinterPipeline } from "./pipeline.js";
+import { recoverLinterReportSidecar, writeLinterReportSidecar } from "./report-hygiene.js";
+import type { LspDiagnosticsConfig } from "./types.js";
 interface PostTurnLinterDependencies {
     existsSync: typeof existsSync;
     loadLinterConfig: typeof loadLinterConfig;
-    runQueuedLintChecks: typeof runQueuedLintChecks;
-    runQueuedLspChecks: typeof runQueuedLspChecks;
-    mergeValidationOutcomes: typeof mergeValidationOutcomes;
+    createPipeline: (cwd: string, lspConfig: LspDiagnosticsConfig, ctx: ExtensionContext) => LinterPipeline;
     setTimeout: (callback: () => void, ms?: number) => unknown;
     statSync: (path: string) => {
         mtimeMs: number;

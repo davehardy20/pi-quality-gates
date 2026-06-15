@@ -1,20 +1,7 @@
-import type { QualityGatesRuntimeMode } from "./types.js";
-export type LinterReportRecoveryMode = "metadata" | "preview" | "slice" | "full";
-export interface LinterReportSidecarMetadata {
-    id: string;
-    toolName: "post-turn-linter";
-    sessionId: string;
-    path: string;
-    createdAt: string;
-    originalChars: number;
-    originalBytes: number;
-    redactedChars: number;
-    redactedBytes: number;
-    originalSha256: string;
-    redactedSha256: string;
-    summaryMode: "post-turn-linter-summary";
-    failureState?: string;
-}
+import { type LinterReportSidecarMetadata, type RecoverReportSidecarOptions, type ReportRecoveryMode } from "../shared/report-sidecar.js";
+export type { LinterReportSidecarMetadata, ParsedReportRecoveryArgs, ReportRecoveryMode as LinterReportRecoveryMode, } from "../shared/report-sidecar.js";
+export { defaultReportSidecarDir as defaultLinterReportSidecarDir, deriveSessionId, parseReportRecoveryArgs, redactSecrets, } from "../shared/report-sidecar.js";
+export { isQualityGatesSubAgentRuntime } from "../shared/runtime-detection.js";
 export interface LinterReportSidecarWriteResult {
     ok: boolean;
     metadata: LinterReportSidecarMetadata;
@@ -26,25 +13,13 @@ export interface LinterReportSidecarWriteOptions {
     sidecarDir?: string;
     now?: Date;
 }
-export interface LinterReportRecoveryOptions {
-    recordPath: string;
-    mode: LinterReportRecoveryMode;
-    acknowledgeContextCost?: boolean;
-    allowFullWithoutAck?: boolean;
-    offset?: number;
-    length?: number;
-    previewChars?: number;
+export interface LinterReportRecoveryOptions extends Omit<RecoverReportSidecarOptions, "mode"> {
+    mode: ReportRecoveryMode;
 }
 export interface LinterReportRecoveryResult {
-    mode: LinterReportRecoveryMode;
+    mode: ReportRecoveryMode;
     content: string;
     metadata: LinterReportSidecarMetadata;
-}
-export interface ParsedReportRecoveryArgs {
-    mode: LinterReportRecoveryMode;
-    acknowledgeContextCost: boolean;
-    offset: number;
-    length: number;
 }
 export interface ParsedLintFinding {
     filePath: string;
@@ -78,17 +53,10 @@ export interface LinterReportSummaryResult {
     message: string;
     details: LinterReportSummaryDetails;
 }
-export declare function isQualityGatesSubAgentRuntime(env?: Record<string, string | undefined>, mode?: QualityGatesRuntimeMode): boolean;
-export declare function defaultLinterReportSidecarDir(): string;
-export declare function redactSecrets(input: string): string;
-export declare function deriveSessionId(ctx: {
-    sessionManager?: {
-        getSessionFile?: () => string | null | undefined;
-    };
-}): string;
 export declare function writeLinterReportSidecar(options: LinterReportSidecarWriteOptions): Promise<LinterReportSidecarWriteResult>;
-export declare function recoverLinterReportSidecar(options: LinterReportRecoveryOptions): Promise<LinterReportRecoveryResult>;
-export declare function parseReportRecoveryArgs(args: string | undefined): ParsedReportRecoveryArgs;
+export declare function recoverLinterReportSidecar(options: LinterReportRecoveryOptions & {
+    allowFullWithoutAck?: boolean;
+}): Promise<LinterReportRecoveryResult>;
 export declare function buildSummaryFirstLintMessage(args: {
     report: string;
     filesChecked: string[];

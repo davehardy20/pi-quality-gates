@@ -1,39 +1,31 @@
-import type { LinterReportRecoveryMode, LinterReportRecoveryOptions, LinterReportRecoveryResult, ParsedReportRecoveryArgs } from "../linter/report-hygiene.js";
-import { deriveSessionId, isQualityGatesSubAgentRuntime, parseReportRecoveryArgs } from "../linter/report-hygiene.js";
-import type { ReviewReport } from "./types.js";
-export type { LinterReportRecoveryMode as ReviewerReportRecoveryMode, ParsedReportRecoveryArgs, };
-export { deriveSessionId, isQualityGatesSubAgentRuntime, parseReportRecoveryArgs, };
-export interface ReviewerReportSidecarMetadata {
-    id: string;
-    toolName: "post-turn-reviewer";
-    sessionId: string;
-    path: string;
-    createdAt: string;
-    originalChars: number;
-    originalBytes: number;
-    redactedChars: number;
-    redactedBytes: number;
-    originalSha256: string;
-    redactedSha256: string;
-    summaryMode: "post-turn-reviewer-summary";
-    failureState?: string;
-}
+import { type RecoverReportSidecarOptions, type ReportRecoveryMode, type ReviewerReportSidecarMetadata } from "../shared/report-sidecar.js";
+export type { ParsedReportRecoveryArgs, ReportRecoveryMode as ReviewerReportRecoveryMode, ReviewerReportSidecarMetadata, } from "../shared/report-sidecar.js";
+export { defaultReportSidecarDir as defaultReviewerReportSidecarDir, deriveSessionId, parseReportRecoveryArgs, redactSecrets, } from "../shared/report-sidecar.js";
+export { isQualityGatesSubAgentRuntime } from "../shared/runtime-detection.js";
 export interface ReviewerReportSidecarWriteResult {
     ok: boolean;
     metadata: ReviewerReportSidecarMetadata;
     error?: string;
 }
-export interface ReviewerReportRecoveryOptions extends Omit<LinterReportRecoveryOptions, "mode"> {
-    mode: LinterReportRecoveryMode;
+export interface ReviewerReportSidecarWriteOptions {
+    report: string;
+    sessionId?: string;
+    sidecarDir?: string;
+    now?: Date;
 }
-export interface ReviewerReportRecoveryResult extends Omit<LinterReportRecoveryResult, "metadata"> {
+export interface ReviewerReportRecoveryOptions extends Omit<RecoverReportSidecarOptions, "mode"> {
+    mode: ReportRecoveryMode;
+}
+export interface ReviewerReportRecoveryResult {
+    mode: ReportRecoveryMode;
+    content: string;
     metadata: ReviewerReportSidecarMetadata;
 }
 export interface ReviewerReportSummaryResult {
     message: string;
     details: {
-        status: ReviewReport["status"];
-        confidence: ReviewReport["confidence"];
+        status: import("./types.js").ReviewReport["status"];
+        confidence: import("./types.js").ReviewReport["confidence"];
         totalFindings: number;
         visibleFindings: number;
         omittedFindings: number;
@@ -41,16 +33,10 @@ export interface ReviewerReportSummaryResult {
         sidecarError?: string;
     };
 }
-export declare function defaultReviewerReportSidecarDir(): string;
-export declare function writeReviewerReportSidecar(options: {
-    report: string;
-    sessionId?: string;
-    sidecarDir?: string;
-    now?: Date;
-}): Promise<ReviewerReportSidecarWriteResult>;
+export declare function writeReviewerReportSidecar(options: ReviewerReportSidecarWriteOptions): Promise<ReviewerReportSidecarWriteResult>;
 export declare function recoverReviewerReportSidecar(options: ReviewerReportRecoveryOptions): Promise<ReviewerReportRecoveryResult>;
 export declare function buildSummaryFirstReviewerMessage(args: {
-    report: ReviewReport;
+    report: import("./types.js").ReviewReport;
     sidecar: ReviewerReportSidecarWriteResult | null;
     maxFindings?: number;
     maxChars?: number;

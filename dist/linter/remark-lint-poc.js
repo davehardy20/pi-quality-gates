@@ -39,7 +39,13 @@ async function filterExistingFiles(filePaths) {
 export const runRemarkLint = async (filePaths) => {
     const existingFiles = await filterExistingFiles(filePaths);
     if (existingFiles.length === 0) {
-        return { kind: "clean", output: "", fileCount: 0, affectedFiles: [] };
+        return {
+            kind: "clean",
+            output: "",
+            fileCount: 0,
+            affectedFiles: [],
+            name: "remark-lint",
+        };
     }
     // Build the remark processor with plugins
     const processor = remark()
@@ -85,10 +91,11 @@ export const runRemarkLint = async (filePaths) => {
         output,
         fileCount: existingFiles.length,
         affectedFiles: affectedFiles.sort(),
+        name: "remark-lint",
     };
+    // ---------------------------------------------------------------------------
+    // Quick self-test (run with: npx tsx remark-lint-poc.ts)
 };
-// ---------------------------------------------------------------------------
-// Quick self-test (run with: npx tsx remark-lint-poc.ts)
 // ---------------------------------------------------------------------------
 async function selfTest() {
     const testFile = new URL("../../README.md", import.meta.url).pathname;

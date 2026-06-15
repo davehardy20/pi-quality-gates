@@ -1,25 +1,10 @@
-// biome-ignore-all format: generated build output
-
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { stopAllLspClients } from "../shared/lsp-service.js";
-import {
-    DEFAULT_CONFIG,
-    loadLinterConfig,
-    MAX_MODIFIED_FILES,
-    mergeValidationOutcomes,
-    runQueuedLintChecks,
-} from "./core.js";
-import { runQueuedLspChecks } from "./lsp.js";
-import {
-    buildSummaryFirstLintMessage,
-    deriveSessionId,
-    isQualityGatesSubAgentRuntime,
-    parseReportRecoveryArgs,
-    recoverLinterReportSidecar,
-    writeLinterReportSidecar,
-} from "./report-hygiene.js";
-
+import { isQualityGatesSubAgentRuntime } from "../shared/runtime-detection.js";
+import { DEFAULT_CONFIG, loadLinterConfig, MAX_MODIFIED_FILES, } from "./core.js";
+import { createLinterPipeline } from "./pipeline.js";
+import { buildSummaryFirstLintMessage, deriveSessionId, parseReportRecoveryArgs, recoverLinterReportSidecar, writeLinterReportSidecar, } from "./report-hygiene.js";
 function normalizeFilePath(path) {
     if (!path)
         return null;
@@ -209,9 +194,7 @@ function tokenizeArgs(input) {
 export function createPostTurnLinter(pi, deps = {
     existsSync,
     loadLinterConfig,
-    runQueuedLintChecks,
-    runQueuedLspChecks,
-    mergeValidationOutcomes,
+    createPipeline: (cwd, lspConfig, ctx) => createLinterPipeline({ cwd, lspConfig, lspContext: ctx }),
     setTimeout,
     statSync,
     writeLinterReportSidecar,
@@ -295,24 +278,8 @@ export function createPostTurnLinter(pi, deps = {
         if (state.shutDown)
             return;
         safeSetStatus(ctx, "post-turn-linter: running");
-        const lintResult = await deps.runQueuedLintChecks(filesToLint, cwd());
-        if (state.shutDown)
-            return;
-        let result = lintResult;
-        if (state.lspConfig.enabled) {
-            const lspResult = await deps.runQueuedLspChecks({
-                filePaths: filesToLint,
-                cwd: cwd(),
-                ctx,
-                config: state.lspConfig,
-            });
-            if (state.shutDown)
-                return;
-            result = deps.mergeValidationOutcomes({
-                reportMode: lintResult.reportMode,
-                results: [lintResult, lspResult],
-            });
-        }
+        const pipeline = deps.createPipeline(cwd(), state.lspConfig, ctx);
+        const result = await pipeline.runChecks(filesToLint);
         state.reportMode = result.reportMode;
         if (result.kind === "tool-error") {
             safeSetStatus(ctx, "post-turn-linter: tool error");

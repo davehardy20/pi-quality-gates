@@ -10,9 +10,7 @@ import * as path from "node:path";
 // The `ignore` ESM default export is the factory function, but TypeScript's
 // bundled types don't model the default correctly. Import as any and cast.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const _ignoreModule = 
-// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-require("ignore");
+const _ignoreModule = require("ignore");
 const createIgnore = _ignoreModule.default ?? _ignoreModule;
 // ── Implementation ─────────────────────────────────────────────────────
 const NOOP_FILTER = Object.freeze({

@@ -7,5 +7,5 @@
  * To use: swap the ".md" linter in DEFAULT_CONFIG from runMarkdownlint
  * to runRemarkLint (see bottom of file).
  */
-import type { ApiLinterRunner } from "./core.js";
+import type { ApiLinterRunner } from "./types.js";
 export declare const runRemarkLint: ApiLinterRunner;

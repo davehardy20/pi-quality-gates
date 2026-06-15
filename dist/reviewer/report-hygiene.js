@@ -1,112 +1,31 @@
-import { createHash, randomUUID } from "node:crypto";
-import { promises as fs } from "node:fs";
-import { join, resolve } from "node:path";
-import { defaultLinterReportSidecarDir, deriveSessionId, isQualityGatesSubAgentRuntime, parseReportRecoveryArgs, redactSecrets, } from "../linter/report-hygiene.js";
-export { deriveSessionId, isQualityGatesSubAgentRuntime, parseReportRecoveryArgs, };
+import { capText, recoverReportSidecar, redactSecrets, truncateText, writeReportSidecar, } from "../shared/report-sidecar.js";
+// Re-export shared helpers so existing callers keep working.
+export { defaultReportSidecarDir as defaultReviewerReportSidecarDir, deriveSessionId, parseReportRecoveryArgs, redactSecrets, } from "../shared/report-sidecar.js";
+export { isQualityGatesSubAgentRuntime } from "../shared/runtime-detection.js";
 const DEFAULT_MAX_REVIEWER_FINDINGS = 12;
 const DEFAULT_REVIEWER_SUMMARY_MAX_CHARS = 6000;
 const DEFAULT_PREVIEW_CHARS = 2000;
-const DEFAULT_SLICE_CHARS = 4000;
-const MAX_SINGLE_SIDECAR_BYTES = 10 * 1024 * 1024;
-export function defaultReviewerReportSidecarDir() {
-    return defaultLinterReportSidecarDir();
-}
 export async function writeReviewerReportSidecar(options) {
-    const now = options.now ?? new Date();
-    const id = randomUUID();
-    const sessionId = sanitizePathPart(options.sessionId ?? "default-session");
-    const root = resolve(options.sidecarDir ?? defaultReviewerReportSidecarDir());
-    const dir = join(root, sessionId);
-    const filePath = join(dir, `${id}.json`);
-    const redacted = redactSecrets(options.report);
-    const metadata = {
-        id,
+    return writeReportSidecar({
+        report: options.report,
         toolName: "post-turn-reviewer",
-        sessionId,
-        path: filePath,
-        createdAt: now.toISOString(),
-        originalChars: options.report.length,
-        originalBytes: byteLength(options.report),
-        redactedChars: redacted.length,
-        redactedBytes: byteLength(redacted),
-        originalSha256: sha256(options.report),
-        redactedSha256: sha256(redacted),
         summaryMode: "post-turn-reviewer-summary",
-    };
-    if (metadata.redactedBytes > MAX_SINGLE_SIDECAR_BYTES) {
-        return {
-            ok: false,
-            metadata: {
-                ...metadata,
-                failureState: "record_exceeds_max_single_record_bytes",
-            },
-            error: "redacted reviewer report exceeds max single sidecar size",
-        };
-    }
-    try {
-        await fs.mkdir(dir, { recursive: true, mode: 0o700 });
-        const payload = {
-            metadata,
-            content: redacted,
-        };
-        const tempPath = join(dir, `.${id}.${process.pid}.tmp`);
-        await fs.writeFile(tempPath, `${JSON.stringify(payload, null, 2)}\n`, {
-            encoding: "utf8",
-            mode: 0o600,
-        });
-        await fs.rename(tempPath, filePath);
-        return { ok: true, metadata };
-    }
-    catch (error) {
-        return {
-            ok: false,
-            metadata: { ...metadata, failureState: "write_failed" },
-            error: error instanceof Error ? error.message : String(error),
-        };
-    }
+        sessionId: options.sessionId,
+        sidecarDir: options.sidecarDir,
+        now: options.now,
+    });
 }
 export async function recoverReviewerReportSidecar(options) {
-    const raw = await fs.readFile(options.recordPath, "utf8");
-    const persisted = JSON.parse(raw);
-    const content = persisted.content;
-    const previewChars = options.previewChars ?? DEFAULT_PREVIEW_CHARS;
-    if (options.mode === "metadata") {
-        return {
-            mode: options.mode,
-            content: JSON.stringify(persisted.metadata, null, 2),
-            metadata: persisted.metadata,
-        };
-    }
-    if (options.mode === "full") {
-        if (!options.acknowledgeContextCost) {
-            throw new Error("full reviewer report recovery requires --ack-context-cost; use preview or slice first");
-        }
-        return { mode: options.mode, content, metadata: persisted.metadata };
-    }
-    if (options.mode === "slice") {
-        const offset = Math.max(0, options.offset ?? 0);
-        const requestedLength = Math.max(1, options.length ?? DEFAULT_SLICE_CHARS);
-        const length = Math.min(requestedLength, DEFAULT_SLICE_CHARS);
-        const slice = content.slice(offset, offset + length);
-        return {
-            mode: options.mode,
-            content: [
-                `reviewer report slice offset=${offset} length=${slice.length}/${content.length} (cap ${DEFAULT_SLICE_CHARS})`,
-                "",
-                slice,
-            ].join("\n"),
-            metadata: persisted.metadata,
-        };
-    }
-    const preview = content.slice(0, previewChars);
-    const suffix = content.length > preview.length
-        ? `\n\n[preview truncated: ${content.length - preview.length} more character(s); use /reviewer-report slice --offset=${preview.length} --length=${DEFAULT_SLICE_CHARS} or full --ack-context-cost]`
-        : "";
-    return {
+    return recoverReportSidecar({
+        recordPath: options.recordPath,
         mode: options.mode,
-        content: `${preview}${suffix}`,
-        metadata: persisted.metadata,
-    };
+        acknowledgeContextCost: options.acknowledgeContextCost,
+        offset: options.offset,
+        length: options.length,
+        previewChars: options.previewChars ?? DEFAULT_PREVIEW_CHARS,
+        reportLabel: "reviewer",
+        commandName: "/reviewer-report",
+    });
 }
 export function buildSummaryFirstReviewerMessage(args) {
     const maxFindings = args.maxFindings ?? DEFAULT_MAX_REVIEWER_FINDINGS;
@@ -175,26 +94,6 @@ export function buildBoundedReviewerFailureMessage(args) {
         lines.push(...args.hints.map((hint) => `Hint: ${hint}`));
     return capText(redactSecrets(lines.join("\n")), maxChars);
 }
-function sanitizePathPart(value) {
-    const sanitized = value.replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 120);
-    return sanitized.length > 0 ? sanitized : "default-session";
-}
-function sha256(input) {
-    return createHash("sha256").update(input).digest("hex");
-}
-function byteLength(input) {
-    return Buffer.byteLength(input, "utf8");
-}
 function formatLocation(file, line) {
     return line ? `${file}:${line}` : file;
-}
-function truncateText(input, maxChars) {
-    if (input.length <= maxChars)
-        return input;
-    return `${input.slice(0, Math.max(0, maxChars - 1))}…`;
-}
-function capText(input, maxChars) {
-    if (input.length <= maxChars)
-        return input;
-    return `${input.slice(0, Math.max(0, maxChars - 120))}\n\n[reviewer summary truncated to ${maxChars} chars; recover sidecar preview/slice for more]`;
 }

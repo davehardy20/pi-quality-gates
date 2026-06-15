@@ -191,7 +191,7 @@ export default function postTurnReviewerExtension(pi) {
             if (entry.type !== "message")
                 continue;
             const msg = entry.message;
-            if (!msg || msg.role !== "user")
+            if (msg?.role !== "user")
                 continue;
             const content = msg.content;
             if (!content)
