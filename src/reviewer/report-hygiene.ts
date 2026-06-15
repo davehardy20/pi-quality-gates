@@ -1,46 +1,27 @@
-import { createHash, randomUUID } from "node:crypto";
-import { promises as fs } from "node:fs";
-import { join, resolve } from "node:path";
-import type {
-	LinterReportRecoveryMode,
-	LinterReportRecoveryOptions,
-	LinterReportRecoveryResult,
-	ParsedReportRecoveryArgs,
-} from "../linter/report-hygiene.js";
 import {
-	defaultLinterReportSidecarDir,
-	deriveSessionId,
-	isQualityGatesSubAgentRuntime,
-	parseReportRecoveryArgs,
+	capText,
+	type RecoverReportSidecarOptions,
+	type ReportRecoveryMode,
+	type ReviewerReportSidecarMetadata,
+	recoverReportSidecar,
 	redactSecrets,
-} from "../linter/report-hygiene.js";
-import type { ReviewReport } from "./types.js";
+	truncateText,
+	writeReportSidecar,
+} from "../shared/report-sidecar.js";
 
 export type {
-	LinterReportRecoveryMode as ReviewerReportRecoveryMode,
 	ParsedReportRecoveryArgs,
-};
+	ReportRecoveryMode as ReviewerReportRecoveryMode,
+	ReviewerReportSidecarMetadata,
+} from "../shared/report-sidecar.js";
+// Re-export shared helpers so existing callers keep working.
 export {
+	defaultReportSidecarDir as defaultReviewerReportSidecarDir,
 	deriveSessionId,
-	isQualityGatesSubAgentRuntime,
 	parseReportRecoveryArgs,
-};
-
-export interface ReviewerReportSidecarMetadata {
-	id: string;
-	toolName: "post-turn-reviewer";
-	sessionId: string;
-	path: string;
-	createdAt: string;
-	originalChars: number;
-	originalBytes: number;
-	redactedChars: number;
-	redactedBytes: number;
-	originalSha256: string;
-	redactedSha256: string;
-	summaryMode: "post-turn-reviewer-summary";
-	failureState?: string;
-}
+	redactSecrets,
+} from "../shared/report-sidecar.js";
+export { isQualityGatesSubAgentRuntime } from "../shared/runtime-detection.js";
 
 export interface ReviewerReportSidecarWriteResult {
 	ok: boolean;
@@ -48,21 +29,29 @@ export interface ReviewerReportSidecarWriteResult {
 	error?: string;
 }
 
-export interface ReviewerReportRecoveryOptions
-	extends Omit<LinterReportRecoveryOptions, "mode"> {
-	mode: LinterReportRecoveryMode;
+export interface ReviewerReportSidecarWriteOptions {
+	report: string;
+	sessionId?: string;
+	sidecarDir?: string;
+	now?: Date;
 }
 
-export interface ReviewerReportRecoveryResult
-	extends Omit<LinterReportRecoveryResult, "metadata"> {
+export interface ReviewerReportRecoveryOptions
+	extends Omit<RecoverReportSidecarOptions, "mode"> {
+	mode: ReportRecoveryMode;
+}
+
+export interface ReviewerReportRecoveryResult {
+	mode: ReportRecoveryMode;
+	content: string;
 	metadata: ReviewerReportSidecarMetadata;
 }
 
 export interface ReviewerReportSummaryResult {
 	message: string;
 	details: {
-		status: ReviewReport["status"];
-		confidence: ReviewReport["confidence"];
+		status: import("./types.js").ReviewReport["status"];
+		confidence: import("./types.js").ReviewReport["confidence"];
 		totalFindings: number;
 		visibleFindings: number;
 		omittedFindings: number;
@@ -71,137 +60,40 @@ export interface ReviewerReportSummaryResult {
 	};
 }
 
-interface PersistedReviewerReportSidecar {
-	metadata: ReviewerReportSidecarMetadata;
-	content: string;
-}
-
 const DEFAULT_MAX_REVIEWER_FINDINGS = 12;
 const DEFAULT_REVIEWER_SUMMARY_MAX_CHARS = 6000;
 const DEFAULT_PREVIEW_CHARS = 2000;
-const DEFAULT_SLICE_CHARS = 4000;
-const MAX_SINGLE_SIDECAR_BYTES = 10 * 1024 * 1024;
 
-export function defaultReviewerReportSidecarDir(): string {
-	return defaultLinterReportSidecarDir();
-}
-
-export async function writeReviewerReportSidecar(options: {
-	report: string;
-	sessionId?: string;
-	sidecarDir?: string;
-	now?: Date;
-}): Promise<ReviewerReportSidecarWriteResult> {
-	const now = options.now ?? new Date();
-	const id = randomUUID();
-	const sessionId = sanitizePathPart(options.sessionId ?? "default-session");
-	const root = resolve(options.sidecarDir ?? defaultReviewerReportSidecarDir());
-	const dir = join(root, sessionId);
-	const filePath = join(dir, `${id}.json`);
-	const redacted = redactSecrets(options.report);
-	const metadata: ReviewerReportSidecarMetadata = {
-		id,
+export async function writeReviewerReportSidecar(
+	options: ReviewerReportSidecarWriteOptions,
+): Promise<ReviewerReportSidecarWriteResult> {
+	return writeReportSidecar<ReviewerReportSidecarMetadata>({
+		report: options.report,
 		toolName: "post-turn-reviewer",
-		sessionId,
-		path: filePath,
-		createdAt: now.toISOString(),
-		originalChars: options.report.length,
-		originalBytes: byteLength(options.report),
-		redactedChars: redacted.length,
-		redactedBytes: byteLength(redacted),
-		originalSha256: sha256(options.report),
-		redactedSha256: sha256(redacted),
 		summaryMode: "post-turn-reviewer-summary",
-	};
-
-	if (metadata.redactedBytes > MAX_SINGLE_SIDECAR_BYTES) {
-		return {
-			ok: false,
-			metadata: {
-				...metadata,
-				failureState: "record_exceeds_max_single_record_bytes",
-			},
-			error: "redacted reviewer report exceeds max single sidecar size",
-		};
-	}
-
-	try {
-		await fs.mkdir(dir, { recursive: true, mode: 0o700 });
-		const payload: PersistedReviewerReportSidecar = {
-			metadata,
-			content: redacted,
-		};
-		const tempPath = join(dir, `.${id}.${process.pid}.tmp`);
-		await fs.writeFile(tempPath, `${JSON.stringify(payload, null, 2)}\n`, {
-			encoding: "utf8",
-			mode: 0o600,
-		});
-		await fs.rename(tempPath, filePath);
-		return { ok: true, metadata };
-	} catch (error) {
-		return {
-			ok: false,
-			metadata: { ...metadata, failureState: "write_failed" },
-			error: error instanceof Error ? error.message : String(error),
-		};
-	}
+		sessionId: options.sessionId,
+		sidecarDir: options.sidecarDir,
+		now: options.now,
+	});
 }
 
 export async function recoverReviewerReportSidecar(
 	options: ReviewerReportRecoveryOptions,
 ): Promise<ReviewerReportRecoveryResult> {
-	const raw = await fs.readFile(options.recordPath, "utf8");
-	const persisted = JSON.parse(raw) as PersistedReviewerReportSidecar;
-	const content = persisted.content;
-	const previewChars = options.previewChars ?? DEFAULT_PREVIEW_CHARS;
-
-	if (options.mode === "metadata") {
-		return {
-			mode: options.mode,
-			content: JSON.stringify(persisted.metadata, null, 2),
-			metadata: persisted.metadata,
-		};
-	}
-
-	if (options.mode === "full") {
-		if (!options.acknowledgeContextCost) {
-			throw new Error(
-				"full reviewer report recovery requires --ack-context-cost; use preview or slice first",
-			);
-		}
-		return { mode: options.mode, content, metadata: persisted.metadata };
-	}
-
-	if (options.mode === "slice") {
-		const offset = Math.max(0, options.offset ?? 0);
-		const requestedLength = Math.max(1, options.length ?? DEFAULT_SLICE_CHARS);
-		const length = Math.min(requestedLength, DEFAULT_SLICE_CHARS);
-		const slice = content.slice(offset, offset + length);
-		return {
-			mode: options.mode,
-			content: [
-				`reviewer report slice offset=${offset} length=${slice.length}/${content.length} (cap ${DEFAULT_SLICE_CHARS})`,
-				"",
-				slice,
-			].join("\n"),
-			metadata: persisted.metadata,
-		};
-	}
-
-	const preview = content.slice(0, previewChars);
-	const suffix =
-		content.length > preview.length
-			? `\n\n[preview truncated: ${content.length - preview.length} more character(s); use /reviewer-report slice --offset=${preview.length} --length=${DEFAULT_SLICE_CHARS} or full --ack-context-cost]`
-			: "";
-	return {
+	return recoverReportSidecar<ReviewerReportSidecarMetadata>({
+		recordPath: options.recordPath,
 		mode: options.mode,
-		content: `${preview}${suffix}`,
-		metadata: persisted.metadata,
-	};
+		acknowledgeContextCost: options.acknowledgeContextCost,
+		offset: options.offset,
+		length: options.length,
+		previewChars: options.previewChars ?? DEFAULT_PREVIEW_CHARS,
+		reportLabel: "reviewer",
+		commandName: "/reviewer-report",
+	});
 }
 
 export function buildSummaryFirstReviewerMessage(args: {
-	report: ReviewReport;
+	report: import("./types.js").ReviewReport;
 	sidecar: ReviewerReportSidecarWriteResult | null;
 	maxFindings?: number;
 	maxChars?: number;
@@ -315,29 +207,6 @@ export function buildBoundedReviewerFailureMessage(args: {
 	return capText(redactSecrets(lines.join("\n")), maxChars);
 }
 
-function sanitizePathPart(value: string): string {
-	const sanitized = value.replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 120);
-	return sanitized.length > 0 ? sanitized : "default-session";
-}
-
-function sha256(input: string): string {
-	return createHash("sha256").update(input).digest("hex");
-}
-
-function byteLength(input: string): number {
-	return Buffer.byteLength(input, "utf8");
-}
-
 function formatLocation(file: string, line?: number | null): string {
 	return line ? `${file}:${line}` : file;
-}
-
-function truncateText(input: string, maxChars: number): string {
-	if (input.length <= maxChars) return input;
-	return `${input.slice(0, Math.max(0, maxChars - 1))}…`;
-}
-
-function capText(input: string, maxChars: number): string {
-	if (input.length <= maxChars) return input;
-	return `${input.slice(0, Math.max(0, maxChars - 120))}\n\n[reviewer summary truncated to ${maxChars} chars; recover sidecar preview/slice for more]`;
 }

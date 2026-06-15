@@ -5,6 +5,7 @@ import type {
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { stopAllLspClients } from "../shared/lsp-service.js";
+import { isQualityGatesSubAgentRuntime } from "../shared/runtime-detection.js";
 import {
 	DEFAULT_CONFIG,
 	loadLinterConfig,
@@ -14,7 +15,6 @@ import { createLinterPipeline, type LinterPipeline } from "./pipeline.js";
 import {
 	buildSummaryFirstLintMessage,
 	deriveSessionId,
-	isQualityGatesSubAgentRuntime,
 	type LinterReportSidecarMetadata,
 	type LinterReportSidecarWriteResult,
 	parseReportRecoveryArgs,
