@@ -18,7 +18,7 @@ import {
 	recoverLinterReportSidecar,
 	writeLinterReportSidecar,
 } from "../src/linter/report-hygiene.js";
-import { __test__ as reviewerTest } from "../src/reviewer/index.js";
+import { __test__ as reviewerTest } from "../src/reviewer/orchestrator.js";
 import {
 	buildBoundedReviewerFailureMessage,
 	buildSummaryFirstReviewerMessage,
@@ -206,7 +206,7 @@ describe("post-turn-linter: core helpers", () => {
 	});
 
 	it("builds bounded summary-first lint messages with actionable fields", () => {
-		const excerptSecret = ["super", "secret", "token", "value"].join("-");
+		const excerptContent = "example-excerpt-content";
 		const report = [
 			"--- markdownlint (4 files) ---",
 			"/repo/docs/a.md:10 MD012/no-multiple-blanks Multiple consecutive blank lines — fix: delete 1",
@@ -219,7 +219,7 @@ describe("post-turn-linter: core helpers", () => {
 			"--- Code excerpts ---",
 			"/repo/docs/a.md:8-12",
 			"```text",
-			`secret: ${excerptSecret}`,
+			`apiKey: ${excerptContent}`,
 			"```",
 		].join("\n");
 
@@ -243,7 +243,7 @@ describe("post-turn-linter: core helpers", () => {
 		expect(summary.message).toContain("fix: delete 1");
 		expect(summary.message).toContain("docs/b.md:3");
 		expect(summary.message).not.toContain("Code excerpts");
-		expect(summary.message).not.toContain(excerptSecret);
+		expect(summary.message).not.toContain(excerptContent);
 		expect(summary.details.totalFindings).toBe(6);
 		expect(summary.details.visibleFindings).toBe(3);
 		expect(summary.details.lowPriorityFindings).toBe(3);
@@ -266,11 +266,11 @@ describe("post-turn-linter: core helpers", () => {
 
 	it("writes redacted sidecar reports and recovers preview/slice/full separately", async () => {
 		const tempDir = fs.mkdtempSync(`${tmpdir()}/pi-quality-gates-linter-`);
-		const secretValue = ["abcdefghijklmnop", "qrstuvwxyz"].join("");
+		const sensitiveValue = "example-sensitive-value";
 		const report = [
 			"--- Ruff (1 file) ---",
 			"/repo/app.py:2:1 F401 imported but unused",
-			`apiKey: ${secretValue}`,
+			`apiKey: ${sensitiveValue}`,
 		].join("\n");
 
 		const sidecar = await writeLinterReportSidecar({
@@ -284,7 +284,7 @@ describe("post-turn-linter: core helpers", () => {
 		expect(sidecar.metadata.originalChars).toBe(report.length);
 		const persisted = fs.readFileSync(sidecar.metadata.path, "utf8");
 		expect(persisted).toContain("[REDACTED");
-		expect(persisted).not.toContain(secretValue);
+		expect(persisted).not.toContain(sensitiveValue);
 
 		const preview = await recoverLinterReportSidecar({
 			recordPath: sidecar.metadata.path,
@@ -292,7 +292,7 @@ describe("post-turn-linter: core helpers", () => {
 			previewChars: 80,
 		});
 		expect(preview.content).toContain("F401");
-		expect(preview.content).not.toContain(secretValue);
+		expect(preview.content).not.toContain(sensitiveValue);
 
 		const slice = await recoverLinterReportSidecar({
 			recordPath: sidecar.metadata.path,
@@ -323,7 +323,7 @@ describe("post-turn-linter: core helpers", () => {
 			allowFullWithoutAck: true,
 		});
 		expect(subAgentFull.content).toContain("[REDACTED");
-		expect(subAgentFull.content).not.toContain(secretValue);
+		expect(subAgentFull.content).not.toContain(sensitiveValue);
 
 		const full = await recoverLinterReportSidecar({
 			recordPath: sidecar.metadata.path,
@@ -331,7 +331,7 @@ describe("post-turn-linter: core helpers", () => {
 			acknowledgeContextCost: true,
 		});
 		expect(full.content).toContain("[REDACTED");
-		expect(full.content).not.toContain(secretValue);
+		expect(full.content).not.toContain(sensitiveValue);
 	});
 
 	it("detects orchestrator sub-agent runtime with an explicit override", () => {
@@ -879,8 +879,8 @@ describe("post-turn-reviewer: report hygiene", () => {
 
 	it("writes redacted reviewer sidecars and recovers metadata/preview/slice/full with ack", async () => {
 		const tempDir = fs.mkdtempSync(`${tmpdir()}/pi-quality-gates-reviewer-`);
-		const secretValue = ["abcdefghijklmnop", "qrstuvwxyz"].join("");
-		const raw = `## Review Report\nsecret: ${secretValue}\n${"detail\n".repeat(1000)}`;
+		const sensitiveValue = "example-sensitive-value";
+		const raw = `## Review Report\napiKey: ${sensitiveValue}\n${"detail\n".repeat(1000)}`;
 		const sidecar = await writeReviewerReportSidecar({
 			report: raw,
 			sessionId: "review-session",
@@ -894,7 +894,7 @@ describe("post-turn-reviewer: report hygiene", () => {
 		const persisted = fs.readFileSync(sidecar.metadata.path, "utf8");
 		expect(persisted).toContain("post-turn-reviewer");
 		expect(persisted).toContain("[REDACTED");
-		expect(persisted).not.toContain(secretValue);
+		expect(persisted).not.toContain(sensitiveValue);
 
 		const metadata = await recoverReviewerReportSidecar({
 			recordPath: sidecar.metadata.path,
@@ -907,7 +907,7 @@ describe("post-turn-reviewer: report hygiene", () => {
 			mode: "preview",
 			previewChars: 80,
 		});
-		expect(preview.content).not.toContain(secretValue);
+		expect(preview.content).not.toContain(sensitiveValue);
 
 		const slice = await recoverReviewerReportSidecar({
 			recordPath: sidecar.metadata.path,
@@ -939,7 +939,7 @@ describe("post-turn-reviewer: report hygiene", () => {
 			acknowledgeContextCost: true,
 		});
 		expect(full.content).toContain("[REDACTED");
-		expect(full.content).not.toContain(secretValue);
+		expect(full.content).not.toContain(sensitiveValue);
 	});
 
 	it("includes the latest sidecar in max re-review escalation summaries", () => {
