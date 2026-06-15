@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import type {
 	Finding,
 	ReviewConfidence,
@@ -67,6 +68,27 @@ export interface DiffFilterOptions {
 			filter: (paths: string[]) => string[];
 		};
 	} | null;
+}
+
+export interface ReviewerAttemptInput {
+	task: string;
+	files: string[];
+	cwd: string;
+	config: ReviewConfig;
+	filterOptions?: DiffFilterOptions;
+	signal?: AbortSignal;
+}
+
+export interface ReviewerExecution {
+	runAttempt(input: ReviewerAttemptInput): Promise<ReviewerResult>;
+}
+
+export interface ReviewerExecutionDependencies {
+	gatherDiff?: typeof gatherDiff;
+	readSystemPrompt?: typeof readSystemPrompt;
+	renderTaskTemplate?: typeof renderTaskTemplate;
+	spawnReviewer?: typeof spawnReviewer;
+	getPromptsDir?: () => string;
 }
 
 // ── Context Gathering ────────────────────────────────────────────────────────
@@ -360,6 +382,44 @@ export function renderTaskTemplate(
 				: "(no changed files)",
 		)
 		.replace(/\{\{DIFF\}\}/g, diff || "(no diff available)");
+}
+
+function getDefaultPromptsDir(): string {
+	const sourcePath = fileURLToPath(import.meta.url);
+	const packageRoot = path.resolve(path.dirname(sourcePath), "..", "..");
+	return path.join(packageRoot, "src", "reviewer", "prompts");
+}
+
+export function createReviewerExecution(
+	deps: ReviewerExecutionDependencies = {},
+): ReviewerExecution {
+	return {
+		async runAttempt(input: ReviewerAttemptInput): Promise<ReviewerResult> {
+			const promptsDir = (deps.getPromptsDir ?? getDefaultPromptsDir)();
+			const systemPrompt = (deps.readSystemPrompt ?? readSystemPrompt)(
+				promptsDir,
+			);
+			const diff = await (deps.gatherDiff ?? gatherDiff)(
+				input.files,
+				input.cwd,
+				input.config.maxDiffLines,
+				input.filterOptions,
+			);
+			const taskPrompt = (deps.renderTaskTemplate ?? renderTaskTemplate)(
+				promptsDir,
+				input.task,
+				input.files,
+				diff,
+			);
+			return (deps.spawnReviewer ?? spawnReviewer)(
+				taskPrompt,
+				systemPrompt,
+				input.config,
+				input.cwd,
+				input.signal,
+			);
+		},
+	};
 }
 
 // ── Child Pi Spawn ───────────────────────────────────────────────────────────
