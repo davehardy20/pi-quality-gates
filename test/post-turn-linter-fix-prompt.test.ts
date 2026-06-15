@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_CONFIG } from "../src/linter/core.js";
-import { __test__ as linterTest } from "../src/linter/index.js";
-
-const { createPostTurnLinter } = linterTest;
+import { createLinterOrchestrator } from "../src/linter/orchestrator.js";
 
 describe("post-turn-linter: fix prompt", () => {
 	it("continues the active task after fixing linter findings", async () => {
@@ -14,12 +12,6 @@ describe("post-turn-linter: fix prompt", () => {
 				getSessionFile: () => string;
 			};
 		};
-		type Handler = (
-			event: Record<string, unknown>,
-			ctx: MockContext,
-		) => Promise<void> | void;
-
-		const handlers = new Map<string, Handler>();
 		const userMessages: string[] = [];
 		const sidecarMetadata = {
 			id: "sidecar-1",
@@ -36,12 +28,8 @@ describe("post-turn-linter: fix prompt", () => {
 			summaryMode: "post-turn-linter-summary" as const,
 		};
 
-		createPostTurnLinter(
+		const orchestrator = createLinterOrchestrator(
 			{
-				on: (eventName: string, handler: Handler) => {
-					handlers.set(eventName, handler);
-				},
-				registerCommand: () => undefined,
 				sendMessage: () => undefined,
 				sendUserMessage: (message: string) => {
 					userMessages.push(message);
@@ -80,7 +68,7 @@ describe("post-turn-linter: fix prompt", () => {
 					metadata: sidecarMetadata,
 				}),
 				isQualityGatesSubAgentRuntime: () => false,
-			} satisfies Parameters<typeof createPostTurnLinter>[1],
+			} satisfies Parameters<typeof createLinterOrchestrator>[1],
 		);
 
 		const ctx: MockContext = {
@@ -92,16 +80,16 @@ describe("post-turn-linter: fix prompt", () => {
 			},
 		};
 
-		await handlers.get("session_start")?.({}, ctx);
-		await handlers.get("tool_execution_end")?.(
+		await orchestrator.initialize(ctx as never);
+		await orchestrator.onToolExecutionEnd(
 			{
 				toolCallId: "tool-1",
 				toolName: "write",
 				result: { details: { modifiedFiles: ["/repo/src/example.ts"] } },
 			},
-			ctx,
+			ctx as never,
 		);
-		await handlers.get("turn_end")?.({}, ctx);
+		await orchestrator.onTurnEnd(ctx as never);
 
 		expect(userMessages[0]).toContain(
 			"After fixing the linter findings, continue the active user task.",

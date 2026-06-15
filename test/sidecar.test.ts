@@ -198,7 +198,9 @@ describe("shared report sidecar", () => {
 		});
 
 		expect(
-			parseReportRecoveryArgs("full --ack-context-cost --offset=10 --length=100"),
+			parseReportRecoveryArgs(
+				"full --ack-context-cost --offset=10 --length=100",
+			),
 		).toEqual({
 			mode: "full",
 			acknowledgeContextCost: true,
