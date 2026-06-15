@@ -4,6 +4,7 @@ import {
 	createReviewerOrchestrator,
 	type ReviewerOrchestratorDeps,
 } from "../src/reviewer/orchestrator.js";
+import { createReviewerExecution } from "../src/reviewer/reviewer.js";
 import type { ReviewConfig, ReviewReport } from "../src/reviewer/types.js";
 import { DEFAULT_REVIEW_CONFIG } from "../src/reviewer/types.js";
 
@@ -109,14 +110,16 @@ function createFakeDeps(
 			ig: { ignores: () => false, filter: (p: string[]) => p },
 		})),
 		countDiffLines: vi.fn(async () => 10),
-		runReview: vi.fn(async () => ({
-			report: overrides.runReview ?? null,
-			rawOutput: "",
-			exitCode: 0,
-			timedOut: false,
-			stderr: "",
-			command: "pi --mode json",
-		})),
+		reviewerExecution: {
+			runAttempt: vi.fn(async () => ({
+				report: overrides.runReview ?? null,
+				rawOutput: "",
+				exitCode: 0,
+				timedOut: false,
+				stderr: "",
+				command: "pi --mode json",
+			})),
+		},
 		writeSidecar: vi.fn(async () => ({
 			ok: true,
 			metadata: {
@@ -134,9 +137,6 @@ function createFakeDeps(
 				summaryMode: "post-turn-reviewer-summary" as const,
 			},
 		})),
-		getSystemPrompt: vi.fn(() => "system prompt"),
-		getTaskPrompt: vi.fn(() => "task prompt"),
-		getPromptsDir: vi.fn(() => "/prompts"),
 	} as unknown as ReviewerOrchestratorDeps;
 }
 
@@ -173,6 +173,57 @@ function issuesReport(): ReviewReport {
 		summary: "One critical issue.",
 	};
 }
+
+describe("ReviewerExecution", () => {
+	it("runs one review attempt through diff, prompt, and child reviewer mechanics", async () => {
+		const report = passReport();
+		const gatherDiff = vi.fn(async () => "diff text");
+		const readSystemPrompt = vi.fn(() => "system prompt");
+		const renderTaskTemplate = vi.fn(() => "task prompt");
+		const spawnReviewer = vi.fn(async () => ({
+			report,
+			rawOutput: "## Review Report",
+			exitCode: 0,
+			timedOut: false,
+			stderr: "",
+			command: "pi --mode json",
+		}));
+		const execution = createReviewerExecution({
+			gatherDiff,
+			readSystemPrompt,
+			renderTaskTemplate,
+			spawnReviewer,
+			getPromptsDir: () => "/prompts",
+		});
+
+		const result = await execution.runAttempt({
+			task: "Review this",
+			files: ["src/a.ts"],
+			cwd: "/repo",
+			config: { ...DEFAULT_REVIEW_CONFIG, maxDiffLines: 42 },
+			filterOptions: { respectGitignore: true },
+		});
+
+		expect(gatherDiff).toHaveBeenCalledWith(["src/a.ts"], "/repo", 42, {
+			respectGitignore: true,
+		});
+		expect(readSystemPrompt).toHaveBeenCalledWith("/prompts");
+		expect(renderTaskTemplate).toHaveBeenCalledWith(
+			"/prompts",
+			"Review this",
+			["src/a.ts"],
+			"diff text",
+		);
+		expect(spawnReviewer).toHaveBeenCalledWith(
+			"task prompt",
+			"system prompt",
+			expect.objectContaining({ maxDiffLines: 42 }),
+			"/repo",
+			undefined,
+		);
+		expect(result.report).toBe(report);
+	});
+});
 
 describe("ReviewerOrchestrator", () => {
 	it("initializes with default config and loads skip filter", async () => {
@@ -213,12 +264,14 @@ describe("ReviewerOrchestrator", () => {
 		orchestrator.onLinterClean(["src/a.ts"]);
 		await orchestrator.onTurnEnd(ctx);
 
-		expect(deps.runReview).toHaveBeenCalledWith(
-			expect.any(String),
-			["src/a.ts"],
-			"/repo",
-			expect.objectContaining({ enabled: true }),
-			expect.any(Object),
+		expect(deps.reviewerExecution.runAttempt).toHaveBeenCalledWith(
+			expect.objectContaining({
+				task: expect.any(String),
+				files: ["src/a.ts"],
+				cwd: "/repo",
+				config: expect.objectContaining({ enabled: true }),
+				filterOptions: expect.any(Object),
+			}),
 		);
 		expect(orchestrator.getStateSnapshot().phase).toBe("IDLE");
 	});
@@ -235,7 +288,7 @@ describe("ReviewerOrchestrator", () => {
 		orchestrator.onLinterClean(["src/a.ts"]);
 		await orchestrator.onTurnEnd(ctx);
 
-		expect(deps.runReview).not.toHaveBeenCalled();
+		expect(deps.reviewerExecution.runAttempt).not.toHaveBeenCalled();
 	});
 
 	it("requests a review manually with provided files", async () => {
@@ -257,12 +310,14 @@ describe("ReviewerOrchestrator", () => {
 		await orchestrator.initialize(ctx);
 		await orchestrator.requestReview(ctx, { files: ["src/b.ts"] });
 
-		expect(deps.runReview).toHaveBeenCalledWith(
-			expect.any(String),
-			["src/b.ts"],
-			"/repo",
-			expect.any(Object),
-			expect.any(Object),
+		expect(deps.reviewerExecution.runAttempt).toHaveBeenCalledWith(
+			expect.objectContaining({
+				task: expect.any(String),
+				files: ["src/b.ts"],
+				cwd: "/repo",
+				config: expect.any(Object),
+				filterOptions: expect.any(Object),
+			}),
 		);
 	});
 
@@ -386,7 +441,7 @@ describe("ReviewerOrchestrator", () => {
 		const second = orchestrator.onTurnEnd(ctx);
 		await Promise.all([first, second]);
 
-		expect(deps.runReview).toHaveBeenCalledTimes(1);
+		expect(deps.reviewerExecution.runAttempt).toHaveBeenCalledTimes(1);
 	});
 
 	it("cancels a pending delayed review when disabled", async () => {
@@ -413,7 +468,7 @@ describe("ReviewerOrchestrator", () => {
 		orchestrator.onLinterClean(["src/a.ts"]);
 		const turnEndPromise = orchestrator.onTurnEnd(ctx);
 		await vi.advanceTimersByTimeAsync(50);
-		expect(deps.runReview).not.toHaveBeenCalled();
+		expect(deps.reviewerExecution.runAttempt).not.toHaveBeenCalled();
 
 		orchestrator.registerCommands(pi as never);
 		await pi.commands.get("reviewer-toggle")?.(
@@ -423,7 +478,7 @@ describe("ReviewerOrchestrator", () => {
 		await vi.advanceTimersByTimeAsync(200);
 		await turnEndPromise;
 
-		expect(deps.runReview).not.toHaveBeenCalled();
+		expect(deps.reviewerExecution.runAttempt).not.toHaveBeenCalled();
 		expect(orchestrator.getStateSnapshot().phase).toBe("IDLE");
 		vi.useRealTimers();
 	});
@@ -473,13 +528,15 @@ describe("ReviewerOrchestrator", () => {
 			await orchestrator.onTurnEnd(ctx);
 			await vi.advanceTimersByTimeAsync(100);
 
-			expect(deps.runReview).toHaveBeenCalledTimes(1);
-			expect(deps.runReview).toHaveBeenCalledWith(
-				"Second task",
-				["src/b.ts"],
-				"/repo",
-				expect.any(Object),
-				expect.any(Object),
+			expect(deps.reviewerExecution.runAttempt).toHaveBeenCalledTimes(1);
+			expect(deps.reviewerExecution.runAttempt).toHaveBeenCalledWith(
+				expect.objectContaining({
+					task: "Second task",
+					files: ["src/b.ts"],
+					cwd: "/repo",
+					config: expect.any(Object),
+					filterOptions: expect.any(Object),
+				}),
 			);
 			expect(orchestrator.getStateSnapshot().phase).toBe("IDLE");
 		} finally {
@@ -497,7 +554,7 @@ describe("ReviewerOrchestrator", () => {
 		orchestrator.registerCommands(pi as never);
 		await pi.commands.get("reviewer-run")?.("", ctx as unknown as MockContext);
 
-		expect(deps.runReview).not.toHaveBeenCalled();
+		expect(deps.reviewerExecution.runAttempt).not.toHaveBeenCalled();
 		expect(orchestrator.getStateSnapshot().phase).toBe("IDLE");
 		expect(
 			(ctx.ui.notify as Mock).mock.calls.some((call) =>
@@ -528,13 +585,13 @@ describe("ReviewerOrchestrator", () => {
 		expect(orchestrator.getStateSnapshot().phase).toBe("FIX_REQUESTED");
 
 		let resolveRun: (
-			value: Awaited<ReturnType<typeof deps.runReview>>,
+			value: Awaited<ReturnType<typeof deps.reviewerExecution.runAttempt>>,
 		) => void = () => undefined;
-		(deps.runReview as Mock).mockImplementation(
+		(deps.reviewerExecution.runAttempt as Mock).mockImplementation(
 			() =>
 				new Promise((resolve) => {
 					resolveRun = resolve;
-				}) as ReturnType<typeof deps.runReview>,
+				}) as ReturnType<typeof deps.reviewerExecution.runAttempt>,
 		);
 
 		orchestrator.onLinterClean(["src/a.ts"]);
@@ -575,13 +632,13 @@ describe("ReviewerOrchestrator", () => {
 		await orchestrator.initialize(ctx);
 
 		let resolveRun: (
-			value: Awaited<ReturnType<typeof deps.runReview>>,
+			value: Awaited<ReturnType<typeof deps.reviewerExecution.runAttempt>>,
 		) => void = () => undefined;
-		(deps.runReview as Mock).mockImplementation(
+		(deps.reviewerExecution.runAttempt as Mock).mockImplementation(
 			() =>
 				new Promise((resolve) => {
 					resolveRun = resolve;
-				}) as ReturnType<typeof deps.runReview>,
+				}) as ReturnType<typeof deps.reviewerExecution.runAttempt>,
 		);
 
 		const first = orchestrator.requestReview(ctx, { files: ["src/a.ts"] });
@@ -604,13 +661,15 @@ describe("ReviewerOrchestrator", () => {
 		await first;
 		await second;
 
-		expect(deps.runReview).toHaveBeenCalledTimes(1);
-		expect(deps.runReview).toHaveBeenCalledWith(
-			expect.any(String),
-			["src/a.ts"],
-			"/repo",
-			expect.any(Object),
-			expect.any(Object),
+		expect(deps.reviewerExecution.runAttempt).toHaveBeenCalledTimes(1);
+		expect(deps.reviewerExecution.runAttempt).toHaveBeenCalledWith(
+			expect.objectContaining({
+				task: expect.any(String),
+				files: ["src/a.ts"],
+				cwd: "/repo",
+				config: expect.any(Object),
+				filterOptions: expect.any(Object),
+			}),
 		);
 	});
 });

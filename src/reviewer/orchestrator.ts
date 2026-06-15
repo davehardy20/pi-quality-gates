@@ -4,8 +4,6 @@
  * interface.
  */
 
-import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
@@ -19,12 +17,10 @@ import {
 } from "./report-hygiene.js";
 import {
 	countDiffLinesFast,
+	createReviewerExecution,
+	type DiffFilterOptions,
 	extractOriginalTask,
-	gatherDiff,
-	type ReviewerResult,
-	readSystemPrompt,
-	renderTaskTemplate,
-	spawnReviewer,
+	type ReviewerExecution,
 } from "./reviewer.js";
 import type {
 	AutoFixThreshold,
@@ -68,36 +64,11 @@ export interface ReviewerOrchestratorDeps {
 		skipFile: string | null,
 	) => Awaited<ReturnType<typeof import("./reviewer-skip.js").loadSkipFilter>>;
 	countDiffLines: (files: string[], cwd: string) => Promise<number>;
-	runReview: (
-		task: string,
-		files: string[],
-		cwd: string,
-		config: ReviewConfig,
-		filterOptions: {
-			respectGitignore?: boolean;
-			skipFilter?: {
-				loaded: boolean;
-				patternCount: number;
-				ig: {
-					ignores: (path: string) => boolean;
-					filter: (paths: string[]) => string[];
-				};
-			} | null;
-		},
-		signal?: AbortSignal,
-	) => Promise<ReviewerResult>;
+	reviewerExecution: ReviewerExecution;
 	writeSidecar: (
 		report: string,
 		ctx: ExtensionContext,
 	) => Promise<ReviewerReportSidecarWriteResult>;
-	getSystemPrompt: (promptsDir: string) => string;
-	getTaskPrompt: (
-		promptsDir: string,
-		task: string,
-		files: string[],
-		diff: string,
-	) => string;
-	getPromptsDir: () => string;
 }
 
 export interface ReviewerOrchestrator {
@@ -250,30 +221,12 @@ export function createReviewerOrchestrator(
 				ReturnType<ReviewerOrchestratorDeps["loadSkipFilter"]>
 			>,
 		countDiffLines: countDiffLinesFast,
-		runReview: async (task, files, cwd, config, filterOptions, signal) => {
-			const promptsDir = fullDeps.getPromptsDir();
-			const systemPrompt = fullDeps.getSystemPrompt(promptsDir);
-			const diff = await gatherDiff(
-				files,
-				cwd,
-				config.maxDiffLines,
-				filterOptions,
-			);
-			const taskPrompt = fullDeps.getTaskPrompt(promptsDir, task, files, diff);
-			return spawnReviewer(taskPrompt, systemPrompt, config, cwd, signal);
-		},
+		reviewerExecution: createReviewerExecution(),
 		writeSidecar: async (report, ctx) =>
 			writeReviewerReportSidecar({
 				report,
 				sessionId: deriveSessionId(ctx),
 			}),
-		getSystemPrompt: readSystemPrompt,
-		getTaskPrompt: renderTaskTemplate,
-		getPromptsDir: () => {
-			const sourcePath = fileURLToPath(import.meta.url);
-			const packageRoot = path.resolve(path.dirname(sourcePath), "..", "..");
-			return path.join(packageRoot, "src", "reviewer", "prompts");
-		},
 		...deps,
 	};
 
@@ -293,7 +246,7 @@ export function createReviewerOrchestrator(
 		}
 	}
 
-	function buildFilterOptions() {
+	function buildFilterOptions(): DiffFilterOptions {
 		return {
 			respectGitignore: state.config.respectGitignore,
 			skipFilter,
@@ -509,13 +462,13 @@ export function createReviewerOrchestrator(
 					: "reviewing",
 			);
 
-			const childOutput = await fullDeps.runReview(
+			const childOutput = await fullDeps.reviewerExecution.runAttempt({
 				task,
-				state.pendingFiles,
-				ctx.cwd,
-				state.config,
-				buildFilterOptions(),
-			);
+				files: state.pendingFiles,
+				cwd: ctx.cwd,
+				config: state.config,
+				filterOptions: buildFilterOptions(),
+			});
 
 			if (!childOutput) {
 				safeNotify(

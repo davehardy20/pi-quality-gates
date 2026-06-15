@@ -10,13 +10,7 @@ import { registerReviewerModelCommand } from "./commands/reviewer-model.js";
 import { loadReviewConfig } from "./config.js";
 import { createReviewerOrchestrator } from "./orchestrator.js";
 import { writeReviewerReportSidecar } from "./report-hygiene.js";
-import {
-	countDiffLinesFast,
-	gatherDiff,
-	readSystemPrompt,
-	renderTaskTemplate,
-	spawnReviewer,
-} from "./reviewer.js";
+import { countDiffLinesFast, createReviewerExecution } from "./reviewer.js";
 import { loadSkipFilter } from "./reviewer-skip.js";
 
 export default function postTurnReviewerExtension(pi: ExtensionAPI): void {
@@ -24,22 +18,7 @@ export default function postTurnReviewerExtension(pi: ExtensionAPI): void {
 		loadConfig: async (cwd) => loadReviewConfig(cwd),
 		loadSkipFilter,
 		countDiffLines: countDiffLinesFast,
-		runReview: async (task, files, cwd, config, filterOptions, signal) => {
-			const systemPrompt = readSystemPrompt(getPromptsDir());
-			const diff = await gatherDiff(
-				files,
-				cwd,
-				config.maxDiffLines,
-				filterOptions,
-			);
-			const taskPrompt = renderTaskTemplate(
-				getPromptsDir(),
-				task,
-				Array.from(files),
-				diff,
-			);
-			return spawnReviewer(taskPrompt, systemPrompt, config, cwd, signal);
-		},
+		reviewerExecution: createReviewerExecution(),
 		writeSidecar: async (report, ctx) => {
 			const sessionFile = ctx.sessionManager.getSessionFile?.();
 			const sessionId = sessionFile
@@ -53,9 +32,6 @@ export default function postTurnReviewerExtension(pi: ExtensionAPI): void {
 				sessionId,
 			});
 		},
-		getSystemPrompt: readSystemPrompt,
-		getTaskPrompt: renderTaskTemplate,
-		getPromptsDir,
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
@@ -81,12 +57,4 @@ export default function postTurnReviewerExtension(pi: ExtensionAPI): void {
 		getConfig: () => orchestrator.getStateSnapshot().config,
 		setConfig: (updater) => orchestrator.updateConfig(updater),
 	});
-}
-
-function getPromptsDir(): string {
-	// Package-local prompts directory, resolved relative to this source file.
-	// eslint-disable-next-line no-undef
-	const sourcePath = new URL(import.meta.url).pathname;
-	const packageRoot = sourcePath.split("/").slice(0, -3).join("/");
-	return `${packageRoot}/src/reviewer/prompts`;
 }
