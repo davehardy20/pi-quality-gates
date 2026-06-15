@@ -9,10 +9,8 @@ import {
 	DEFAULT_CONFIG,
 	loadLinterConfig,
 	MAX_MODIFIED_FILES,
-	mergeValidationOutcomes,
-	runQueuedLintChecks,
 } from "./core.js";
-import { runQueuedLspChecks } from "./lsp.js";
+import { createLinterPipeline, type LinterPipeline } from "./pipeline.js";
 import {
 	buildSummaryFirstLintMessage,
 	deriveSessionId,
@@ -23,18 +21,16 @@ import {
 	recoverLinterReportSidecar,
 	writeLinterReportSidecar,
 } from "./report-hygiene.js";
-import type {
-	CombinedValidationOutcome,
-	LspDiagnosticsConfig,
-	ReportMode,
-} from "./types.js";
+import type { LspDiagnosticsConfig, ReportMode } from "./types.js";
 
 interface PostTurnLinterDependencies {
 	existsSync: typeof existsSync;
 	loadLinterConfig: typeof loadLinterConfig;
-	runQueuedLintChecks: typeof runQueuedLintChecks;
-	runQueuedLspChecks: typeof runQueuedLspChecks;
-	mergeValidationOutcomes: typeof mergeValidationOutcomes;
+	createPipeline: (
+		cwd: string,
+		lspConfig: LspDiagnosticsConfig,
+		ctx: ExtensionContext,
+	) => LinterPipeline;
 	setTimeout: (callback: () => void, ms?: number) => unknown;
 	statSync: (path: string) => { mtimeMs: number; size: number };
 	writeLinterReportSidecar: typeof writeLinterReportSidecar;
@@ -290,9 +286,8 @@ export function createPostTurnLinter(
 	deps: PostTurnLinterDependencies = {
 		existsSync,
 		loadLinterConfig,
-		runQueuedLintChecks,
-		runQueuedLspChecks,
-		mergeValidationOutcomes,
+		createPipeline: (cwd, lspConfig, ctx) =>
+			createLinterPipeline({ cwd, lspConfig, lspContext: ctx }),
 		setTimeout,
 		statSync,
 		writeLinterReportSidecar,
@@ -400,23 +395,8 @@ export function createPostTurnLinter(
 		if (state.shutDown) return;
 		safeSetStatus(ctx, "post-turn-linter: running");
 
-		const lintResult = await deps.runQueuedLintChecks(filesToLint, cwd());
-		if (state.shutDown) return;
-		let result: CombinedValidationOutcome = lintResult;
-
-		if (state.lspConfig.enabled) {
-			const lspResult = await deps.runQueuedLspChecks({
-				filePaths: filesToLint,
-				cwd: cwd(),
-				ctx,
-				config: state.lspConfig,
-			});
-			if (state.shutDown) return;
-			result = deps.mergeValidationOutcomes({
-				reportMode: lintResult.reportMode,
-				results: [lintResult, lspResult],
-			});
-		}
+		const pipeline = deps.createPipeline(cwd(), state.lspConfig, ctx);
+		const result = await pipeline.runChecks(filesToLint);
 
 		state.reportMode = result.reportMode;
 

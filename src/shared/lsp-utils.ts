@@ -6,14 +6,14 @@ import { findServerForFile, findWorkspaceRoot } from "./lsp-server-resolver.js";
  * all files are returned unchanged. Comparison is case-insensitive.
  */
 export function filterLspEligibleFiles(
-  filePaths: string[],
-  extensions?: string[],
+	filePaths: string[],
+	extensions?: string[],
 ): string[] {
-  if (!extensions || extensions.length === 0) {
-    return filePaths;
-  }
-  const extSet = new Set(extensions.map((e) => e.toLowerCase()));
-  return filePaths.filter((fp) => extSet.has(extname(fp).toLowerCase()));
+	if (!extensions || extensions.length === 0) {
+		return filePaths;
+	}
+	const extSet = new Set(extensions.map((e) => e.toLowerCase()));
+	return filePaths.filter((fp) => extSet.has(extname(fp).toLowerCase()));
 }
 
 /**
@@ -24,17 +24,17 @@ export function filterLspEligibleFiles(
  * arrays of file paths.
  */
 export function groupFilesByServerAndWorkspace(
-  filePaths: string[],
+	filePaths: string[],
 ): Map<string, string[]> {
-  const groups = new Map<string, string[]>();
-  for (const fp of filePaths) {
-    const server = findServerForFile(fp);
-    if (!server) continue;
-    const root = findWorkspaceRoot(fp);
-    const key = `${server.id}:${root}`;
-    const group = groups.get(key) ?? [];
-    group.push(fp);
-    groups.set(key, group);
-  }
-  return groups;
+	const groups = new Map<string, string[]>();
+	for (const fp of filePaths) {
+		const server = findServerForFile(fp);
+		if (!server) continue;
+		const root = findWorkspaceRoot(fp);
+		const key = `${server.id}:${root}`;
+		const group = groups.get(key) ?? [];
+		group.push(fp);
+		groups.set(key, group);
+	}
+	return groups;
 }
