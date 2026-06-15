@@ -430,6 +430,7 @@ export function createReviewerOrchestrator(
 		}
 
 		if (state.config.reviewDelayMs > 0) {
+			transition(state, "IDLE");
 			safeNotify(
 				ctx,
 				`🔍 Post-Turn Reviewer: waiting ${state.config.reviewDelayMs}ms for main agent to finish...`,
@@ -437,9 +438,15 @@ export function createReviewerOrchestrator(
 			);
 			state.reviewTimerId = setTimeout(() => {
 				state.reviewTimerId = null;
-				if (!state.config.enabled || state.phase !== "GATHERING") {
+				if (
+					!state.config.enabled ||
+					state.phase !== "IDLE" ||
+					!state.linterClean ||
+					state.pendingFiles.length === 0
+				) {
 					return;
 				}
+				transition(state, "GATHERING");
 				void runReview(ctx, false);
 			}, state.config.reviewDelayMs);
 			return;
@@ -793,6 +800,15 @@ export function createReviewerOrchestrator(
 			if (options.files && options.files.length > 0) {
 				state.pendingFiles = options.files;
 			}
+			if (state.pendingFiles.length === 0) {
+				safeNotify(
+					ctx,
+					"🔍 Post-Turn Reviewer: No files to review. Pass file paths or wait for a clean linter run.",
+					"info",
+				);
+				return;
+			}
+
 			if (isReReview) {
 				state.loopCount++;
 				if (state.loopCount > state.config.maxReReviewPasses) {

@@ -428,6 +428,84 @@ describe("ReviewerOrchestrator", () => {
 		vi.useRealTimers();
 	});
 
+	it("refreshes pending files during the review debounce window", async () => {
+		vi.useFakeTimers();
+		try {
+			const pi = createMockPi();
+			const deps = createFakeDeps({
+				loadConfig: { ...DEFAULT_REVIEW_CONFIG, reviewDelayMs: 100 },
+				runReview: passReport(),
+			});
+			const orchestrator = createReviewerOrchestrator(pi as never, deps);
+			const branch: unknown[] = [
+				{
+					type: "message",
+					message: { role: "user", content: "First task" },
+				},
+				{
+					type: "custom_message",
+					customType: "post-turn-linter-status",
+					details: { status: "clean", files: ["src/a.ts"], timestamp: 1 },
+				},
+			];
+			const ctx = createMockContext({
+				sessionManager: {
+					getBranch: () => branch,
+					getSessionFile: () => "/tmp/session.jsonl",
+				},
+			});
+
+			await orchestrator.initialize(ctx);
+			await orchestrator.onTurnEnd(ctx);
+			await vi.advanceTimersByTimeAsync(50);
+
+			branch.push(
+				{
+					type: "message",
+					message: { role: "user", content: "Second task" },
+				},
+				{
+					type: "custom_message",
+					customType: "post-turn-linter-status",
+					details: { status: "clean", files: ["src/b.ts"], timestamp: 2 },
+				},
+			);
+			await orchestrator.onTurnEnd(ctx);
+			await vi.advanceTimersByTimeAsync(100);
+
+			expect(deps.runReview).toHaveBeenCalledTimes(1);
+			expect(deps.runReview).toHaveBeenCalledWith(
+				"Second task",
+				["src/b.ts"],
+				"/repo",
+				expect.any(Object),
+				expect.any(Object),
+			);
+			expect(orchestrator.getStateSnapshot().phase).toBe("IDLE");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("does not run a manual review when no files are available", async () => {
+		const pi = createMockPi();
+		const deps = createFakeDeps({ runReview: passReport() });
+		const orchestrator = createReviewerOrchestrator(pi as never, deps);
+		const ctx = createMockContext({ hasUI: true });
+
+		await orchestrator.initialize(ctx);
+		orchestrator.registerCommands(pi as never);
+		await pi.commands.get("reviewer-run")?.("", ctx as unknown as MockContext);
+
+		expect(deps.runReview).not.toHaveBeenCalled();
+		expect(orchestrator.getStateSnapshot().phase).toBe("IDLE");
+		expect(
+			(ctx.ui.notify as Mock).mock.calls.some((call) =>
+				(call[0] as string).includes("No files to review"),
+			),
+		).toBe(true);
+	});
+
 	it("stays in RE_REVIEWING while a re-review is pending", async () => {
 		const pi = createMockPi();
 		const deps = createFakeDeps({ runReview: issuesReport() });
