@@ -167,9 +167,7 @@ export function parseReportRecoveryArgs(
 
 export async function writeReportSidecar<
 	M extends ReportSidecarMetadata = ReportSidecarMetadata,
->(
-	options: WriteReportSidecarOptions<M>,
-): Promise<WriteReportSidecarResult<M>> {
+>(options: WriteReportSidecarOptions<M>): Promise<WriteReportSidecarResult<M>> {
 	const now = options.now ?? new Date();
 	const id = randomUUID();
 	const sessionId = sanitizePathPart(options.sessionId ?? "default-session");
@@ -255,7 +253,9 @@ export async function recoverReportSidecar<
 		const requestedLength = Math.max(1, options.length ?? DEFAULT_SLICE_CHARS);
 		const length = Math.min(requestedLength, DEFAULT_SLICE_CHARS);
 		const slice = content.slice(offset, offset + length);
-		const label = options.reportLabel ? `${options.reportLabel} report` : "report";
+		const label = options.reportLabel
+			? `${options.reportLabel} report`
+			: "report";
 		return {
 			mode: options.mode,
 			content: [
