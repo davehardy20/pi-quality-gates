@@ -1,8 +1,10 @@
-import { describe, expect, it } from "vitest";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { describe, expect, it, vi } from "vitest";
 import {
 	decideAutoReview,
 	getLatestLinterStatus,
 	type LinterStatusEntry,
+	registerAutoReview,
 } from "../src/pr-gate/auto-review-trigger.js";
 
 function entry(customType: string, status?: string): LinterStatusEntry {
@@ -118,12 +120,56 @@ describe("decideAutoReview", () => {
 		expect(second.shouldReview).toBe(true);
 	});
 
-	it("does not re-review a HEAD that already failed review (sticky guard)", () => {
+	it("does not re-review a HEAD that already failed review (sticky guard)", async () => {
 		// Regression: a failed review must NOT reset lastReviewedSha, otherwise
 		// terminal failures like "No files changed" loop forever on turn_end.
-		// The caller keeps lastReviewedSha pinned; decideAutoReview must refuse.
-		expect(
-			decideAutoReview({ ...YES, lastReviewedSha: YES.headSha }).shouldReview,
-		).toBe(false);
+		// This drives the real registerAutoReview turn_end path with a failing
+		// runReview and asserts the second turn_end does not re-trigger.
+		const turnEndHandlers: Array<(event: unknown, ctx: unknown) => unknown> =
+			[];
+		const pi = {
+			on: (
+				_event: string,
+				handler: (event: unknown, ctx: unknown) => unknown,
+			) => {
+				turnEndHandlers.push(handler);
+			},
+		} as unknown as ExtensionAPI;
+
+		const runReview = vi.fn(async () => {
+			throw new Error("No files changed between origin/master and HEAD");
+		});
+		const notify = vi.fn();
+		const ctx = {
+			sessionManager: {
+				getBranch: () =>
+					[
+						{
+							type: "custom_message",
+							customType: "post-turn-linter-status",
+							details: { status: "clean" },
+						},
+					] as LinterStatusEntry[],
+			},
+		};
+
+		registerAutoReview(pi, {
+			getHeadSha: () => "abc123",
+			hasPass: () => false,
+			isEnabled: () => true,
+			isInProgress: () => false,
+			runReview,
+			notify,
+		});
+
+		await turnEndHandlers[0](undefined, ctx);
+		expect(runReview).toHaveBeenCalledTimes(1);
+		expect(notify).toHaveBeenCalledWith(
+			expect.stringContaining("Auto-review failed"),
+		);
+
+		// Second turn_end for the SAME head: must not re-trigger.
+		await turnEndHandlers[0](undefined, ctx);
+		expect(runReview).toHaveBeenCalledTimes(1);
 	});
 });
