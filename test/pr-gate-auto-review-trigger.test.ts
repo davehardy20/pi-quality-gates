@@ -117,4 +117,13 @@ describe("decideAutoReview", () => {
 		});
 		expect(second.shouldReview).toBe(true);
 	});
+
+	it("does not re-review a HEAD that already failed review (sticky guard)", () => {
+		// Regression: a failed review must NOT reset lastReviewedSha, otherwise
+		// terminal failures like "No files changed" loop forever on turn_end.
+		// The caller keeps lastReviewedSha pinned; decideAutoReview must refuse.
+		expect(
+			decideAutoReview({ ...YES, lastReviewedSha: YES.headSha }).shouldReview,
+		).toBe(false);
+	});
 });

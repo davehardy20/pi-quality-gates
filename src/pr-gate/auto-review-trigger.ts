@@ -164,7 +164,11 @@ export function registerAutoReview(
 			deps.notify?.(
 				`Auto-review failed for HEAD ${headSha.slice(0, 8)}: ${message}`,
 			);
-			runtime.lastReviewedSha = "";
+			// Do NOT reset lastReviewedSha on failure. The guard is sticky: once a
+			// HEAD has been auto-attempted (pass or fail), it is not auto-attempted
+			// again until the HEAD changes. This prevents infinite loops on
+			// terminal failures such as "No files changed" for an already-pushed
+			// HEAD. Manual /pr-review bypasses this guard and always retries.
 		}
 		void ctx;
 	});
