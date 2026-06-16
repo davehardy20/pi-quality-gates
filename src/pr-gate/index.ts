@@ -226,6 +226,21 @@ export default function prGateExtension(pi: ExtensionAPI): void {
 			"Simulate a git_safe push tool_call to verify the gate blocks without a PASS token.",
 		handler: async (_args, ctx: ExtensionContext) => {
 			const headSha = resolveHeadSha(ctx.cwd);
+
+			if (!state.config.enabled) {
+				pi.sendMessage({
+					customType: "pr-gate-test-block",
+					content:
+						"PR gate test: tool_call would NOT be blocked (gate is disabled).",
+					display: true,
+					details: {
+						headSha,
+						enabled: false,
+					},
+				});
+				return;
+			}
+
 			const decision = decidePushGate({
 				action: "push",
 				headSha,
@@ -237,8 +252,13 @@ export default function prGateExtension(pi: ExtensionAPI): void {
 				pi.sendMessage({
 					customType: "pr-gate-test-block",
 					content:
-						"PR gate test: tool_call would NOT be blocked (PASS token present or gate disabled).",
+						"PR gate test: tool_call would NOT be blocked (PASS token present).",
 					display: true,
+					details: {
+						headSha,
+						verdict: decision.verdict,
+						hasPass: state.tokens.hasPass(headSha),
+					},
 				});
 				return;
 			}
