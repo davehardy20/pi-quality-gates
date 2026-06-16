@@ -120,6 +120,34 @@ export function stampPassFromReview(
 	return state.tokens.size > before;
 }
 
+function sendPrReviewStatus(
+	pi: ExtensionAPI,
+	state: PrGateState,
+	ctx: ExtensionContext,
+): void {
+	const headSha = resolveHeadSha(ctx.cwd);
+	const hasPass = headSha ? state.tokens.hasPass(headSha) : false;
+	pi.sendMessage({
+		customType: "pr-review-status",
+		content: [
+			`PR gate enabled: ${state.config.enabled}`,
+			`HEAD sha: ${headSha || "(unknown)"}`,
+			`HEAD has PASS: ${hasPass}`,
+			`Total PASS tokens: ${state.tokens.size}`,
+			state.config.enabled
+				? "Run /pr-review to request a PASS token for the current HEAD."
+				: "Reviews are not required while the gate is disabled.",
+		].join("\n"),
+		display: true,
+		details: {
+			headSha,
+			hasPass,
+			enabled: state.config.enabled,
+			tokenCount: state.tokens.size,
+		},
+	});
+}
+
 export default function prGateExtension(pi: ExtensionAPI): void {
 	const state = createPrGateState();
 
@@ -145,7 +173,13 @@ export default function prGateExtension(pi: ExtensionAPI): void {
 		description:
 			"Run a PR review for the current HEAD, then stamp a PASS token if clean. Required before gh_safe push / pr_create when the gate is enabled.",
 		handler: async (args, ctx: ExtensionContext) => {
-			const baseRef = (args ?? "").trim() || undefined;
+			const rawArgs = (args ?? "").trim();
+			if (rawArgs === "status" || rawArgs === "--status") {
+				sendPrReviewStatus(pi, state, ctx);
+				return;
+			}
+
+			const baseRef = rawArgs || undefined;
 			const headSha = resolveHeadSha(ctx.cwd);
 			const hasPass = headSha ? state.tokens.hasPass(headSha) : false;
 
@@ -200,6 +234,14 @@ export default function prGateExtension(pi: ExtensionAPI): void {
 					tokenCount: state.tokens.size,
 				},
 			});
+		},
+	});
+
+	pi.registerCommand("pr-review-status", {
+		description:
+			"Show PR review gate status without running a review or treating status as a base ref.",
+		handler: async (_args, ctx: ExtensionContext) => {
+			sendPrReviewStatus(pi, state, ctx);
 		},
 	});
 
