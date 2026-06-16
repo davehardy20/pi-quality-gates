@@ -70,12 +70,13 @@ export function registerPushGateHook(
 	const isEnabled = deps.enabled ?? (() => true);
 	const getGatedActions = deps.gatedActions ?? (() => DEFAULT_GATED_ACTIONS);
 
-function inferAction(input: ToolCallEventLike["input"]): string | null {
-	if (typeof input.action === "string") return input.action;
-	if (typeof input.command === "string") return input.command;
-	if (Array.isArray(input.args) && input.args.length > 0) return input.args[0];
-	return null;
-}
+	function inferAction(input: ToolCallEventLike["input"]): string | null {
+		if (typeof input.action === "string") return input.action;
+		if (typeof input.command === "string") return input.command;
+		if (Array.isArray(input.args) && input.args.length > 0)
+			return input.args[0];
+		return null;
+	}
 
 	const handler = async (
 		event: ToolCallEventLike,
