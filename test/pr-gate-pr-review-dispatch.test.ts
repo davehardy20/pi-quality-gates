@@ -132,6 +132,7 @@ function createTestDeps(
     listChangedFiles: async () => ["src/a.ts", "src/b.ts"],
     countDiffLines: async () => 42,
     gatherDiff: async () => "mock diff",
+    runContainerValidation: async () => "mock container validation evidence",
     reviewerExecution: createMockReviewerExecution(report),
   };
 }
@@ -294,6 +295,7 @@ describe("pr-review dispatch", () => {
       listChangedFiles,
       countDiffLines: async () => 42,
       gatherDiff: async () => "mock diff",
+      runContainerValidation: async () => "mock container validation evidence",
       reviewerExecution: createMockReviewerExecution(makePassReport()),
     });
     const input = createInput(pi, { baseRef: "feature/base" });

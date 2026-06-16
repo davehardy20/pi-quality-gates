@@ -20,6 +20,7 @@ import {
 } from "../shared/review-scope.js";
 import { hasCriticalSecurityFinding } from "../shared/review-severity.js";
 import type { ReviewReport } from "../shared/review-types.js";
+import { runContainerValidationEvidence } from "./container-validation.js";
 import { decidePushGate } from "./gate-decision.js";
 import type { PassTokenStore } from "./pass-token-store.js";
 import { PR_REVIEW_CONFIG } from "./pr-review-config.js";
@@ -54,6 +55,7 @@ export interface PrReviewDispatchDeps {
 		}>,
 	) => string;
 	reviewerExecution: ReviewerExecution;
+	runContainerValidation: (files: string[], cwd: string) => Promise<string>;
 }
 
 export interface PrReviewDispatchInput {
@@ -216,6 +218,7 @@ export function createPrReviewDispatch(
 		reviewerExecution: createReviewerExecution({
 			getPromptsDir: getDefaultPromptsDir,
 		}),
+		runContainerValidation: runContainerValidationEvidence,
 		...partialDeps,
 	};
 
@@ -267,9 +270,19 @@ export function createPrReviewDispatch(
 			deps.extractTask(ctx.sessionManager?.getBranch() ?? []) ||
 			"Review the current HEAD diff before push.";
 
-		const testPlan = formatTestExecutionPlan(
+		const recommendedPlan = formatTestExecutionPlan(
 			recommendTestCommands(changedFiles, cwd),
 		);
+		const containerEvidence = await deps.runContainerValidation(
+			changedFiles,
+			cwd,
+		);
+		const testPlan = [
+			recommendedPlan,
+			"",
+			"## Apple Container Validation Evidence",
+			containerEvidence,
+		].join("\n");
 
 		return deps.reviewerExecution.runAttempt({
 			task,
