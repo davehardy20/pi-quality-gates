@@ -28,6 +28,10 @@ import {
   type PassTokenStore,
 } from "./pass-token-store.js";
 import {
+  createPrReviewDispatch,
+  type PrReviewDispatchResult,
+} from "./pr-review-dispatch.js";
+import {
   DEFAULT_GATED_ACTIONS,
   registerPushGateHook,
 } from "./push-gate-hook.js";
@@ -133,32 +137,66 @@ export default function prGateExtension(pi: ExtensionAPI): void {
     gatedActions: () => state.config.gatedActions,
   });
 
+  const dispatch = createPrReviewDispatch({
+    getHeadSha: resolveHeadSha,
+  });
+
   pi.registerCommand("pr-review", {
     description:
       "Run a PR review for the current HEAD, then stamp a PASS token if clean. Required before gh_safe push / pr_create when the gate is enabled.",
-    handler: async (_args, ctx: ExtensionContext) => {
-      // Full review dispatch is implemented in step 5/6 integration. This
-      // command stub reports current gate state so the agent knows what to do.
+    handler: async (args, ctx: ExtensionContext) => {
+      const baseRef = (args ?? "").trim() || undefined;
       const headSha = resolveHeadSha(ctx.cwd);
       const hasPass = headSha ? state.tokens.hasPass(headSha) : false;
-      const decision = decidePushGate({
-        action: "push",
-        headSha,
-        baseSha: "unknown",
-        tokens: state.tokens,
+
+      if (!state.config.enabled) {
+        pi.sendMessage({
+          customType: "pr-review-status",
+          content: "PR gate is disabled. Reviews are not required.",
+          display: true,
+        });
+        return;
+      }
+
+      if (hasPass && !baseRef) {
+        pi.sendMessage({
+          customType: "pr-review-status",
+          content: `PR gate: HEAD ${headSha} already has a PASS token. Push/pr_create will be allowed.`,
+          display: true,
+          details: {
+            headSha,
+            hasPass: true,
+            verdict: "allow",
+            enabled: state.config.enabled,
+            tokenCount: state.tokens.size,
+          },
+        });
+        return;
+      }
+
+      const result: PrReviewDispatchResult = await dispatch.dispatch({
+        ctx,
+        state,
+        pi,
+        baseRef,
       });
+
       pi.sendMessage({
-        customType: "pr-review-status",
-        content: hasPass
-          ? `PR gate: HEAD ${headSha} already has a PASS token. Push/pr_create will be allowed.`
-          : `PR gate: HEAD ${headSha || "(unknown)"} has no PASS token. Decision: ${decision.verdict}. ${decision.steer ?? ""}`.trim(),
+        customType: result.escalated
+          ? "pr-review-escalation"
+          : result.stamped
+            ? "pr-review-pass"
+            : "pr-review-status",
+        content: result.message,
         display: true,
         details: {
           headSha,
-          hasPass,
-          verdict: decision.verdict,
+          stamped: result.stamped,
+          escalated: result.escalated,
+          blocked: result.blocked,
+          verdict: result.report?.status ?? null,
+          confidence: result.report?.confidence ?? null,
           enabled: state.config.enabled,
-          gatedActions: [...state.config.gatedActions],
           tokenCount: state.tokens.size,
         },
       });

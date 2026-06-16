@@ -60,6 +60,10 @@ export interface ReviewerAttemptInput {
 	cwd: string;
 	config: ReviewConfig;
 	filterOptions?: DiffFilterOptions;
+	/** Optional pre-computed diff. If omitted, the execution gathers it. */
+	diff?: string;
+	/** Optional test-execution plan rendered into the task template. */
+	testPlan?: string;
 	signal?: AbortSignal;
 }
 
@@ -97,6 +101,7 @@ export function renderTaskTemplate(
 	task: string,
 	files: string[],
 	diff: string,
+	testPlan?: string,
 ): string {
 	const templatePath = path.join(promptsDir, "task-template.md");
 	let template: string;
@@ -114,7 +119,11 @@ export function renderTaskTemplate(
 				? files.map((f) => `- \`${f}\``).join("\n")
 				: "(no changed files)",
 		)
-		.replace(/\{\{DIFF\}\}/g, diff || "(no diff available)");
+		.replace(/\{\{DIFF\}\}/g, diff || "(no diff available)")
+		.replace(
+			/\{\{TEST_PLAN\}\}/g,
+			testPlan ?? "(no test execution plan available)",
+		);
 }
 
 function getDefaultPromptsDir(): string {
@@ -132,18 +141,21 @@ export function createReviewerExecution(
 			const systemPrompt = (deps.readSystemPrompt ?? readSystemPrompt)(
 				promptsDir,
 			);
-			const diff = await (deps.gatherDiff ?? gatherDiff)(
-				input.files,
-				input.cwd,
-				input.config.maxDiffLines,
-				undefined, // baseRef — post-turn reviewer diffs working tree vs HEAD
-				input.filterOptions,
-			);
+			const diff =
+				input.diff ??
+				(await (deps.gatherDiff ?? gatherDiff)(
+					input.files,
+					input.cwd,
+					input.config.maxDiffLines,
+					undefined, // baseRef — post-turn reviewer diffs working tree vs HEAD
+					input.filterOptions,
+				));
 			const taskPrompt = (deps.renderTaskTemplate ?? renderTaskTemplate)(
 				promptsDir,
 				input.task,
 				input.files,
 				diff,
+				input.testPlan,
 			);
 			return (deps.spawnReviewer ?? spawnReviewer)(
 				taskPrompt,

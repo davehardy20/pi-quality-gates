@@ -219,6 +219,7 @@ describe("ReviewerExecution", () => {
 			"Review this",
 			["src/a.ts"],
 			"diff text",
+			undefined,
 		);
 		expect(spawnReviewer).toHaveBeenCalledWith(
 			"task prompt",
