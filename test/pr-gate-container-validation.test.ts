@@ -1,9 +1,10 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	formatContainerValidationEvidence,
+	resolveExistingTestFiles,
 	runContainerValidationEvidence,
 } from "../src/pr-gate/container-validation.js";
 
@@ -36,6 +37,27 @@ describe("formatContainerValidationEvidence", () => {
 		expect(evidence).toContain("typecheck: PASS");
 		expect(evidence).toContain("vitest: FAIL");
 		expect(evidence).toContain("missing native dependency");
+	});
+});
+
+describe("resolveExistingTestFiles", () => {
+	it("drops deleted test files that no longer exist in the workspace", async () => {
+		const workspace = await mkdtemp(join(tmpdir(), "pi-qg-existing-"));
+		await mkdir(join(workspace, "test"), { recursive: true });
+		await mkdir(join(workspace, "src"), { recursive: true });
+		await writeFile(join(workspace, "test/exists.test.ts"), "x");
+		await writeFile(join(workspace, "src/keep.ts"), "x");
+
+		const files = [
+			"test/exists.test.ts",
+			"test/deleted.test.ts",
+			"test/renamed-away.test.ts",
+			"src/keep.ts",
+		];
+
+		const result = resolveExistingTestFiles(files, workspace);
+
+		expect(result).toEqual(["test/exists.test.ts"]);
 	});
 });
 

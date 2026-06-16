@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { cp, mkdtemp, rm } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -60,6 +61,23 @@ function isTestFile(file: string): boolean {
 		file.includes("_test.go") ||
 		file.includes("/tests/")
 	);
+}
+
+/**
+ * Filter changed-file paths down to test files that still exist at
+ * `workspaceRoot`. git diff --name-only returns paths relative to the base
+ * ref, which can include deleted/renamed test files that no longer exist in
+ * the current checkout. Running `vitest run <deleted>` would fail and trip
+ * the fail-closed gate for a valid delete/rename, so those paths are dropped.
+ */
+export function resolveExistingTestFiles(
+	files: string[],
+	workspaceRoot: string,
+): string[] {
+	return files.filter((file) => {
+		if (!isTestFile(file)) return false;
+		return existsSync(path.join(workspaceRoot, file));
+	});
 }
 
 function deriveStatus(
@@ -176,8 +194,11 @@ async function runContainerCommand(
 	return { name, command, ...result };
 }
 
-function buildTypeScriptCommands(files: string[]): Array<[string, string]> {
-	const testFiles = files.filter(isTestFile);
+function buildTypeScriptCommands(
+	files: string[],
+	workspaceRoot: string,
+): Array<[string, string]> {
+	const testFiles = resolveExistingTestFiles(files, workspaceRoot);
 	const commands: Array<[string, string]> = [
 		[
 			"tool versions",
@@ -263,7 +284,7 @@ export async function runContainerValidationEvidence(
 	const { root, workspace } = await prepareWritableWorkspace(cwd);
 	try {
 		const results: ContainerCommandResult[] = [];
-		for (const [name, command] of buildTypeScriptCommands(files)) {
+		for (const [name, command] of buildTypeScriptCommands(files, workspace)) {
 			const result = await runContainerCommand(
 				workspace,
 				name,
