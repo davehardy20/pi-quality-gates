@@ -22,6 +22,7 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { registerAutoReview } from "./auto-review-trigger.js";
 import { decidePushGate } from "./gate-decision.js";
 import {
 	createPassTokenStore,
@@ -29,6 +30,7 @@ import {
 } from "./pass-token-store.js";
 import {
 	createPrReviewDispatch,
+	type PrReviewDispatchInput,
 	type PrReviewDispatchResult,
 } from "./pr-review-dispatch.js";
 import {
@@ -186,6 +188,96 @@ export default function prGateExtension(
 		getHeadSha: resolveHeadSha,
 	});
 	let reviewInProgress = false;
+	function runReviewForHead(args: {
+		pi: ExtensionAPI;
+		ctx: ExtensionContext;
+		dispatch: {
+			dispatch: (
+				input: PrReviewDispatchInput,
+			) => Promise<PrReviewDispatchResult>;
+		};
+		state: PrGateState;
+		baseRef?: string;
+		headSha: string;
+		getInProgress: () => boolean;
+		setInProgress: (v: boolean) => void;
+	}): void {
+		const { pi, ctx, dispatch, state, baseRef, headSha } = args;
+		args.setInProgress(true);
+		safeSetPrReviewStatus(
+			ctx,
+			`PR review: running ${headSha.slice(0, 8) || "unknown"}`,
+		);
+		pi.sendMessage({
+			customType: "pr-review-status",
+			content: `PR review started for HEAD ${headSha}${baseRef ? ` against ${baseRef}` : ""}. This runs in the background and may take several minutes.`,
+			display: true,
+			details: {
+				headSha,
+				baseRef: baseRef ?? null,
+				enabled: state.config.enabled,
+				tokenCount: state.tokens.size,
+				status: "running",
+			},
+		});
+		void (async () => {
+			try {
+				const result: PrReviewDispatchResult = await dispatch.dispatch({
+					ctx,
+					state,
+					pi,
+					baseRef,
+				});
+				const statusText = result.stamped
+					? `PR review: PASS ${headSha.slice(0, 8)}`
+					: result.escalated
+						? `PR review: escalation ${headSha.slice(0, 8)}`
+						: result.blocked
+							? `PR review: blocked ${headSha.slice(0, 8)}`
+							: `PR review: complete ${headSha.slice(0, 8)}`;
+				safeSetPrReviewStatus(ctx, statusText);
+				pi.sendMessage({
+					customType: result.escalated
+						? "pr-review-escalation"
+						: result.stamped
+							? "pr-review-pass"
+							: "pr-review-status",
+					content: result.message,
+					display: true,
+					details: {
+						headSha,
+						stamped: result.stamped,
+						escalated: result.escalated,
+						blocked: result.blocked,
+						verdict: result.report?.status ?? null,
+						confidence: result.report?.confidence ?? null,
+						enabled: state.config.enabled,
+						tokenCount: state.tokens.size,
+					},
+				});
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				safeSetPrReviewStatus(
+					ctx,
+					`PR review: failed ${headSha.slice(0, 8) || "unknown"}`,
+				);
+				pi.sendMessage({
+					customType: "pr-review-status",
+					content: `PR review gate: review failed — ${message}`,
+					display: true,
+					details: {
+						headSha,
+						baseRef: baseRef ?? null,
+						enabled: state.config.enabled,
+						tokenCount: state.tokens.size,
+						error: message,
+					},
+				});
+			} finally {
+				args.setInProgress(false);
+			}
+		})();
+	}
 
 	pi.registerCommand("pr-review", {
 		description:
@@ -261,66 +353,18 @@ export default function prGateExtension(
 				},
 			});
 
-			void (async () => {
-				try {
-					const result: PrReviewDispatchResult = await dispatch.dispatch({
-						ctx,
-						state,
-						pi,
-						baseRef,
-					});
-
-					const statusText = result.stamped
-						? `PR review: PASS ${headSha.slice(0, 8)}`
-						: result.escalated
-							? `PR review: escalation ${headSha.slice(0, 8)}`
-							: result.blocked
-								? `PR review: blocked ${headSha.slice(0, 8)}`
-								: `PR review: complete ${headSha.slice(0, 8)}`;
-					safeSetPrReviewStatus(ctx, statusText);
-
-					pi.sendMessage({
-						customType: result.escalated
-							? "pr-review-escalation"
-							: result.stamped
-								? "pr-review-pass"
-								: "pr-review-status",
-						content: result.message,
-						display: true,
-						details: {
-							headSha,
-							stamped: result.stamped,
-							escalated: result.escalated,
-							blocked: result.blocked,
-							verdict: result.report?.status ?? null,
-							confidence: result.report?.confidence ?? null,
-							enabled: state.config.enabled,
-							tokenCount: state.tokens.size,
-						},
-					});
-				} catch (error) {
-					const message =
-						error instanceof Error ? error.message : String(error);
-					safeSetPrReviewStatus(
-						ctx,
-						`PR review: failed ${headSha.slice(0, 8) || "unknown"}`,
-					);
-					pi.sendMessage({
-						customType: "pr-review-status",
-						content: `PR review gate: review failed — ${message}`,
-						display: true,
-						details: {
-							headSha,
-							baseRef: baseRef ?? null,
-							enabled: state.config.enabled,
-							tokenCount: state.tokens.size,
-							error: message,
-						},
-					});
-				} finally {
-					reviewInProgress = false;
-				}
-			})();
+			void runReviewForHead({
+				pi,
+				ctx,
+				dispatch,
+				state,
+				baseRef,
+				headSha,
+				getInProgress: () => reviewInProgress,
+				setInProgress: (v) => {
+					reviewInProgress = v;
+				},
+			});
 		},
 	});
 
@@ -422,6 +466,42 @@ export default function prGateExtension(
 				display: true,
 			});
 			void ctx;
+		},
+	});
+
+	registerAutoReview(pi, {
+		getHeadSha: () => resolveHeadSha(process.cwd()),
+		hasPass: (sha) => state.tokens.hasPass(sha),
+		isEnabled: () => state.config.enabled,
+		isInProgress: () => reviewInProgress,
+		runReview: async () => {
+			const headSha = resolveHeadSha(process.cwd());
+			if (!headSha) {
+				return;
+			}
+			const reviewCtx: ExtensionContext = {
+				cwd: process.cwd(),
+				hasUI: false,
+				sessionManager: undefined,
+			} as unknown as ExtensionContext;
+			runReviewForHead({
+				pi,
+				ctx: reviewCtx,
+				dispatch,
+				state,
+				headSha,
+				getInProgress: () => reviewInProgress,
+				setInProgress: (v) => {
+					reviewInProgress = v;
+				},
+			});
+		},
+		notify: (message) => {
+			pi.sendMessage({
+				customType: "pr-review-status",
+				content: message,
+				display: true,
+			});
 		},
 	});
 }
