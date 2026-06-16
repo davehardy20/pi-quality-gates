@@ -724,6 +724,20 @@ export function createLinterOrchestrator(
 						"post-turn-linter: no files to lint. Pass paths or modify files in-session first.",
 						"info",
 					);
+					// Explicit run with nothing actionable: emit a clean status so
+					// downstream gates do not get stuck on a stale findings entry
+					// from an earlier turn.
+					state.latestLintMessage = null;
+					state.latestFiles = [];
+					state.latestReportSidecar = null;
+					state.pendingFixReportId = null;
+					state.lastReportedSignature = null;
+					pi.sendMessage({
+						customType: "post-turn-linter-status",
+						content: "post-turn-linter: clean (0 file(s) checked)",
+						display: false,
+						details: { status: "clean", files: [] },
+					});
 					return;
 				}
 
