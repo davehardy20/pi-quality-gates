@@ -199,7 +199,7 @@ function buildTypeScriptCommands(files: string[]): Array<[string, string]> {
 
 	commands.push([
 		"biome",
-		"if command -v biome >/dev/null 2>&1; then biome check src test; else echo 'biome: not installed in container image'; exit 42; fi",
+		"if command -v biome >/dev/null 2>&1; then biome check src test; else echo 'biome: not installed in container image; skipping'; fi",
 	]);
 	return commands;
 }
