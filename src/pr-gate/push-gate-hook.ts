@@ -46,7 +46,12 @@ export interface PushGateHookDeps {
 export interface ToolCallEventLike {
 	toolName: string;
 	toolCallId: string;
-	input: { action?: string; [k: string]: unknown };
+	input: {
+		action?: string;
+		command?: string;
+		args?: string[];
+		[k: string]: unknown;
+	};
 }
 
 export interface BlockReturn {
@@ -65,6 +70,13 @@ export function registerPushGateHook(
 	const isEnabled = deps.enabled ?? (() => true);
 	const getGatedActions = deps.gatedActions ?? (() => DEFAULT_GATED_ACTIONS);
 
+function inferAction(input: ToolCallEventLike["input"]): string | null {
+	if (typeof input.action === "string") return input.action;
+	if (typeof input.command === "string") return input.command;
+	if (Array.isArray(input.args) && input.args.length > 0) return input.args[0];
+	return null;
+}
+
 	const handler = async (
 		event: ToolCallEventLike,
 	): Promise<BlockReturn | undefined> => {
@@ -74,7 +86,7 @@ export function registerPushGateHook(
 		// Gate disabled — pass through unchanged.
 		if (!isEnabled()) return undefined;
 
-		const action = event.input?.action;
+		const action = inferAction(event.input ?? {});
 		if (typeof action !== "string") return undefined;
 
 		// Only the configured mutating actions are gated; everything else on
