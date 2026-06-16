@@ -31,6 +31,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import postTurnLinter from "./linter/index.js";
+import prGateExtension from "./pr-gate/index.js";
 import postTurnReviewerExtension from "./reviewer/index.js";
 
 interface PackageMetadata {
@@ -68,6 +69,7 @@ function getPackageMetadata(): PackageMetadata {
 export default function qualityGatesExtension(pi: ExtensionAPI) {
 	postTurnLinter(pi);
 	postTurnReviewerExtension(pi);
+	prGateExtension(pi);
 
 	pi.registerCommand("quality-gates-status", {
 		description: "Show pi-quality-gates package status and debug info",
