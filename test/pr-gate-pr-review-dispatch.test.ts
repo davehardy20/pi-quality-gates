@@ -238,9 +238,14 @@ describe("pr-review dispatch", () => {
       ...createTestDeps(makePassReport()),
       reviewerExecution: reviewer,
     });
-    const input = createInput(pi, {
-      ctx: createMockContext(false),
+    const ctx = createMockContext(false);
+    const branch = ctx.sessionManager.getBranch() as unknown as Array<Record<string, unknown>>;
+    branch.push({
+      type: "custom_message",
+      customType: "post-turn-linter-status",
+      details: { status: "findings" },
     });
+    const input = createInput(pi, { ctx });
 
     const result = await dispatch.dispatch(input);
 

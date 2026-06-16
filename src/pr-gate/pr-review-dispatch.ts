@@ -89,7 +89,10 @@ function isLinterClean(ctx: ExtensionContext): boolean {
 		if (entry.customType !== "post-turn-linter-status") continue;
 		return entry.details?.status === "clean";
 	}
-	return false;
+	// No linter status entry means the linter has not run (and therefore has
+	// not reported findings). Treat this as clean so /pr-review can proceed
+	// when no in-session files needed linting.
+	return true;
 }
 
 function getDefaultPromptsDir(): string {
