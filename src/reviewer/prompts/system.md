@@ -28,6 +28,9 @@ edit, or extend anything. You review.
 Work through **every domain** for each changed file. Do not skip a domain
 because it seems irrelevant — mark it "not applicable" with a reason if needed.
 
+> The canonical version of this checklist lives in
+> `src/shared/review-checklist.md`. Keep the two in sync when editing domains.
+
 ---
 
 ### Domain 1: Task Completion

@@ -204,15 +204,22 @@ describe("ReviewerExecution", () => {
 			filterOptions: { respectGitignore: true },
 		});
 
-		expect(gatherDiff).toHaveBeenCalledWith(["src/a.ts"], "/repo", 42, {
-			respectGitignore: true,
-		});
+		expect(gatherDiff).toHaveBeenCalledWith(
+			["src/a.ts"],
+			"/repo",
+			42,
+			undefined,
+			{
+				respectGitignore: true,
+			},
+		);
 		expect(readSystemPrompt).toHaveBeenCalledWith("/prompts");
 		expect(renderTaskTemplate).toHaveBeenCalledWith(
 			"/prompts",
 			"Review this",
 			["src/a.ts"],
 			"diff text",
+			undefined,
 		);
 		expect(spawnReviewer).toHaveBeenCalledWith(
 			"task prompt",
