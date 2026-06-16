@@ -335,24 +335,6 @@ export default function prGateExtension(
 				return;
 			}
 
-			reviewInProgress = true;
-			safeSetPrReviewStatus(
-				ctx,
-				`PR review: running ${headSha.slice(0, 8) || "unknown"}`,
-			);
-			pi.sendMessage({
-				customType: "pr-review-status",
-				content: `PR review started for HEAD ${headSha}${baseRef ? ` against ${baseRef}` : ""}. This runs in the background and may take several minutes.`,
-				display: true,
-				details: {
-					headSha,
-					baseRef: baseRef ?? null,
-					enabled: state.config.enabled,
-					tokenCount: state.tokens.size,
-					status: "running",
-				},
-			});
-
 			void runReviewForHead({
 				pi,
 				ctx,
