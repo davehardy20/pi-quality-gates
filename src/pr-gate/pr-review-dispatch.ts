@@ -20,6 +20,10 @@ import {
 } from "../shared/review-scope.js";
 import { hasCriticalSecurityFinding } from "../shared/review-severity.js";
 import type { ReviewReport } from "../shared/review-types.js";
+import {
+	type ContainerValidationResult,
+	runContainerValidationEvidence,
+} from "./container-validation.js";
 import { decidePushGate } from "./gate-decision.js";
 import type { PassTokenStore } from "./pass-token-store.js";
 import { PR_REVIEW_CONFIG } from "./pr-review-config.js";
@@ -54,6 +58,11 @@ export interface PrReviewDispatchDeps {
 		}>,
 	) => string;
 	reviewerExecution: ReviewerExecution;
+	runContainerValidation: (
+		files: string[],
+		cwd: string,
+	) => Promise<ContainerValidationResult>;
+	allowLocalReviewerFallback: boolean;
 }
 
 export interface PrReviewDispatchInput {
@@ -138,6 +147,62 @@ async function defaultListChangedFiles(
 	});
 }
 
+function truncateReviewDiagnostic(
+	value: string | undefined,
+	maxChars = 1200,
+): string {
+	const trimmed = (value ?? "").trim();
+	if (!trimmed) return "(empty)";
+	if (trimmed.length <= maxChars) return trimmed;
+	return `${trimmed.slice(0, maxChars)}… [truncated ${trimmed.length - maxChars} chars]`;
+}
+
+function formatUnparseableReviewerOutput(result: ReviewerResult): string {
+	const lines = [
+		"Reviewer child diagnostics:",
+		`- exitCode: ${result.exitCode}`,
+		`- timedOut: ${result.timedOut}`,
+	];
+	if (result.usage) lines.push(`- usage: ${result.usage}`);
+	lines.push(`- command: ${result.command}`);
+	if (result.stderr.trim()) {
+		lines.push("", "stderr preview:", truncateReviewDiagnostic(result.stderr));
+	}
+	if (result.rawOutput.trim() && result.rawOutput !== result.stderr) {
+		lines.push(
+			"",
+			"raw output preview:",
+			truncateReviewDiagnostic(result.rawOutput),
+		);
+	}
+	return lines.join("\n");
+}
+
+function cannotReviewFromContainerRuntime(args: {
+	reason: string;
+	validation: ContainerValidationResult;
+}): ReviewerResult {
+	const summary = [args.reason, "", args.validation.evidence].join("\n").trim();
+	return {
+		report: {
+			status: "CANNOT_REVIEW",
+			confidence: args.validation.status === "failed" ? "HIGH" : "LOW",
+			findings: [],
+			verified:
+				args.validation.status === "passed"
+					? ["Apple container validation evidence completed successfully."]
+					: [],
+			unverifiable: [args.reason],
+			summary,
+		},
+		rawOutput: summary,
+		exitCode: args.validation.status === "passed" ? 0 : 1,
+		timedOut: args.validation.results.some((result) => result.timedOut),
+		stderr: args.validation.results.map((result) => result.stderr).join("\n"),
+		command: `Apple container validation via ${args.validation.image}`,
+	};
+}
+
 function defaultGetBaseRef(cwd: string): string {
 	// Prefer the repo's default upstream branch if available.
 	const candidates = ["origin/master", "origin/main", "master", "main"];
@@ -185,6 +250,8 @@ export function createPrReviewDispatch(
 		reviewerExecution: createReviewerExecution({
 			getPromptsDir: getDefaultPromptsDir,
 		}),
+		runContainerValidation: runContainerValidationEvidence,
+		allowLocalReviewerFallback: false,
 		...partialDeps,
 	};
 
@@ -236,9 +303,35 @@ export function createPrReviewDispatch(
 			deps.extractTask(ctx.sessionManager?.getBranch() ?? []) ||
 			"Review the current HEAD diff before push.";
 
-		const testPlan = formatTestExecutionPlan(
+		const recommendedPlan = formatTestExecutionPlan(
 			recommendTestCommands(changedFiles, cwd),
 		);
+		const containerValidation = await deps.runContainerValidation(
+			changedFiles,
+			cwd,
+		);
+		const testPlan = [
+			recommendedPlan,
+			"",
+			"## Apple Container Validation Evidence",
+			containerValidation.evidence,
+		].join("\n");
+
+		if (containerValidation.status !== "passed") {
+			return cannotReviewFromContainerRuntime({
+				reason:
+					"Apple container validation failed. The PR gate is fail-closed until validation passes inside the container runtime.",
+				validation: containerValidation,
+			});
+		}
+
+		if (!deps.allowLocalReviewerFallback) {
+			return cannotReviewFromContainerRuntime({
+				reason:
+					"Apple container validation passed, but a container-backed LLM reviewer runtime is not available yet. Refusing to stamp PASS from the local headless reviewer path.",
+				validation: containerValidation,
+			});
+		}
 
 		return deps.reviewerExecution.runAttempt({
 			task,
@@ -299,8 +392,11 @@ export function createPrReviewDispatch(
 					stamped: false,
 					escalated: false,
 					blocked: true,
-					message:
-						"PR review gate: could not parse review report from child output. Re-run /pr-review after investigating the reviewer output.",
+					message: [
+						"PR review gate: could not parse review report from child output.",
+						formatUnparseableReviewerOutput(childOutput),
+						"Re-run /pr-review after investigating the reviewer output.",
+					].join("\n\n"),
 				};
 			}
 
