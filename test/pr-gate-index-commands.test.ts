@@ -2,7 +2,7 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import prGateExtension from "../src/pr-gate/index.js";
 
 interface RegisteredCommand {
@@ -41,8 +41,14 @@ function createMockPi(): {
 	return { pi, commands, messages };
 }
 
-function createMockContext(): ExtensionContext {
-	return { cwd: process.cwd() } as ExtensionContext;
+function createMockContext(
+	setStatus?: ReturnType<typeof vi.fn>,
+): ExtensionContext {
+	return {
+		cwd: process.cwd(),
+		hasUI: Boolean(setStatus),
+		ui: { setStatus: setStatus ?? vi.fn() },
+	} as unknown as ExtensionContext;
 }
 
 describe("pr-gate command registration", () => {
@@ -71,5 +77,49 @@ describe("pr-gate command registration", () => {
 		expect(messages.at(-1)?.customType).toBe("pr-review-status");
 		expect(messages.at(-1)?.content).toContain("PR gate enabled");
 		expect(messages.at(-1)?.content).not.toContain("git diff");
+	});
+
+	it("starts /pr-review in the background and updates UI status", async () => {
+		const { pi, commands, messages } = createMockPi();
+		const setStatus = vi.fn();
+		let resolveDispatch: (value: unknown) => void = () => {};
+		const dispatch = vi.fn(
+			() =>
+				new Promise((resolve) => {
+					resolveDispatch = resolve;
+				}),
+		);
+
+		prGateExtension(pi, {
+			createPrReviewDispatch: () => ({ dispatch }) as never,
+		});
+
+		const command = commands.get("pr-review");
+		expect(command).toBeDefined();
+
+		await command?.handler("", createMockContext(setStatus));
+
+		expect(dispatch).toHaveBeenCalledTimes(1);
+		expect(messages.at(-1)?.customType).toBe("pr-review-status");
+		expect(messages.at(-1)?.content).toContain("PR review started");
+		expect(setStatus).toHaveBeenCalledWith(
+			"pr-review",
+			expect.stringContaining("running"),
+		);
+
+		resolveDispatch({
+			report: null,
+			stamped: false,
+			escalated: false,
+			blocked: true,
+			message: "done",
+		});
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(messages.at(-1)?.content).toBe("done");
+		expect(setStatus).toHaveBeenLastCalledWith(
+			"pr-review",
+			expect.stringContaining("blocked"),
+		);
 	});
 });

@@ -148,7 +148,23 @@ function sendPrReviewStatus(
 	});
 }
 
-export default function prGateExtension(pi: ExtensionAPI): void {
+function safeSetPrReviewStatus(
+	ctx: ExtensionContext,
+	text: string | undefined,
+): void {
+	if (ctx.hasUI) {
+		ctx.ui.setStatus("pr-review", text);
+	}
+}
+
+export interface PrGateExtensionDeps {
+	createPrReviewDispatch?: typeof createPrReviewDispatch;
+}
+
+export default function prGateExtension(
+	pi: ExtensionAPI,
+	deps: PrGateExtensionDeps = {},
+): void {
 	const state = createPrGateState();
 
 	registerPushGateHook(pi, {
@@ -165,9 +181,11 @@ export default function prGateExtension(pi: ExtensionAPI): void {
 		gatedActions: () => state.config.gatedActions,
 	});
 
-	const dispatch = createPrReviewDispatch({
+	const createDispatch = deps.createPrReviewDispatch ?? createPrReviewDispatch;
+	const dispatch = createDispatch({
 		getHeadSha: resolveHeadSha,
 	});
+	let reviewInProgress = false;
 
 	pi.registerCommand("pr-review", {
 		description:
@@ -208,32 +226,101 @@ export default function prGateExtension(pi: ExtensionAPI): void {
 				return;
 			}
 
-			const result: PrReviewDispatchResult = await dispatch.dispatch({
-				ctx,
-				state,
-				pi,
-				baseRef,
-			});
+			if (reviewInProgress) {
+				pi.sendMessage({
+					customType: "pr-review-status",
+					content:
+						"PR review is already running. Wait for the current review to finish before starting another.",
+					display: true,
+					details: {
+						headSha,
+						baseRef: baseRef ?? null,
+						enabled: state.config.enabled,
+						tokenCount: state.tokens.size,
+						status: "running",
+					},
+				});
+				return;
+			}
 
+			reviewInProgress = true;
+			safeSetPrReviewStatus(
+				ctx,
+				`PR review: running ${headSha.slice(0, 8) || "unknown"}`,
+			);
 			pi.sendMessage({
-				customType: result.escalated
-					? "pr-review-escalation"
-					: result.stamped
-						? "pr-review-pass"
-						: "pr-review-status",
-				content: result.message,
+				customType: "pr-review-status",
+				content: `PR review started for HEAD ${headSha}${baseRef ? ` against ${baseRef}` : ""}. This runs in the background and may take several minutes.`,
 				display: true,
 				details: {
 					headSha,
-					stamped: result.stamped,
-					escalated: result.escalated,
-					blocked: result.blocked,
-					verdict: result.report?.status ?? null,
-					confidence: result.report?.confidence ?? null,
+					baseRef: baseRef ?? null,
 					enabled: state.config.enabled,
 					tokenCount: state.tokens.size,
+					status: "running",
 				},
 			});
+
+			void (async () => {
+				try {
+					const result: PrReviewDispatchResult = await dispatch.dispatch({
+						ctx,
+						state,
+						pi,
+						baseRef,
+					});
+
+					const statusText = result.stamped
+						? `PR review: PASS ${headSha.slice(0, 8)}`
+						: result.escalated
+							? `PR review: escalation ${headSha.slice(0, 8)}`
+							: result.blocked
+								? `PR review: blocked ${headSha.slice(0, 8)}`
+								: `PR review: complete ${headSha.slice(0, 8)}`;
+					safeSetPrReviewStatus(ctx, statusText);
+
+					pi.sendMessage({
+						customType: result.escalated
+							? "pr-review-escalation"
+							: result.stamped
+								? "pr-review-pass"
+								: "pr-review-status",
+						content: result.message,
+						display: true,
+						details: {
+							headSha,
+							stamped: result.stamped,
+							escalated: result.escalated,
+							blocked: result.blocked,
+							verdict: result.report?.status ?? null,
+							confidence: result.report?.confidence ?? null,
+							enabled: state.config.enabled,
+							tokenCount: state.tokens.size,
+						},
+					});
+				} catch (error) {
+					const message =
+						error instanceof Error ? error.message : String(error);
+					safeSetPrReviewStatus(
+						ctx,
+						`PR review: failed ${headSha.slice(0, 8) || "unknown"}`,
+					);
+					pi.sendMessage({
+						customType: "pr-review-status",
+						content: `PR review gate: review failed — ${message}`,
+						display: true,
+						details: {
+							headSha,
+							baseRef: baseRef ?? null,
+							enabled: state.config.enabled,
+							tokenCount: state.tokens.size,
+							error: message,
+						},
+					});
+				} finally {
+					reviewInProgress = false;
+				}
+			})();
 		},
 	});
 
