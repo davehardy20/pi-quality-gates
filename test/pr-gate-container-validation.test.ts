@@ -44,10 +44,11 @@ describe("runContainerValidationEvidence", () => {
 		const cwd = await mkdtemp(join(tmpdir(), "pi-qg-unknown-"));
 		await writeFile(join(cwd, "README.md"), "# test\n");
 
-		const evidence = await runContainerValidationEvidence([], cwd, {
+		const result = await runContainerValidationEvidence([], cwd, {
 			containerCommand: "definitely-not-container",
 		});
 
-		expect(evidence).toContain("unsupported ecosystem unknown");
+		expect(result.status).toBe("skipped");
+		expect(result.evidence).toContain("unsupported ecosystem unknown");
 	});
 });

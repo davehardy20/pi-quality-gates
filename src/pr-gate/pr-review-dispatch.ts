@@ -20,7 +20,10 @@ import {
 } from "../shared/review-scope.js";
 import { hasCriticalSecurityFinding } from "../shared/review-severity.js";
 import type { ReviewReport } from "../shared/review-types.js";
-import { runContainerValidationEvidence } from "./container-validation.js";
+import {
+	type ContainerValidationResult,
+	runContainerValidationEvidence,
+} from "./container-validation.js";
 import { decidePushGate } from "./gate-decision.js";
 import type { PassTokenStore } from "./pass-token-store.js";
 import { PR_REVIEW_CONFIG } from "./pr-review-config.js";
@@ -55,7 +58,11 @@ export interface PrReviewDispatchDeps {
 		}>,
 	) => string;
 	reviewerExecution: ReviewerExecution;
-	runContainerValidation: (files: string[], cwd: string) => Promise<string>;
+	runContainerValidation: (
+		files: string[],
+		cwd: string,
+	) => Promise<ContainerValidationResult>;
+	allowLocalReviewerFallback: boolean;
 }
 
 export interface PrReviewDispatchInput {
@@ -171,6 +178,31 @@ function formatUnparseableReviewerOutput(result: ReviewerResult): string {
 	return lines.join("\n");
 }
 
+function cannotReviewFromContainerRuntime(args: {
+	reason: string;
+	validation: ContainerValidationResult;
+}): ReviewerResult {
+	const summary = [args.reason, "", args.validation.evidence].join("\n").trim();
+	return {
+		report: {
+			status: "CANNOT_REVIEW",
+			confidence: args.validation.status === "failed" ? "HIGH" : "LOW",
+			findings: [],
+			verified:
+				args.validation.status === "passed"
+					? ["Apple container validation evidence completed successfully."]
+					: [],
+			unverifiable: [args.reason],
+			summary,
+		},
+		rawOutput: summary,
+		exitCode: args.validation.status === "passed" ? 0 : 1,
+		timedOut: args.validation.results.some((result) => result.timedOut),
+		stderr: args.validation.results.map((result) => result.stderr).join("\n"),
+		command: `Apple container validation via ${args.validation.image}`,
+	};
+}
+
 function defaultGetBaseRef(cwd: string): string {
 	// Prefer the repo's default upstream branch if available.
 	const candidates = ["origin/master", "origin/main", "master", "main"];
@@ -219,6 +251,7 @@ export function createPrReviewDispatch(
 			getPromptsDir: getDefaultPromptsDir,
 		}),
 		runContainerValidation: runContainerValidationEvidence,
+		allowLocalReviewerFallback: false,
 		...partialDeps,
 	};
 
@@ -273,7 +306,7 @@ export function createPrReviewDispatch(
 		const recommendedPlan = formatTestExecutionPlan(
 			recommendTestCommands(changedFiles, cwd),
 		);
-		const containerEvidence = await deps.runContainerValidation(
+		const containerValidation = await deps.runContainerValidation(
 			changedFiles,
 			cwd,
 		);
@@ -281,8 +314,24 @@ export function createPrReviewDispatch(
 			recommendedPlan,
 			"",
 			"## Apple Container Validation Evidence",
-			containerEvidence,
+			containerValidation.evidence,
 		].join("\n");
+
+		if (containerValidation.status !== "passed") {
+			return cannotReviewFromContainerRuntime({
+				reason:
+					"Apple container validation failed. The PR gate is fail-closed until validation passes inside the container runtime.",
+				validation: containerValidation,
+			});
+		}
+
+		if (!deps.allowLocalReviewerFallback) {
+			return cannotReviewFromContainerRuntime({
+				reason:
+					"Apple container validation passed, but a container-backed LLM reviewer runtime is not available yet. Refusing to stamp PASS from the local headless reviewer path.",
+				validation: containerValidation,
+			});
+		}
 
 		return deps.reviewerExecution.runAttempt({
 			task,

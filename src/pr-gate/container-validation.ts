@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import * as fs from "node:fs";
+import { cp, mkdtemp, rm } from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 import { detectProjectEcosystem } from "./test-execution.js";
 
@@ -8,6 +9,16 @@ export const DEFAULT_REVIEW_CONTAINER_IMAGE =
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const OUTPUT_PREVIEW_CHARS = 2400;
+const WORKSPACE_EXCLUDES = new Set([
+	".git",
+	".mulch",
+	"agent",
+	"coverage",
+	"dist",
+	"node_modules",
+]);
+
+export type ContainerValidationStatus = "passed" | "failed" | "skipped";
 
 export interface ContainerCommandResult {
 	name: string;
@@ -16,6 +27,14 @@ export interface ContainerCommandResult {
 	timedOut: boolean;
 	stdout: string;
 	stderr: string;
+}
+
+export interface ContainerValidationResult {
+	image: string;
+	status: ContainerValidationStatus;
+	results: ContainerCommandResult[];
+	evidence: string;
+	workspaceMode: "writable-copy" | "skipped";
 }
 
 export interface ContainerValidationOptions {
@@ -41,6 +60,34 @@ function isTestFile(file: string): boolean {
 		file.includes("_test.go") ||
 		file.includes("/tests/")
 	);
+}
+
+function deriveStatus(
+	results: ContainerCommandResult[],
+	fallback: ContainerValidationStatus = "passed",
+): ContainerValidationStatus {
+	if (results.length === 0) return fallback;
+	return results.some((result) => result.exitCode !== 0 || result.timedOut)
+		? "failed"
+		: "passed";
+}
+
+async function prepareWritableWorkspace(cwd: string): Promise<{
+	root: string;
+	workspace: string;
+}> {
+	const root = await mkdtemp(path.join(os.tmpdir(), "pi-pr-review-"));
+	const workspace = path.join(root, "workspace");
+	await cp(cwd, workspace, {
+		recursive: true,
+		filter: (source) => {
+			const relative = path.relative(cwd, source);
+			if (!relative) return true;
+			const parts = relative.split(path.sep);
+			return !parts.some((part) => WORKSPACE_EXCLUDES.has(part));
+		},
+	});
+	return { root, workspace };
 }
 
 async function runProcess(
@@ -99,33 +146,30 @@ async function runProcess(
 }
 
 async function runContainerCommand(
-	cwd: string,
+	workspace: string,
 	name: string,
 	command: string,
 	options: Required<ContainerValidationOptions>,
 ): Promise<ContainerCommandResult> {
-	const tmpfsTarget = path.join(cwd, "node_modules", ".vite-temp");
 	const args = [
 		"run",
 		"--rm",
 		"--mount",
-		`type=bind,source=${cwd},target=/workspace,readonly`,
+		`type=bind,source=${workspace},target=/workspace`,
 		"-w",
 		"/workspace",
 		"-e",
 		"HOME=/tmp",
+		options.image,
+		"sh",
+		"-lc",
+		command,
 	];
-
-	if (fs.existsSync(tmpfsTarget)) {
-		args.push("--tmpfs", "/workspace/node_modules/.vite-temp");
-	}
-
-	args.push(options.image, "sh", "-lc", command);
 
 	const result = await runProcess(
 		options.containerCommand,
 		args,
-		cwd,
+		workspace,
 		options.timeoutMs,
 	);
 
@@ -137,7 +181,11 @@ function buildTypeScriptCommands(files: string[]): Array<[string, string]> {
 	const commands: Array<[string, string]> = [
 		[
 			"tool versions",
-			"node --version && npm --version && tsc --version && vitest --version && (biome --version || echo 'biome: not found')",
+			"node --version && npm --version && tsc --version && vitest --version && (biome --version || echo 'biome: not installed')",
+		],
+		[
+			"hydrate dependencies",
+			"if [ -f package-lock.json ]; then npm ci --ignore-scripts --no-audit --no-fund --cache /tmp/npm-cache; elif [ -f package.json ]; then npm install --ignore-scripts --no-audit --no-fund --cache /tmp/npm-cache; else echo 'no package manifest'; fi",
 		],
 		["typecheck", "tsc --noEmit -p tsconfig.json"],
 	];
@@ -149,20 +197,24 @@ function buildTypeScriptCommands(files: string[]): Array<[string, string]> {
 		]);
 	}
 
-	commands.push(["biome", "biome check src test"]);
+	commands.push([
+		"biome",
+		"if command -v biome >/dev/null 2>&1; then biome check src test; else echo 'biome: not installed in container image'; exit 42; fi",
+	]);
 	return commands;
 }
 
 export function formatContainerValidationEvidence(args: {
 	image: string;
 	results: ContainerCommandResult[];
+	status?: ContainerValidationStatus;
+	workspaceMode?: ContainerValidationResult["workspaceMode"];
 }): string {
-	const hasFailure = args.results.some(
-		(result) => result.exitCode !== 0 || result.timedOut,
-	);
+	const status = args.status ?? deriveStatus(args.results);
 	const lines = [
 		`**Apple container image:** ${args.image}`,
-		`**Overall status:** ${hasFailure ? "FAILED" : "PASSED"}`,
+		`**Workspace mode:** ${args.workspaceMode ?? "writable-copy"}`,
+		`**Overall status:** ${status.toUpperCase()}`,
 		"",
 	];
 
@@ -189,7 +241,7 @@ export async function runContainerValidationEvidence(
 	files: string[],
 	cwd: string,
 	options: ContainerValidationOptions = {},
-): Promise<string> {
+): Promise<ContainerValidationResult> {
 	const resolvedOptions: Required<ContainerValidationOptions> = {
 		image: options.image ?? DEFAULT_REVIEW_CONTAINER_IMAGE,
 		timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
@@ -198,18 +250,44 @@ export async function runContainerValidationEvidence(
 
 	const ecosystem = detectProjectEcosystem(cwd);
 	if (ecosystem !== "typescript") {
-		return `Apple container validation skipped: unsupported ecosystem ${ecosystem}.`;
+		const evidence = `Apple container validation skipped: unsupported ecosystem ${ecosystem}.`;
+		return {
+			image: resolvedOptions.image,
+			status: "skipped",
+			results: [],
+			evidence,
+			workspaceMode: "skipped",
+		};
 	}
 
-	const results: ContainerCommandResult[] = [];
-	for (const [name, command] of buildTypeScriptCommands(files)) {
-		results.push(
-			await runContainerCommand(cwd, name, command, resolvedOptions),
-		);
-	}
+	const { root, workspace } = await prepareWritableWorkspace(cwd);
+	try {
+		const results: ContainerCommandResult[] = [];
+		for (const [name, command] of buildTypeScriptCommands(files)) {
+			const result = await runContainerCommand(
+				workspace,
+				name,
+				command,
+				resolvedOptions,
+			);
+			results.push(result);
+			if (result.exitCode !== 0 || result.timedOut) break;
+		}
 
-	return formatContainerValidationEvidence({
-		image: resolvedOptions.image,
-		results,
-	});
+		const status = deriveStatus(results);
+		return {
+			image: resolvedOptions.image,
+			status,
+			results,
+			evidence: formatContainerValidationEvidence({
+				image: resolvedOptions.image,
+				results,
+				status,
+				workspaceMode: "writable-copy",
+			}),
+			workspaceMode: "writable-copy",
+		};
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
 }
