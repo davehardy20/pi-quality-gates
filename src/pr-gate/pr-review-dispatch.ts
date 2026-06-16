@@ -105,15 +105,23 @@ async function defaultListChangedFiles(
 	return new Promise((resolve, reject) => {
 		const proc = spawn("git", ["diff", "--name-only", `${baseRef}..HEAD`], {
 			cwd,
-			stdio: ["ignore", "pipe", "ignore"],
+			stdio: ["ignore", "pipe", "pipe"],
 		});
 		let stdout = "";
+		let stderr = "";
 		proc.stdout.on("data", (data: Buffer) => {
 			stdout += data.toString();
 		});
+		proc.stderr.on("data", (data: Buffer) => {
+			stderr += data.toString();
+		});
 		proc.on("close", (code) => {
 			if (code !== 0) {
-				reject(new Error(`git diff --name-only exited ${code ?? 0}`));
+				reject(
+					new Error(
+						`git diff --name-only ${baseRef}..HEAD exited ${code ?? 0}${stderr ? `: ${stderr.trim()}` : ""}`,
+					),
+				);
 				return;
 			}
 			resolve(
