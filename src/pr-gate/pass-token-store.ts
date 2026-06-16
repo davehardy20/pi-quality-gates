@@ -41,7 +41,7 @@ export interface PassTokenStore {
   /** Remove all tokens. */
   clear(): void;
   /** Current number of stamped tokens. */
-  size(): number;
+  get size(): number;
 }
 
 function isValidSha(sha: string): boolean {
@@ -76,7 +76,7 @@ export function createPassTokenStore(): PassTokenStore {
       tokens.clear();
     },
 
-    size(): number {
+    get size(): number {
       return tokens.size;
     },
   };
