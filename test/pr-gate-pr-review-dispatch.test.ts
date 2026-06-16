@@ -138,14 +138,6 @@ function createTestDeps(
 		listChangedFiles: async () => ["src/a.ts", "src/b.ts"],
 		countDiffLines: async () => 42,
 		gatherDiff: async () => "mock diff",
-		runContainerValidation: async () => ({
-			image: "test-image",
-			status: "passed",
-			results: [],
-			evidence: "mock container validation evidence",
-			workspaceMode: "writable-copy",
-		}),
-		allowLocalReviewerFallback: true,
 		reviewerExecution: createMockReviewerExecution(report),
 	};
 }
@@ -301,61 +293,6 @@ describe("pr-review dispatch", () => {
 		expect(result.message).toContain("could not parse review report");
 	});
 
-	it("fails closed when container validation fails", async () => {
-		const pi = createMockPi();
-		const reviewer = createMockReviewerExecution(makePassReport());
-		const dispatch = createPrReviewDispatch({
-			...createTestDeps(makePassReport()),
-			reviewerExecution: reviewer,
-			allowLocalReviewerFallback: true,
-			runContainerValidation: async () => ({
-				image: "test-image",
-				status: "failed",
-				results: [
-					{
-						name: "typecheck",
-						command: "tsc --noEmit",
-						exitCode: 1,
-						timedOut: false,
-						stdout: "",
-						stderr: "type error",
-					},
-				],
-				evidence: "container validation failed",
-				workspaceMode: "writable-copy",
-			}),
-		});
-		const input = createInput(pi);
-
-		const result = await dispatch.dispatch(input);
-
-		expect(reviewer.runAttempt).not.toHaveBeenCalled();
-		expect(result.blocked).toBe(true);
-		expect(result.stamped).toBe(false);
-		expect(result.report?.status).toBe("CANNOT_REVIEW");
-		expect(result.message).toContain("could not complete");
-		expect(result.message).toContain("container validation failed");
-	});
-
-	it("fails closed after validation passes when local reviewer fallback is disabled", async () => {
-		const pi = createMockPi();
-		const reviewer = createMockReviewerExecution(makePassReport());
-		const dispatch = createPrReviewDispatch({
-			...createTestDeps(makePassReport()),
-			reviewerExecution: reviewer,
-			allowLocalReviewerFallback: false,
-		});
-		const input = createInput(pi);
-
-		const result = await dispatch.dispatch(input);
-
-		expect(reviewer.runAttempt).not.toHaveBeenCalled();
-		expect(result.blocked).toBe(true);
-		expect(result.stamped).toBe(false);
-		expect(result.report?.status).toBe("CANNOT_REVIEW");
-		expect(result.message).toContain("local headless reviewer");
-	});
-
 	it("respects an explicit base ref argument", async () => {
 		const pi = createMockPi();
 		const listChangedFiles = vi.fn().mockResolvedValue(["src/a.ts"]);
@@ -365,14 +302,6 @@ describe("pr-review dispatch", () => {
 			listChangedFiles,
 			countDiffLines: async () => 42,
 			gatherDiff: async () => "mock diff",
-			runContainerValidation: async () => ({
-				image: "test-image",
-				status: "passed",
-				results: [],
-				evidence: "mock container validation evidence",
-				workspaceMode: "writable-copy",
-			}),
-			allowLocalReviewerFallback: true,
 			reviewerExecution: createMockReviewerExecution(makePassReport()),
 		});
 		const input = createInput(pi, { baseRef: "feature/base" });
