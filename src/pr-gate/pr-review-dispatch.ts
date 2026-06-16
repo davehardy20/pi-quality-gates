@@ -77,7 +77,7 @@ export interface PrReviewDispatchResult {
 	message: string;
 }
 
-function isLinterClean(ctx: ExtensionContext): boolean {
+export function isLinterClean(ctx: ExtensionContext): boolean {
 	const branch = ctx.sessionManager?.getBranch() ?? [];
 	for (let i = branch.length - 1; i >= 0; i--) {
 		const entry = branch[i] as {

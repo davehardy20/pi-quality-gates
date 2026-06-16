@@ -30,6 +30,7 @@ import {
 } from "./pass-token-store.js";
 import {
 	createPrReviewDispatch,
+	isLinterClean,
 	type PrReviewDispatchInput,
 	type PrReviewDispatchResult,
 } from "./pr-review-dispatch.js";
@@ -330,6 +331,22 @@ export default function prGateExtension(
 						enabled: state.config.enabled,
 						tokenCount: state.tokens.size,
 						status: "running",
+					},
+				});
+				return;
+			}
+
+			if (!isLinterClean(ctx)) {
+				pi.sendMessage({
+					customType: "pr-review-status",
+					content:
+						"PR review gate: post-turn linter is not clean. Run /post-turn-linter-run on the changed files and wait for a clean status before running /pr-review.",
+					display: true,
+					details: {
+						headSha,
+						enabled: state.config.enabled,
+						tokenCount: state.tokens.size,
+						linterClean: false,
 					},
 				});
 				return;

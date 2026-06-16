@@ -43,11 +43,13 @@ function createMockPi(): {
 
 function createMockContext(
 	setStatus?: ReturnType<typeof vi.fn>,
+	branch: unknown[] = [],
 ): ExtensionContext {
 	return {
 		cwd: process.cwd(),
 		hasUI: Boolean(setStatus),
 		ui: { setStatus: setStatus ?? vi.fn() },
+		sessionManager: { getBranch: () => branch },
 	} as unknown as ExtensionContext;
 }
 
@@ -120,6 +122,35 @@ describe("pr-gate command registration", () => {
 		expect(setStatus).toHaveBeenLastCalledWith(
 			"pr-review",
 			expect.stringContaining("blocked"),
+		);
+	});
+
+	it("does not start a review when the linter is not clean", async () => {
+		const { pi, commands, messages } = createMockPi();
+		const setStatus = vi.fn();
+		const dispatch = vi.fn();
+
+		prGateExtension(pi, {
+			createPrReviewDispatch: () => ({ dispatch }) as never,
+		});
+
+		const command = commands.get("pr-review");
+		expect(command).toBeDefined();
+
+		const branch = [
+			{
+				type: "custom_message",
+				customType: "post-turn-linter-status",
+				details: { status: "findings" },
+			},
+		];
+		await command?.handler("", createMockContext(setStatus, branch));
+
+		expect(dispatch).not.toHaveBeenCalled();
+		expect(messages.at(-1)?.customType).toBe("pr-review-status");
+		expect(messages.at(-1)?.content).toContain("linter is not clean");
+		expect(messages.some((m) => m.content?.includes("PR review started"))).toBe(
+			false,
 		);
 	});
 });
