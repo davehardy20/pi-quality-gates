@@ -10,10 +10,7 @@ import {
 	type ReviewerExecution,
 	type ReviewerResult,
 } from "../reviewer/reviewer.js";
-import {
-	loadSkipFilter,
-	type SkipFilter,
-} from "../reviewer/reviewer-skip.js";
+import { loadSkipFilter, type SkipFilter } from "../reviewer/reviewer-skip.js";
 import type { ReviewConfig } from "../reviewer/types.js";
 import {
 	countDiffLinesFast,
@@ -35,7 +32,11 @@ export interface PrReviewDispatchDeps {
 	getHeadSha: (cwd: string) => string;
 	getBaseRef: (cwd: string) => string;
 	listChangedFiles: (cwd: string, baseRef: string) => Promise<string[]>;
-	countDiffLines: (files: string[], cwd: string, baseRef?: string) => Promise<number>;
+	countDiffLines: (
+		files: string[],
+		cwd: string,
+		baseRef?: string,
+	) => Promise<number>;
 	gatherDiff: (
 		files: string[],
 		cwd: string,
