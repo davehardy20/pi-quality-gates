@@ -138,6 +138,37 @@ async function defaultListChangedFiles(
 	});
 }
 
+function truncateReviewDiagnostic(
+	value: string | undefined,
+	maxChars = 1200,
+): string {
+	const trimmed = (value ?? "").trim();
+	if (!trimmed) return "(empty)";
+	if (trimmed.length <= maxChars) return trimmed;
+	return `${trimmed.slice(0, maxChars)}… [truncated ${trimmed.length - maxChars} chars]`;
+}
+
+function formatUnparseableReviewerOutput(result: ReviewerResult): string {
+	const lines = [
+		"Reviewer child diagnostics:",
+		`- exitCode: ${result.exitCode}`,
+		`- timedOut: ${result.timedOut}`,
+	];
+	if (result.usage) lines.push(`- usage: ${result.usage}`);
+	lines.push(`- command: ${result.command}`);
+	if (result.stderr.trim()) {
+		lines.push("", "stderr preview:", truncateReviewDiagnostic(result.stderr));
+	}
+	if (result.rawOutput.trim() && result.rawOutput !== result.stderr) {
+		lines.push(
+			"",
+			"raw output preview:",
+			truncateReviewDiagnostic(result.rawOutput),
+		);
+	}
+	return lines.join("\n");
+}
+
 function defaultGetBaseRef(cwd: string): string {
 	// Prefer the repo's default upstream branch if available.
 	const candidates = ["origin/master", "origin/main", "master", "main"];
@@ -299,8 +330,11 @@ export function createPrReviewDispatch(
 					stamped: false,
 					escalated: false,
 					blocked: true,
-					message:
-						"PR review gate: could not parse review report from child output. Re-run /pr-review after investigating the reviewer output.",
+					message: [
+						"PR review gate: could not parse review report from child output.",
+						formatUnparseableReviewerOutput(childOutput),
+						"Re-run /pr-review after investigating the reviewer output.",
+					].join("\n\n"),
 				};
 			}
 
