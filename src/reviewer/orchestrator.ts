@@ -8,6 +8,7 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { severityMeetsThreshold } from "../shared/review-severity.js";
 import {
 	buildBoundedReviewerFailureMessage,
 	buildSummaryFirstReviewerMessage,
@@ -23,12 +24,10 @@ import {
 	type ReviewerExecution,
 } from "./reviewer.js";
 import type {
-	AutoFixThreshold,
 	ReviewConfig,
 	ReviewerPhase,
 	ReviewerState,
 	ReviewReport,
-	Severity,
 } from "./types.js";
 import { DEFAULT_REVIEW_CONFIG } from "./types.js";
 
@@ -87,16 +86,6 @@ export interface ReviewerOrchestrator {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
-
-function severityMeetsThreshold(
-	severity: Severity,
-	threshold: AutoFixThreshold,
-): boolean {
-	if (threshold === "none") return false;
-	if (threshold === "warning")
-		return severity === "CRITICAL" || severity === "WARNING";
-	return severity === "CRITICAL";
-}
 
 function formatPhaseStatus(state: ReviewerState, config: ReviewConfig): string {
 	const lines = [

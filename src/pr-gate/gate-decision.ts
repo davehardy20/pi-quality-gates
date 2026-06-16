@@ -18,7 +18,8 @@
  *  - ISSUES / CANNOT_REVIEW never stamp and always block the gated action.
  */
 
-import type { Finding, ReviewReport } from "../reviewer/types.js";
+import { hasCriticalSecurityFinding } from "../shared/review-severity.js";
+import type { ReviewReport } from "../shared/review-types.js";
 import type { PassToken, PassTokenStore } from "./pass-token-store.js";
 
 /** The mutating actions the gate intercepts. */
@@ -56,13 +57,7 @@ export interface GateDecision {
   requiresHumanAck?: boolean;
 }
 
-function isSecurityCritical(f: Finding): boolean {
-  return f.severity === "CRITICAL" && f.domain === "security";
-}
 
-function hasSecurityCritical(report: ReviewReport): boolean {
-  return report.findings.some(isSecurityCritical);
-}
 
 /**
  * Core decision. Pure. Side effects limited to optionally stamping a PASS
@@ -88,7 +83,7 @@ export function decidePushGate(input: PushGateInput): GateDecision {
   // If a review report just arrived, evaluate it FIRST — it may stamp a token
   // (PASS), escalate (CRITICAL security), or send us to the fix loop (ISSUES).
   if (reviewReport) {
-    if (hasSecurityCritical(reviewReport)) {
+    if (hasCriticalSecurityFinding(reviewReport)) {
       return {
         verdict: "escalate",
         requiresHumanAck: true,

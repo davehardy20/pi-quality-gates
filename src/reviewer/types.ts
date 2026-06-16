@@ -1,19 +1,18 @@
-// ── Shared types for the post-turn-reviewer extension ──────────────────
-// Consumed by reviewer.ts, index.ts, config.ts, and tests.
+import type {
+	AutoFixThreshold,
+	ReviewReport,
+} from "../shared/review-types.js";
 
-// ── Severity ───────────────────────────────────────────────────────────
-
-/** Finding severity levels, ordered from most to least urgent. */
-export type Severity = "CRITICAL" | "WARNING" | "NIT";
-
-/** Review status reported by the reviewer child. */
-export type ReviewStatus = "PASS" | "ISSUES" | "CANNOT_REVIEW";
-
-/** Confidence level of the review. */
-export type ReviewConfidence = "HIGH" | "MEDIUM" | "LOW";
-
-/** Which severity levels trigger an automatic fix-up turn. */
-export type AutoFixThreshold = "critical" | "warning" | "none";
+// ── Shared review report schema (re-exported for backwards compatibility) ──
+export type {
+	AutoFixThreshold,
+	Finding,
+	ReviewConfidence,
+	ReviewDomain,
+	ReviewReport,
+	ReviewStatus,
+	Severity,
+} from "../shared/review-types.js";
 
 /** Reviewer state machine phases. */
 export type ReviewerPhase =
@@ -23,61 +22,7 @@ export type ReviewerPhase =
 	| "FIX_REQUESTED"
 	| "RE_REVIEWING";
 
-// ── Review Domains ─────────────────────────────────────────────────────
-
-/** The 7-domain review checklist categories. */
-export type ReviewDomain =
-	| "task-completion"
-	| "correctness"
-	| "error-handling"
-	| "security"
-	| "quality"
-	| "testing"
-	| "documentation";
-
-// ── Finding ────────────────────────────────────────────────────────────
-
-/** A single review finding with full traceability. */
-export interface Finding {
-	/** CRITICAL | WARNING | NIT */
-	severity: Severity;
-	/** Short human-readable title */
-	title: string;
-	/** File path (without line number suffix) */
-	file: string;
-	/** Optional line number within the file */
-	line?: number | null;
-	/** Which of the 7 review domains this belongs to */
-	domain: ReviewDomain;
-	/** Specific checklist rule that was violated */
-	rule: string;
-	/** What is wrong, specifically */
-	issue: string;
-	/** Relevant code excerpt */
-	evidence: string;
-	/** Concrete fix suggestion, may include code */
-	suggestion: string;
-}
-
-// ── ReviewReport ───────────────────────────────────────────────────────
-
-/** Structured report parsed from the reviewer child's output. */
-export interface ReviewReport {
-	/** Overall status: PASS | ISSUES | CANNOT_REVIEW */
-	status: ReviewStatus;
-	/** How confident the reviewer is in the assessment */
-	confidence: ReviewConfidence;
-	/** All findings (may be empty for PASS) */
-	findings: Finding[];
-	/** Claims the reviewer verified with evidence */
-	verified: string[];
-	/** Claims the reviewer could not verify, with reasons */
-	unverifiable: string[];
-	/** 1–3 sentence overall assessment */
-	summary: string;
-}
-
-// ── ReviewConfig ───────────────────────────────────────────────────────
+// ── Review Config ────────────────────────────────────────────────────────
 
 /** Configuration loaded from .pi/reviewer.config.json with defaults. */
 export interface ReviewConfig {
@@ -170,8 +115,6 @@ export interface ReviewerReportSidecarRef {
 	path: string;
 	redactedChars: number;
 }
-
-// ── ReviewerState ──────────────────────────────────────────────────────
 
 /** Mutable state tracked across the session lifecycle. */
 export interface ReviewerState {
