@@ -18,8 +18,11 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { decidePushGate, type GateAction } from "./gate-decision.js";
 import type { PassTokenStore } from "./pass-token-store.js";
 
-/** The toolName the gate intercepts (host-side safe git/gh runner). */
-export const GATED_TOOL_NAME = "git_safe";
+/** The tool names the gate intercepts (host-side safe git/gh runners). */
+export const GATED_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "git_safe",
+  "gh_safe",
+]);
 
 /** Default mutating actions that require a review PASS before execution. */
 export const DEFAULT_GATED_ACTIONS: ReadonlySet<string> = new Set([
@@ -65,8 +68,8 @@ export function registerPushGateHook(
   const handler = async (
     event: ToolCallEventLike,
   ): Promise<BlockReturn | undefined> => {
-    // Only our gated tool is inspected.
-    if (event.toolName !== GATED_TOOL_NAME) return undefined;
+    // Only our gated tools are inspected.
+    if (!GATED_TOOL_NAMES.has(event.toolName)) return undefined;
 
     // Gate disabled — pass through unchanged.
     if (!isEnabled()) return undefined;
