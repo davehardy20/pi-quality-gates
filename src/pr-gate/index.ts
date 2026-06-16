@@ -221,6 +221,41 @@ export default function prGateExtension(pi: ExtensionAPI): void {
     },
   });
 
+  pi.registerCommand("pr-gate-test-block", {
+    description:
+      "Simulate a git_safe push tool_call to verify the gate blocks without a PASS token.",
+    handler: async (_args, ctx: ExtensionContext) => {
+      const headSha = resolveHeadSha(ctx.cwd);
+      const decision = decidePushGate({
+        action: "push",
+        headSha,
+        baseSha: "unknown",
+        tokens: state.tokens,
+      });
+
+      if (decision.verdict === "allow") {
+        pi.sendMessage({
+          customType: "pr-gate-test-block",
+          content:
+            "PR gate test: tool_call would NOT be blocked (PASS token present or gate disabled).",
+          display: true,
+        });
+        return;
+      }
+
+      pi.sendMessage({
+        customType: "pr-gate-test-block",
+        content: `PR gate test: tool_call would be BLOCKED.\n${decision.steer ?? decision.reason ?? "PASS required before push."}`,
+        display: true,
+        details: {
+          headSha,
+          verdict: decision.verdict,
+          hasPass: state.tokens.hasPass(headSha),
+        },
+      });
+    },
+  });
+
   pi.registerCommand("pr-gate-toggle", {
     description: "Enable or disable the PR review gate (on|off).",
     handler: async (args, ctx: ExtensionContext) => {
