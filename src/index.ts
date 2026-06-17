@@ -1,25 +1,24 @@
 /**
- * Pi Quality Gates — Post-turn linting + automated code review
+ * Pi Quality Gates — post-turn linting + PR review gate
  *
- * This package bundles two tightly-coupled quality gate extensions:
+ * This package bundles two quality gate extensions:
  *
  * 1. **Post-Turn Linter** — runs lint checks on files modified during each
  *    agent turn. Supports markdownlint, biome, ruff, cppcheck, tflint,
  *    cargo clippy, and LSP diagnostics.
  *
- * 2. **Post-Turn Reviewer** — after the linter reports clean, spawns a
- *    headless child Pi process to review changes against the original task
- *    using a structured 7-domain checklist (task completion, correctness,
- *    error handling, security, quality, testing, documentation).
+ * 2. **PR Gate** — gates gh_safe push / pr_create behind a PASS token stamped
+ *    by the `/pr-review` command, which runs a read-only headless child Pi
+ *    review scoped to the PR diff.
  *
  * Commands added:
  *   /post-turn-linter-run    — Run linter now
  *   /post-turn-linter-fix    — Fix latest linter findings
  *   /post-turn-linter-status — Show linter state
- *   /reviewer-status         — Show reviewer state
- *   /reviewer-run            — Manually trigger a review
- *   /reviewer-model          — Switch review model mid-session
- *   /reviewer-toggle         — Enable or disable the reviewer
+ *   /pr-review               — Run a PR review for the current HEAD
+ *   /pr-review-status        — Show PR review state
+ *   /pr-gate-status          — Show push gate state
+ *   /pr-gate-toggle          — Enable or disable the push gate
  *   /quality-gates-status    — Show package identity and debug info
  *
  * Install:
@@ -32,7 +31,6 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import postTurnLinter from "./linter/index.js";
 import prGateExtension from "./pr-gate/index.js";
-import postTurnReviewerExtension from "./reviewer/index.js";
 
 interface PackageMetadata {
 	name: string;
@@ -68,7 +66,6 @@ function getPackageMetadata(): PackageMetadata {
 
 export default function qualityGatesExtension(pi: ExtensionAPI) {
 	postTurnLinter(pi);
-	postTurnReviewerExtension(pi);
 	prGateExtension(pi);
 
 	pi.registerCommand("quality-gates-status", {
