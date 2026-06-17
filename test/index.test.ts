@@ -18,13 +18,6 @@ import {
 	recoverLinterReportSidecar,
 	writeLinterReportSidecar,
 } from "../src/linter/report-hygiene.js";
-import { __test__ as reviewerTest } from "../src/reviewer/orchestrator.js";
-import {
-	buildBoundedReviewerFailureMessage,
-	buildSummaryFirstReviewerMessage,
-	recoverReviewerReportSidecar,
-	writeReviewerReportSidecar,
-} from "../src/reviewer/report-hygiene.js";
 import {
 	buildSanitizedReviewerCommand,
 	capDiff,
@@ -36,8 +29,6 @@ import {
 	parseSkipContent,
 	shouldSkip,
 } from "../src/reviewer/reviewer-skip.js";
-import type { ReviewerState } from "../src/reviewer/types.js";
-import { DEFAULT_REVIEW_CONFIG } from "../src/reviewer/types.js";
 import {
 	normalizeAndSortPaths,
 	normalizePath,
@@ -50,13 +41,6 @@ const {
 	detectModifiedFilesFromToolResult,
 	tokenizeArgs,
 } = linterTest;
-
-const {
-	buildReviewerTranscriptSidecarContent,
-	formatEscalationMessage,
-	formatPhaseStatus,
-	severityMeetsThreshold,
-} = reviewerTest;
 
 // ── Post-Turn Linter tests ────────────────────────────────────────────
 
@@ -828,227 +812,6 @@ Everything looks good.`;
 	});
 });
 
-describe("post-turn-reviewer: severity helpers", () => {
-	it("severityMeetsThreshold works correctly", () => {
-		expect(severityMeetsThreshold("CRITICAL", "critical")).toBe(true);
-		expect(severityMeetsThreshold("WARNING", "critical")).toBe(false);
-		expect(severityMeetsThreshold("WARNING", "warning")).toBe(true);
-		expect(severityMeetsThreshold("NIT", "warning")).toBe(false);
-		expect(severityMeetsThreshold("CRITICAL", "none")).toBe(false);
-	});
-});
-
-describe("post-turn-reviewer: report hygiene", () => {
-	const largeReport = {
-		status: "ISSUES" as const,
-		confidence: "HIGH" as const,
-		findings: Array.from({ length: 40 }, (_, index) => ({
-			severity: index % 2 === 0 ? ("CRITICAL" as const) : ("WARNING" as const),
-			title: `Finding ${index}`,
-			file: "src/reviewer/index.ts",
-			line: index + 1,
-			domain: "correctness" as const,
-			rule: "specific-actionable-finding",
-			issue: `Issue ${index} explains what is wrong without raw transcript ${"x".repeat(80)}`,
-			evidence: `Evidence ${index} cites bounded rationale ${"y".repeat(80)}`,
-			suggestion: `Fix ${index} by changing the exact code path ${"z".repeat(80)}`,
-		})),
-		verified: [],
-		unverifiable: [],
-		summary: "Large reviewer report summary.",
-	};
-
-	it("builds bounded summary-first reviewer messages with actionable fields", () => {
-		const summary = buildSummaryFirstReviewerMessage({
-			report: largeReport,
-			sidecar: null,
-			maxChars: 6000,
-			maxFindings: 8,
-		});
-
-		expect(summary.message.length).toBeLessThanOrEqual(6000);
-		expect(summary.message).toContain("Status: ISSUES");
-		expect(summary.message).toContain("[CRITICAL] src/reviewer/index.ts:1");
-		expect(summary.message).toContain("Issue:");
-		expect(summary.message).toContain("Rationale/evidence:");
-		expect(summary.message).toContain("Required fix/suggestion:");
-		expect(summary.message).toContain("omitted");
-		expect(summary.message).not.toContain("Finding 39");
-		expect(summary.details.visibleFindings).toBe(8);
-	});
-
-	it("writes redacted reviewer sidecars and recovers metadata/preview/slice/full with ack", async () => {
-		const tempDir = fs.mkdtempSync(`${tmpdir()}/pi-quality-gates-reviewer-`);
-		const sensitiveValue = "example-sensitive-value";
-		const raw = `## Review Report\napiKey: ${sensitiveValue}\n${"detail\n".repeat(1000)}`;
-		const sidecar = await writeReviewerReportSidecar({
-			report: raw,
-			sessionId: "review-session",
-			sidecarDir: tempDir,
-			now: new Date("2026-05-26T00:00:00.000Z"),
-		});
-
-		expect(sidecar.ok).toBe(true);
-		expect(sidecar.metadata.toolName).toBe("post-turn-reviewer");
-		expect(sidecar.metadata.summaryMode).toBe("post-turn-reviewer-summary");
-		const persisted = fs.readFileSync(sidecar.metadata.path, "utf8");
-		expect(persisted).toContain("post-turn-reviewer");
-		expect(persisted).toContain("[REDACTED");
-		expect(persisted).not.toContain(sensitiveValue);
-
-		const metadata = await recoverReviewerReportSidecar({
-			recordPath: sidecar.metadata.path,
-			mode: "metadata",
-		});
-		expect(metadata.content).toContain("post-turn-reviewer-summary");
-
-		const preview = await recoverReviewerReportSidecar({
-			recordPath: sidecar.metadata.path,
-			mode: "preview",
-			previewChars: 80,
-		});
-		expect(preview.content).not.toContain(sensitiveValue);
-
-		const slice = await recoverReviewerReportSidecar({
-			recordPath: sidecar.metadata.path,
-			mode: "slice",
-			offset: 0,
-			length: 999_999,
-		});
-		expect(slice.content).toContain("reviewer report slice offset=0");
-		expect(slice.content.length).toBeLessThanOrEqual(4_200);
-
-		await expect(
-			recoverReviewerReportSidecar({
-				recordPath: sidecar.metadata.path,
-				mode: "full",
-			}),
-		).rejects.toThrow(/requires --ack-context-cost/);
-
-		await expect(
-			recoverReviewerReportSidecar({
-				recordPath: sidecar.metadata.path,
-				mode: "full",
-				allowFullWithoutAck: true,
-			}),
-		).rejects.toThrow(/requires --ack-context-cost/);
-
-		const full = await recoverReviewerReportSidecar({
-			recordPath: sidecar.metadata.path,
-			mode: "full",
-			acknowledgeContextCost: true,
-		});
-		expect(full.content).toContain("[REDACTED");
-		expect(full.content).not.toContain(sensitiveValue);
-	});
-
-	it("includes the latest sidecar in max re-review escalation summaries", () => {
-		const summary = formatEscalationMessage(largeReport, 2, {
-			ok: true,
-			metadata: {
-				id: "reviewer-sidecar-1",
-				toolName: "post-turn-reviewer",
-				sessionId: "session-1",
-				path: "/tmp/reviewer-sidecar-1.json",
-				createdAt: "2026-05-26T00:00:00.000Z",
-				originalChars: 10_000,
-				originalBytes: 10_000,
-				redactedChars: 9_000,
-				redactedBytes: 9_000,
-				originalSha256: "original",
-				redactedSha256: "redacted",
-				summaryMode: "post-turn-reviewer-summary",
-			},
-		});
-
-		expect(summary).toContain("reviewer-sidecar-1");
-		expect(summary).not.toContain("sidecar unavailable");
-	});
-
-	it("builds transcript sidecar content with raw output and stderr without duplicates", () => {
-		expect(buildReviewerTranscriptSidecarContent("raw", "stderr")).toBe(
-			"raw\n\n--- stderr ---\nstderr",
-		);
-		expect(buildReviewerTranscriptSidecarContent("same", "same")).toBe("same");
-		expect(buildReviewerTranscriptSidecarContent("raw", "")).toBe("raw");
-		expect(buildReviewerTranscriptSidecarContent("", "stderr")).toBe("stderr");
-	});
-
-	it("keeps successful parent summaries bounded while sidecar transcript includes stderr", () => {
-		const stderr = `successful-stderr-${"s".repeat(10_000)}`;
-		const transcript = buildReviewerTranscriptSidecarContent(
-			"## Review Report\nSTATUS: PASS",
-			stderr,
-		);
-		const summary = buildSummaryFirstReviewerMessage({
-			report: {
-				status: "PASS",
-				confidence: "HIGH",
-				findings: [],
-				verified: [],
-				unverifiable: [],
-				summary: "Review succeeded.",
-			},
-			sidecar: null,
-			maxChars: 1200,
-		});
-
-		expect(transcript).toContain("## Review Report");
-		expect(transcript).toContain("--- stderr ---");
-		expect(transcript).toContain(stderr);
-		expect(summary.message.length).toBeLessThanOrEqual(1200);
-		expect(summary.message).toContain("Status: PASS");
-		expect(summary.message).not.toContain("successful-stderr");
-	});
-
-	it("bounds parse-fail and timeout messages without raw output or stderr", () => {
-		const rawOutput = `raw-output-${"a".repeat(10_000)}`;
-		const stderr = `stderr-${"b".repeat(10_000)}`;
-		const command = buildSanitizedReviewerCommand(
-			"pi",
-			["--mode", "json"],
-			"Task: sensitive task\ndiff --git a/file b/file\n+secret-diff-text",
-		);
-		const message = buildBoundedReviewerFailureMessage({
-			title: "parse failed",
-			rawOutput,
-			stderr,
-			sidecar: null,
-			maxChars: 6000,
-		});
-
-		expect(command).not.toContain("sensitive task");
-		expect(command).not.toContain("diff --git");
-		expect(command).not.toContain("secret-diff-text");
-		expect(message.length).toBeLessThanOrEqual(6000);
-		expect(message).toContain("Raw output length:");
-		expect(message).toContain("Stderr length:");
-		expect(message).not.toContain(rawOutput.slice(0, 100));
-		expect(message).not.toContain(stderr.slice(0, 100));
-	});
-});
-
-describe("post-turn-reviewer: state machine helpers", () => {
-	it("formatPhaseStatus shows current state", () => {
-		const state: ReviewerState = {
-			phase: "IDLE",
-			loopCount: 0,
-			lastReport: null,
-			latestReportSidecar: null,
-			pendingFiles: [],
-			linterClean: false,
-			linterCleanAt: null,
-			config: DEFAULT_REVIEW_CONFIG,
-			reviewTimerId: null,
-			lastUserPrompt: "",
-			lastScannedIdx: 0,
-		};
-		const status = formatPhaseStatus(state, DEFAULT_REVIEW_CONFIG);
-		expect(status).toContain("Phase: IDLE");
-		expect(status).toContain("Enabled: true");
-	});
-});
-
 // ── Package manifest and registration tests ───────────────────────────
 
 describe("pi-quality-gates package", () => {
@@ -1082,10 +845,14 @@ describe("pi-quality-gates package", () => {
 		expect(registered.commands).toContain("quality-gates-status");
 		expect(registered.commands).toContain("post-turn-linter-run");
 		expect(registered.commands).toContain("post-turn-linter-status");
-		expect(registered.commands).toContain("reviewer-status");
-		expect(registered.commands).toContain("reviewer-run");
-		expect(registered.commands).toContain("reviewer-toggle");
-		expect(registered.commands).toContain("reviewer-report");
 		expect(registered.commands).toContain("post-turn-linter-report");
+		expect(registered.commands).toContain("pr-review");
+		expect(registered.commands).toContain("pr-review-status");
+		expect(registered.commands).toContain("pr-gate-status");
+		expect(registered.commands).toContain("pr-gate-toggle");
+		expect(registered.commands).not.toContain("reviewer-status");
+		expect(registered.commands).not.toContain("reviewer-run");
+		expect(registered.commands).not.toContain("reviewer-toggle");
+		expect(registered.commands).not.toContain("reviewer-report");
 	});
 });

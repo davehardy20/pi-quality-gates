@@ -1,7 +1,4 @@
-import type {
-	AutoFixThreshold,
-	ReviewReport,
-} from "../shared/review-types.js";
+import type { AutoFixThreshold } from "../shared/review-types.js";
 
 // ── Shared review report schema (re-exported for backwards compatibility) ──
 export type {
@@ -14,17 +11,10 @@ export type {
 	Severity,
 } from "../shared/review-types.js";
 
-/** Reviewer state machine phases. */
-export type ReviewerPhase =
-	| "IDLE"
-	| "GATHERING"
-	| "REVIEWING"
-	| "FIX_REQUESTED"
-	| "RE_REVIEWING";
-
 // ── Review Config ────────────────────────────────────────────────────────
 
-/** Configuration loaded from .pi/reviewer.config.json with defaults. */
+/** Reviewer configuration. Used by the pr-gate PR_REVIEW_CONFIG and the
+ * reviewer execution core. */
 export interface ReviewConfig {
 	/** Model override for the reviewer (null = use session model) */
 	model: string | null;
@@ -60,87 +50,4 @@ export interface ReviewConfig {
 	 *  This debounces reviews so the main agent can finish multi-step work
 	 *  before the reviewer interrupts. 0 = immediate (legacy behavior). */
 	reviewDelayMs: number;
-}
-
-/** Sensible defaults used when config fields are missing. */
-export const DEFAULT_REVIEW_CONFIG: ReviewConfig = {
-	model: null,
-	minChangedLines: 5,
-	enabled: true,
-	maxReReviewPasses: 1,
-	autoFixThreshold: "critical",
-	maxTokens: 8192,
-	timeoutMs: 120_000,
-	tools: ["read", "grep", "find", "ls", "bash"],
-	allowedBashPatterns: [
-		"cat",
-		"head",
-		"tail",
-		"wc",
-		"diff",
-		"git diff*",
-		"git log*",
-		"git show*",
-		"git blame",
-		"git status",
-		"jq",
-		"rg",
-		"grep",
-		"find",
-		"ls",
-		"file",
-		"stat",
-		"cargo test --no-run",
-		"npm test --dry-run",
-		"pytest --collect-only",
-		"go test -list .*",
-	],
-	respectGitignore: true,
-	skipFile: ".pi/reviewer.skip",
-	allowTestDiscovery: false,
-	testDiscoveryCommands: {
-		python: ["pytest --collect-only -q"],
-		rust: ["cargo test --no-run"],
-		go: ["go test -list ."],
-		typescript: ["npx jest --listTests"],
-		javascript: ["npx jest --listTests"],
-	},
-	maxDiffLines: 500,
-	maxChangedLines: 500,
-	reviewDelayMs: 10_000,
-};
-
-export interface ReviewerReportSidecarRef {
-	id: string;
-	path: string;
-	redactedChars: number;
-}
-
-/** Mutable state tracked across the session lifecycle. */
-export interface ReviewerState {
-	/** Current phase in the state machine */
-	phase: ReviewerPhase;
-	/** How many re-review loops have run (0 = first review) */
-	loopCount: number;
-	/** The most recent parsed report, or null */
-	lastReport: ReviewReport | null;
-	/** Latest redacted reviewer transcript sidecar, if available */
-	latestReportSidecar: ReviewerReportSidecarRef | null;
-	/** Files that were modified in the current turn */
-	pendingFiles: string[];
-	/** Whether the post-turn-linter reported clean */
-	linterClean: boolean;
-	/** Timestamp of the last linter clean signal */
-	linterCleanAt: number | null;
-	/** Active config (defaults merged with user overrides) */
-	config: ReviewConfig;
-	/** Active debounce timer for delayed review (null when none) */
-	reviewTimerId: ReturnType<typeof setTimeout> | null;
-
-	// ── Entry scan cache ────────────────────────────────────────────
-
-	/** Cached last user prompt extracted from session entries */
-	lastUserPrompt: string;
-	/** Index into the branch entries up to which we've already scanned */
-	lastScannedIdx: number;
 }

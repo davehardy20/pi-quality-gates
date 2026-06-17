@@ -1,7 +1,7 @@
 # @davehardy20/pi-quality-gates
 
-Pi quality-gates bundle: post-turn linting, LSP diagnostics, and automated code
-review.
+Pi quality-gates bundle: post-turn linting, LSP diagnostics, and a PR review
+gate that blocks unsafe publishing until changes are reviewed.
 
 ## What it adds
 
@@ -20,35 +20,38 @@ review.
   preview/slice/full
 - `/post-turn-linter-status` — Show current linter state
 
-### Post-Turn Reviewer
+### PR Gate
 
-- After the linter reports clean, spawns a headless Pi child process to review
-  changes
-- 7-domain checklist: task completion, correctness, error handling, security,
-  quality, testing, documentation
-- Severity levels: CRITICAL (auto-fix loop), WARNING (advisory), NIT (info only)
-- Re-review after fixes with configurable max passes
-- Summary-first reviewer reports keep parent context bounded by default
-- Full redacted reviewer transcripts are written to sidecars for manual recovery
-- Parse-fail and timeout notices omit raw output/stderr from parent context
-- `/reviewer-status` — Show reviewer state machine
-- `/reviewer-run` — Manually trigger a review
-- `/reviewer-report` — Recover the latest reviewer sidecar report
-  metadata/preview/slice/full
-- `/reviewer-model` — Switch review model mid-session
-- `/reviewer-toggle` — Enable or disable the reviewer
+- Gates `gh_safe` `push` / `pr_create` behind a PASS token: the hook vetoes
+  publishing until the current HEAD has been reviewed
+- `/pr-review` runs a read-only headless child Pi review scoped to the PR diff
+  (default base ref `origin/master`); on PASS it stamps a token for that HEAD
+- The main agent remains the sole publisher; the gate only vetoes and steers
+- Child reviewer runs `--no-extensions` with read-only tools and safe validation
+  runners only (no `bash`, no mutating tools)
+- On CRITICAL security findings the gate escalates for a human acknowledgement
+- `/pr-review` — Run a PR review for the current HEAD (optional base ref arg)
+- `/pr-review-status` — Show PR review state
+- `/pr-gate-status` — Show push gate state (enabled, gated actions, tokens)
+- `/pr-gate-toggle` — Enable or disable the push gate
 
 ### Workflow
 
 ```text
-Agent modifies files → turn_end fires
-  → Post-turn-linter runs (mechanical checks)
-    → findings → auto-fix turn → linter re-runs (loop)
-    → clean   → triggers post-turn-reviewer
-      → PASS       → done
-      → CRITICAL   → fix-up turn → linter → reviewer re-runs (max 1 loop)
-      → WARNING    → advisory message
-      → max loops  → escalate to user
+Post-turn (per turn):
+  Agent modifies files → turn_end fires
+    → Post-turn-linter runs (mechanical checks)
+      → findings → auto-fix turn → linter re-runs (loop)
+      → clean   → done
+
+PR gate (per publish):
+  Agent calls gh_safe push / pr_create
+    → tool_call hook vetoes (no PASS token) with a steer
+    → agent runs /pr-review
+      → review executes (read-only headless child Pi)
+      → on PASS, token stamped; agent retries the push; hook allows
+      → on ISSUES, agent fixes → lint-clean → re-review
+      → on CRITICAL security, escalate for human ack
 ```
 
 ## Install
@@ -92,43 +95,24 @@ Create `.pi/linter.config.json` in your project root:
 
 ### Reviewer
 
-Create `.pi/reviewer.config.json` in your project root:
-
-```jsonc
-{
-  "model": null,
-  "enabled": true,
-  "minChangedLines": 5,
-  "maxChangedLines": 500,
-  "maxReReviewPasses": 1,
-  "autoFixThreshold": "critical",
-  "timeoutMs": 120000,
-  "respectGitignore": true,
-  "skipFile": ".pi/reviewer.skip",
-  "reviewDelayMs": 10000
-}
-```
-
-Create `.pi/reviewer.skip` (gitignore format) to exclude files from review:
-
-```gitignore
-*.generated.ts
-dist/
-vendor/**
-```
+This bundle previously shipped an auto-triggering post-turn reviewer. It has
+been retired in favour of the PR gate (`/pr-review`), which is the supported
+review path. `/pr-review` runs the same read-only headless child Pi reviewer,
+scoped to a PR diff and gated to a PASS token before publishing. There is no
+separate reviewer configuration file; the PR reviewer uses built-in read-only
+tool and timeout defaults.
 
 ## Notes
 
-- The reviewer spawns a child Pi process with `--no-extensions` and read-only
-  tools only.
+- The `/pr-review` child reviewer runs `--no-extensions` with read-only tools
+  and safe validation runners only (no `bash`, no mutating tools).
 - LSP diagnostics are optional and disabled by default. Enable via linter config.
-- Reviewer sidecar `full` recovery always requires `--ack-context-cost`,
-  including orchestrator/sub-agent sessions. Linter sidecar `full` recovery
-  requires `--ack-context-cost` in parent sessions; in orchestrator/sub-agent
-  sessions, linter `runtimeMode: "auto"` detects
-  `PI_QUALITY_GATES_SUBAGENT_MODE=1` or `PI_ORCH_*` worker env and allows full
-  redacted recovery without the parent-session acknowledgement. Set linter
-  `runtimeMode` to `"parent"` or `"sub-agent"` to override linter detection.
+- Linter sidecar `full` recovery requires `--ack-context-cost` in parent
+  sessions; in orchestrator/sub-agent sessions, linter `runtimeMode: "auto"`
+  detects `PI_QUALITY_GATES_SUBAGENT_MODE=1` or `PI_ORCH_*` worker env and
+  allows full redacted recovery without the parent-session acknowledgement.
+  Set linter `runtimeMode` to `"parent"` or `"sub-agent"` to override linter
+  detection.
 - If commands appear twice, Pi may be loading both this package and old local
   extension files.
   Disable or remove old local extensions before testing.
@@ -147,7 +131,8 @@ vendor/**
 ## Troubleshooting
 
 - Run `/post-turn-linter-status` to check linter state
-- Run `/reviewer-status` to check reviewer state
+- Run `/pr-gate-status` to check push gate state
+- Run `/pr-review-status` to check PR review state
 - Check `~/.pi/lsp-config.yaml` for LSP server configuration
 
 ## Build and test

@@ -18,7 +18,7 @@ export const PR_REVIEW_CONFIG: ReviewConfig = {
 	maxReReviewPasses: 1,
 	autoFixThreshold: "warning",
 	maxTokens: 8192,
-	timeoutMs: 300_000,
+	timeoutMs: 600_000,
 	tools: [
 		"read",
 		"grep",
@@ -52,8 +52,8 @@ export const PR_REVIEW_CONFIG: ReviewConfig = {
 		typescript: ["npx vitest run --reporter=dot"],
 		javascript: ["npx vitest run --reporter=dot"],
 	},
-	maxDiffLines: 1000,
-	maxChangedLines: 2000,
+	maxDiffLines: 4000,
+	maxChangedLines: 5000,
 	reviewDelayMs: 0,
 };
 
