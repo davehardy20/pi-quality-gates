@@ -52,8 +52,8 @@ export const PR_REVIEW_CONFIG: ReviewConfig = {
 		typescript: ["npx vitest run --reporter=dot"],
 		javascript: ["npx vitest run --reporter=dot"],
 	},
-	maxDiffLines: 1000,
-	maxChangedLines: 2000,
+	maxDiffLines: 4000,
+	maxChangedLines: 5000,
 	reviewDelayMs: 0,
 };
 
