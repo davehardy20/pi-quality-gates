@@ -13,7 +13,8 @@ export type {
 
 // ── Review Config ────────────────────────────────────────────────────────
 
-/** Configuration loaded from .pi/reviewer.config.json with defaults. */
+/** Reviewer configuration. Used by the pr-gate PR_REVIEW_CONFIG and the
+ * reviewer execution core. */
 export interface ReviewConfig {
 	/** Model override for the reviewer (null = use session model) */
 	model: string | null;
