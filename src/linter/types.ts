@@ -58,7 +58,12 @@ export interface CliLinterDefinition {
 export interface ApiLinterDefinition {
 	type: "api";
 	name: string;
-	runner: ApiLinterRunner;
+	/**
+	 * Optional runner. Markdownlint no longer uses this — its adapter owns
+	 * execution and reads the resolved config from `LinterConfig.markdownlintConfig`.
+	 * Kept for any other api-type linter that wants to inject a runner.
+	 */
+	runner?: ApiLinterRunner;
 }
 
 export type LinterDefinition = CliLinterDefinition | ApiLinterDefinition;
@@ -75,4 +80,10 @@ export interface LinterConfig {
 	reportMode?: ReportMode;
 	runtimeMode?: QualityGatesRuntimeMode;
 	lsp?: LspDiagnosticsConfig;
+	/**
+	 * Resolved markdownlint config (user `.markdownlint.jsonc`/`.json` merged
+	 * over `DEFAULT_MARKDOWNLINT_CONFIG`). The markdownlint adapter reads this
+	 * directly instead of receiving a pre-baked runner closure.
+	 */
+	markdownlintConfig?: MarkdownlintConfig;
 }
