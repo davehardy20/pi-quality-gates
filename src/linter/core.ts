@@ -21,17 +21,19 @@ import { buildCodeExcerptSection } from "./report-builder.js";
 import type { CombinedValidationOutcome, LinterConfig } from "./types.js";
 
 export {
-	attachMarkdownlintConfig,
 	DEFAULT_CONFIG,
-	DEFAULT_MARKDOWNLINT_CONFIG,
-	formatMarkdownlintResults,
 	getLinterForFile,
 	loadLinterConfig,
 	loadMarkdownlintConfig,
 	MAX_MODIFIED_FILES,
 	parseJsoncConfig,
-	runMarkdownlint,
 } from "./config-loader.js";
+
+export {
+	DEFAULT_MARKDOWNLINT_CONFIG,
+	formatMarkdownlintResults,
+	runMarkdownlint,
+} from "./markdownlint.js";
 
 export {
 	buildCombinedSignature,

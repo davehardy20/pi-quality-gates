@@ -7,6 +7,7 @@ import {
 	getLinterForFile,
 	loadLinterConfig,
 } from "./config-loader.js";
+import { DEFAULT_MARKDOWNLINT_CONFIG } from "./markdownlint.js";
 import { mergeValidationOutcomes } from "./outcome-merger.js";
 import { buildCodeExcerptSection } from "./report-builder.js";
 import {
@@ -16,7 +17,6 @@ import {
 	writeLinterReportSidecar,
 } from "./report-hygiene.js";
 import type {
-	ApiLinterDefinition,
 	CliLinterDefinition,
 	CombinedValidationOutcome,
 	LinterConfig,
@@ -208,7 +208,7 @@ function buildAdaptersFromConfig(
 		if (linter.type === "api" && linter.name === "markdownlint") {
 			adapters.push(
 				createMarkdownlintAdapter({
-					runner: (linter as ApiLinterDefinition).runner,
+					config: config.markdownlintConfig ?? DEFAULT_MARKDOWNLINT_CONFIG,
 				}),
 			);
 		} else if (linter.type === "cli") {
