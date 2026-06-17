@@ -1,4 +1,4 @@
-import type { ReviewConfig } from "../reviewer/types.js";
+import type { ReviewConfig } from "../shared/review-config.js";
 
 /**
  * PR reviewer configuration.

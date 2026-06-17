@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { ReviewConfig } from "../shared/review-config.js";
 import { type DiffFilterOptions, gatherDiff } from "../shared/review-scope.js";
 import { hasFindingsAboveThreshold } from "../shared/review-severity.js";
 import type {
@@ -20,9 +21,9 @@ import type {
 	ReviewStatus,
 	Severity,
 } from "../shared/review-types.js";
-import type { ReviewConfig } from "./types.js";
 
 // Re-export shared primitives for backwards compatibility
+export type { ReviewConfig } from "../shared/review-config.js";
 export {
 	capDiff,
 	countDiffLinesFast,
@@ -39,7 +40,6 @@ export type {
 	ReviewStatus,
 	Severity,
 } from "../shared/review-types.js";
-export type { ReviewConfig } from "./types.js";
 
 export interface ReviewerResult {
 	report: ReviewReport | null;

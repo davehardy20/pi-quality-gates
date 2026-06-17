@@ -4,7 +4,7 @@ import {
   type GateDecision,
 } from "../src/pr-gate/gate-decision.js";
 import { createPassTokenStore } from "../src/pr-gate/pass-token-store.js";
-import type { ReviewReport } from "../src/reviewer/types.js";
+import type { ReviewReport } from "../src/shared/review-types.js";
 
 function makeReport(overrides: Partial<ReviewReport> = {}): ReviewReport {
   return {

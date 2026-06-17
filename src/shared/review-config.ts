@@ -1,15 +1,4 @@
-import type { AutoFixThreshold } from "../shared/review-types.js";
-
-// ── Shared review report schema (re-exported for backwards compatibility) ──
-export type {
-	AutoFixThreshold,
-	Finding,
-	ReviewConfidence,
-	ReviewDomain,
-	ReviewReport,
-	ReviewStatus,
-	Severity,
-} from "../shared/review-types.js";
+import type { AutoFixThreshold } from "./review-types.js";
 
 // ── Review Config ────────────────────────────────────────────────────────
 

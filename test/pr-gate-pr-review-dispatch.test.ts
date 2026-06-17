@@ -12,7 +12,7 @@ import {
 import type {
 	ReviewerExecution,
 	ReviewerResult,
-} from "../src/reviewer/reviewer.js";
+} from "../src/pr-gate/reviewer.js";
 import type { ReviewReport } from "../src/shared/review-types.js";
 
 const HEAD_SHA = "abc123def456";

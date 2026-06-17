@@ -23,12 +23,12 @@ import {
 	capDiff,
 	extractOriginalTask,
 	parseReviewReport,
-} from "../src/reviewer/reviewer.js";
+} from "../src/pr-gate/reviewer.js";
 import {
 	filterSkipped,
 	parseSkipContent,
 	shouldSkip,
-} from "../src/reviewer/reviewer-skip.js";
+} from "../src/pr-gate/reviewer-skip.js";
 import {
 	normalizeAndSortPaths,
 	normalizePath,

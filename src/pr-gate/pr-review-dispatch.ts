@@ -4,14 +4,7 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import {
-	createReviewerExecution,
-	formatReportForDisplay,
-	type ReviewerExecution,
-	type ReviewerResult,
-} from "../reviewer/reviewer.js";
-import { loadSkipFilter, type SkipFilter } from "../reviewer/reviewer-skip.js";
-import type { ReviewConfig } from "../reviewer/types.js";
+import type { ReviewConfig } from "../shared/review-config.js";
 import {
 	countDiffLinesFast,
 	type DiffFilterOptions,
@@ -23,6 +16,13 @@ import type { ReviewReport } from "../shared/review-types.js";
 import { decidePushGate } from "./gate-decision.js";
 import type { PassTokenStore } from "./pass-token-store.js";
 import { PR_REVIEW_CONFIG } from "./pr-review-config.js";
+import {
+	createReviewerExecution,
+	formatReportForDisplay,
+	type ReviewerExecution,
+	type ReviewerResult,
+} from "./reviewer.js";
+import { loadSkipFilter, type SkipFilter } from "./reviewer-skip.js";
 import {
 	formatTestExecutionPlan,
 	recommendTestCommands,
