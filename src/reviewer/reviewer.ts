@@ -10,7 +10,6 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { type DiffFilterOptions, gatherDiff } from "../shared/review-scope.js";
 import { hasFindingsAboveThreshold } from "../shared/review-severity.js";
 import type {
@@ -76,7 +75,7 @@ export interface ReviewerExecutionDependencies {
 	readSystemPrompt?: typeof readSystemPrompt;
 	renderTaskTemplate?: typeof renderTaskTemplate;
 	spawnReviewer?: typeof spawnReviewer;
-	getPromptsDir?: () => string;
+	getPromptsDir: () => string;
 }
 
 // ── Context Gathering ────────────────────────────────────────────────────────
@@ -126,18 +125,12 @@ export function renderTaskTemplate(
 		);
 }
 
-function getDefaultPromptsDir(): string {
-	const sourcePath = fileURLToPath(import.meta.url);
-	const packageRoot = path.resolve(path.dirname(sourcePath), "..", "..");
-	return path.join(packageRoot, "src", "reviewer", "prompts");
-}
-
 export function createReviewerExecution(
-	deps: ReviewerExecutionDependencies = {},
+	deps: ReviewerExecutionDependencies,
 ): ReviewerExecution {
 	return {
 		async runAttempt(input: ReviewerAttemptInput): Promise<ReviewerResult> {
-			const promptsDir = (deps.getPromptsDir ?? getDefaultPromptsDir)();
+			const promptsDir = deps.getPromptsDir();
 			const systemPrompt = (deps.readSystemPrompt ?? readSystemPrompt)(
 				promptsDir,
 			);
