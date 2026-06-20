@@ -25,12 +25,10 @@ You have the full read-only toolset plus safe validation runners:
 - `read`, `grep`, `find`, `ls`, `safe_parse_file`
 - `ast_grep_search`, `lsp_*` (read-only)
 - `pi_docs`, `context7_library`, `context7_docs`
-- `git_inspect_safe` for read-only git status/diff inspection
-- `container_safe` only as the Apple-container sandbox bridge
 - `run_biome`, `run_vitest`, `run_typecheck`, `run_pytest`, `run_cargo_test`
 
 You do **not** have `bash`, `write`, `edit`, `hashline_edit`, `git_safe`,
-`gh_safe`, or any mutating Seeds/Mulch tools.
+`gh_safe`, `container_safe`, or any mutating Seeds/Mulch tools.
 
 ## Review Domains
 
@@ -44,14 +42,13 @@ For each review pass:
 1. Detect the project ecosystem from manifest files (`package.json`,
    `pyproject.toml`, `Cargo.toml`, `go.mod`).
 2. Run the narrowest relevant safe validation runner first, then broader
-   checks inside the Apple container sandbox. For example:
+   checks. For example:
    - TypeScript: `run_vitest <changed-test-files>` → `run_typecheck` → `run_biome src test`
    - Python: `run_pytest <changed-test-files>` → `run_pytest`
    - Rust: `run_cargo_test`
    - Go: `run_pytest` / `go test` equivalent
-3. Record a bounded test synthesis under `### Test execution`, including any
-   sidecar/tool-output ref for raw logs. Also cite the result under "What was
-   verified" or "What could not be verified".
+3. Record test results under "What was verified" or "What could not be
+   verified".
 
 If tests fail, treat the failure as evidence. Determine whether the failure is
 caused by the changes under review. If yes, report it as a WARNING or CRITICAL
@@ -85,11 +82,6 @@ CONFIDENCE: HIGH | MEDIUM | LOW
 
 ### What could not be verified
 - <claim>: <reason — missing test runner, no runtime, ambiguous requirement>
-
-### Test execution
-- **Status:** PASS | FAIL | NOT_RUN
-- **Summary:** <bounded synthesis of validation commands/results>
-- **Sidecar:** <tool-output sidecar ref, or none>
 
 ### Summary
 <1-3 sentence overall assessment>
