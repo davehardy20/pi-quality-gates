@@ -169,6 +169,19 @@ function formatUnparseableReviewerOutput(result: ReviewerResult): string {
 	return lines.join("\n");
 }
 
+function getPassBlockingTestExecutionReason(
+	report: ReviewReport,
+): string | null {
+	if (report.status !== "PASS") return null;
+	if (!report.testExecution) {
+		return "reviewer omitted the required ### Test execution section";
+	}
+	if (report.testExecution.status !== "PASS") {
+		return `test execution status is ${report.testExecution.status}`;
+	}
+	return null;
+}
+
 function defaultGetBaseRef(cwd: string): string {
 	// Prefer the repo's default upstream branch if available.
 	const candidates = ["origin/master", "origin/main", "master", "main"];
@@ -349,6 +362,17 @@ export function createPrReviewDispatch(
 					escalated: true,
 					blocked: true,
 					message: `⚠️ **CRITICAL security finding(s)** in review for HEAD ${headSha}. Human acknowledgement required before push.\n\n${formatReportForDisplay(report)}`,
+				};
+			}
+
+			const testExecutionBlocker = getPassBlockingTestExecutionReason(report);
+			if (testExecutionBlocker) {
+				return {
+					report: { ...report, status: "CANNOT_REVIEW" },
+					stamped: false,
+					escalated: false,
+					blocked: true,
+					message: `❓ **PR review could not complete** for HEAD ${headSha}: ${testExecutionBlocker}. Re-run /pr-review after the reviewer reports container-safe test execution.\n\n${formatReportForDisplay(report)}`,
 				};
 			}
 
