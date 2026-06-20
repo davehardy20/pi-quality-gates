@@ -325,6 +325,9 @@ export function createPrReviewDispatch(
 			const report = childOutput.report;
 
 			if (!report) {
+				const sidecarHint = childOutput.sidecarPath
+					? `Reviewer output preserved at: ${childOutput.sidecarPath}`
+					: "Reviewer output was not preserved (sidecar unavailable).";
 				return {
 					report: null,
 					stamped: false,
@@ -332,6 +335,7 @@ export function createPrReviewDispatch(
 					blocked: true,
 					message: [
 						"PR review gate: could not parse review report from child output.",
+						sidecarHint,
 						formatUnparseableReviewerOutput(childOutput),
 						"Re-run /pr-review after investigating the reviewer output.",
 					].join("\n\n"),
