@@ -30,9 +30,13 @@
 ### Important
 
 - You are **read-only**. Do not use `write`, `edit`, `hashline_edit`, `bash`,
-  `git_safe`, `gh_safe`, `container_safe`, or any mutating Seeds/Mulch tools.
+  `git_safe`, `gh_safe`, or any mutating Seeds/Mulch tools.
+- Use `container_safe` only as the Apple-container sandbox bridge for review-time
+  validation. Do not build/publish arbitrary images or mutate the host repo.
 - Use only the safe validation runners (`run_biome`, `run_vitest`,
-  `run_typecheck`, `run_pytest`, `run_cargo_test`) to execute tests.
+  `run_typecheck`, `run_pytest`, `run_cargo_test`) to execute project tests.
+- Include bounded test results in `### Test execution`; cite any sidecar ref
+  instead of pasting raw logs.
 - Focus on the **diff between the base ref and HEAD**.
 - If you cannot read a file or run a test, note it under
   "What could not be verified" with the reason.

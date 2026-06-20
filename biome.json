@@ -15,10 +15,25 @@
   },
   "formatter": {
     "enabled": true,
-    "indentStyle": "space",
-    "indentWidth": 2,
+    "indentStyle": "tab",
     "lineEnding": "lf"
   },
+  "overrides": [
+    {
+      "includes": [
+        "src/pr-gate/gate-decision.ts",
+        "src/pr-gate/pass-token-store.ts",
+        "src/pr-gate/reviewer.ts",
+        "test/pr-gate-gate-decision.test.ts",
+        "test/pr-gate-integration.test.ts",
+        "test/pr-gate-push-gate-hook.test.ts"
+      ],
+      "formatter": {
+        "indentStyle": "space",
+        "indentWidth": 2
+      }
+    }
+  ],
   "linter": {
     "enabled": true
   }

@@ -12,7 +12,7 @@ import type { ReviewConfig } from "../shared/review-config.js";
  * to arbitrary shell commands.
  */
 export const PR_REVIEW_CONFIG: ReviewConfig = {
-	model: null,
+	model: "openai-codex/gpt-5.5",
 	minChangedLines: 0,
 	enabled: true,
 	maxReReviewPasses: 1,
@@ -31,9 +31,16 @@ export const PR_REVIEW_CONFIG: ReviewConfig = {
 		"lsp_diagnostics",
 		"lsp_symbols",
 		"lsp_prepare_rename",
+		"git_inspect_safe",
+		"container_safe",
 		"pi_docs",
 		"context7_library",
 		"context7_docs",
+		"web_search",
+		"mulch_query",
+		"mulch_search",
+		"seeds_show",
+		"seeds_plan_show",
 		"run_biome",
 		"run_vitest",
 		"run_typecheck",
@@ -74,7 +81,6 @@ export const PR_REVIEWER_FORBIDDEN_TOOLS = new Set([
 	"lsp_rename",
 	"git_safe",
 	"gh_safe",
-	"container_safe",
 	"mulch_record",
 	"mulch_sync",
 	"mulch_learn",
