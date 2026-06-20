@@ -20,6 +20,7 @@ import type {
   ReviewReport,
   ReviewStatus,
   Severity,
+  TestExecutionStatus,
 } from "../shared/review-types.js";
 
 // Re-export shared primitives for backwards compatibility
@@ -464,6 +465,8 @@ export function parseReviewReport(output: string): ReviewReport | null {
     "What could not be verified",
   );
 
+  const testExecution = parseTestExecutionSection(reportText);
+
   // Parse Summary — take everything between "### Summary" and the end (or next ## header)
   const summary = parseSummarySection(reportText);
 
@@ -473,6 +476,7 @@ export function parseReviewReport(output: string): ReviewReport | null {
     findings,
     verified,
     unverifiable: notVerified,
+    ...(testExecution ? { testExecution } : {}),
     summary,
   };
 }
@@ -581,28 +585,65 @@ function parseFilePath(fileField: string): {
   return { file: trimmed, line: null };
 }
 function parseListSection(reportText: string, heading: string): string[] {
+  const section = parseSectionBody(reportText, heading);
+  if (!section) return [];
+
   const items: string[] = [];
-
-  // Find the heading
-  const headingRegex = new RegExp(`^###\\s+${escapeRegex(heading)}\\s*$`, "m");
-  const headingMatch = headingRegex.exec(reportText);
-  if (!headingMatch) return items;
-
-  const afterHeading = reportText.slice(
-    headingMatch.index + headingMatch[0].length,
-  );
-
-  // Collect lines until the next ### heading or end
-  const lines = afterHeading.split("\n");
-  for (const line of lines) {
+  for (const line of section.split("\n")) {
     const trimmed = line.trim();
-    if (trimmed.startsWith("### ")) break; // next section
     if (trimmed.startsWith("- ")) {
       items.push(trimmed.slice(2).trim());
     }
   }
 
   return items;
+}
+
+function parseSectionBody(reportText: string, heading: string): string {
+  const headingRegex = new RegExp(`^###\\s+${escapeRegex(heading)}\\s*$`, "im");
+  const headingMatch = headingRegex.exec(reportText);
+  if (!headingMatch) return "";
+
+  const afterHeading = reportText.slice(
+    headingMatch.index + headingMatch[0].length,
+  );
+  const nextHeading = afterHeading.search(/^###\s+/m);
+  return (
+    nextHeading === -1 ? afterHeading : afterHeading.slice(0, nextHeading)
+  ).trim();
+}
+
+function parseTestExecutionSection(
+  reportText: string,
+): ReviewReport["testExecution"] | undefined {
+  const section = parseSectionBody(reportText, "Test execution");
+  if (!section) return undefined;
+
+  const statusValue = parseMarkdownField(section, "Status").toUpperCase();
+  const status = isTestExecutionStatus(statusValue) ? statusValue : "NOT_RUN";
+  const summary = parseMarkdownField(section, "Summary") || section.trim();
+  const sidecarRef = parseMarkdownField(section, "Sidecar");
+
+  return {
+    status,
+    summary,
+    ...(sidecarRef ? { sidecarRef } : {}),
+  };
+}
+
+function parseMarkdownField(block: string, fieldName: string): string {
+  const fieldPrefix = `${fieldName}:`.toUpperCase();
+  for (const line of block.split("\n")) {
+    const normalized = line.replaceAll("**", "").trim().replace(/^-\s*/, "");
+    if (normalized.toUpperCase().startsWith(fieldPrefix)) {
+      return normalized.slice(fieldPrefix.length).trim();
+    }
+  }
+  return "";
+}
+
+function isTestExecutionStatus(value: string): value is TestExecutionStatus {
+  return value === "PASS" || value === "FAIL" || value === "NOT_RUN";
 }
 
 /**
@@ -652,6 +693,17 @@ export function formatReportForDisplay(report: ReviewReport): string {
       if (f.suggestion) {
         lines.push(`  - 💡 ${f.suggestion}`);
       }
+    }
+    lines.push("");
+  }
+
+  if (report.testExecution) {
+    lines.push("### Test execution");
+    lines.push("");
+    lines.push(`- **Status:** ${report.testExecution.status}`);
+    lines.push(`- **Summary:** ${report.testExecution.summary}`);
+    if (report.testExecution.sidecarRef) {
+      lines.push(`- **Sidecar:** ${report.testExecution.sidecarRef}`);
     }
     lines.push("");
   }

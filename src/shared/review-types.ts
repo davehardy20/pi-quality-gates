@@ -50,6 +50,17 @@ export interface Finding {
 	suggestion: string;
 }
 
+export type TestExecutionStatus = "PASS" | "FAIL" | "NOT_RUN";
+
+export interface TestExecutionSummary {
+	/** Overall result of review-time validation commands. */
+	status: TestExecutionStatus;
+	/** Bounded synthesis of the validation output, not raw logs. */
+	summary: string;
+	/** Optional sidecar/tool-output reference for full logs. */
+	sidecarRef?: string;
+}
+
 /** Structured report parsed from the reviewer child's output. */
 export interface ReviewReport {
 	/** Overall status: PASS | ISSUES | CANNOT_REVIEW */
@@ -62,6 +73,8 @@ export interface ReviewReport {
 	verified: string[];
 	/** Claims the reviewer could not verify, with reasons */
 	unverifiable: string[];
+	/** Review-time validation results, when the reviewer reports them. */
+	testExecution?: TestExecutionSummary;
 	/** 1–3 sentence overall assessment */
 	summary: string;
 }

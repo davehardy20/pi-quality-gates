@@ -66,7 +66,26 @@ function makePassReport(summary = "clean"): ReviewReport {
 		findings: [],
 		verified: ["tests pass"],
 		unverifiable: [],
+		testExecution: {
+			status: "PASS",
+			summary: "container-safe validation passed",
+		},
 		summary,
+	};
+}
+
+function makePassReportWithoutTestExecution(): ReviewReport {
+	const { testExecution: _testExecution, ...report } = makePassReport();
+	return report;
+}
+
+function makePassReportWithFailedTestExecution(): ReviewReport {
+	return {
+		...makePassReport(),
+		testExecution: {
+			status: "FAIL",
+			summary: "container-safe validation failed",
+		},
 	};
 }
 
@@ -169,6 +188,38 @@ describe("pr-review dispatch", () => {
 		expect(input.state.tokens.hasPass(HEAD_SHA)).toBe(true);
 		expect(result.message).toContain("PASS");
 		expect(result.message).toContain(HEAD_SHA);
+	});
+
+	it("blocks PASS reports that omit required test execution", async () => {
+		const pi = createMockPi();
+		const dispatch = createPrReviewDispatch(
+			createTestDeps(makePassReportWithoutTestExecution()),
+		);
+		const input = createInput(pi);
+
+		const result = await dispatch.dispatch(input);
+
+		expect(result.stamped).toBe(false);
+		expect(result.blocked).toBe(true);
+		expect(result.report?.status).toBe("CANNOT_REVIEW");
+		expect(input.state.tokens.hasPass(HEAD_SHA)).toBe(false);
+		expect(result.message).toContain("omitted the required");
+	});
+
+	it("blocks PASS reports with failed test execution", async () => {
+		const pi = createMockPi();
+		const dispatch = createPrReviewDispatch(
+			createTestDeps(makePassReportWithFailedTestExecution()),
+		);
+		const input = createInput(pi);
+
+		const result = await dispatch.dispatch(input);
+
+		expect(result.stamped).toBe(false);
+		expect(result.blocked).toBe(true);
+		expect(result.report?.status).toBe("CANNOT_REVIEW");
+		expect(input.state.tokens.hasPass(HEAD_SHA)).toBe(false);
+		expect(result.message).toContain("test execution status is FAIL");
 	});
 
 	it("blocks and sends a fix instruction when review finds issues", async () => {

@@ -57,8 +57,6 @@ export interface GateDecision {
   requiresHumanAck?: boolean;
 }
 
-
-
 /**
  * Core decision. Pure. Side effects limited to optionally stamping a PASS
  * token into the supplied store when a PASS report arrives — which is the

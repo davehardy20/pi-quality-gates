@@ -301,4 +301,3 @@ describe("push-gate-hook (tool_call interceptor for git_safe)", () => {
     });
   });
 });
-
