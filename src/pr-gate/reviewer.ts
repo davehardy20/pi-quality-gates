@@ -195,6 +195,28 @@ export function buildSanitizedReviewerCommand(
   return `${rendered} [taskPrompt omitted chars=${taskPrompt.length} sha256=${sha256Hex(taskPrompt)}]`;
 }
 
+export function buildReviewerPiArgs(
+  config: ReviewConfig,
+  promptFile: string,
+): string[] {
+  const piArgs = [
+    "--mode",
+    "json",
+    "-p", // pipe mode (no interactive UI)
+    "--no-session",
+    "--tools",
+    config.tools.join(","),
+    "--append-system-prompt",
+    promptFile,
+  ];
+
+  if (config.model) {
+    piArgs.push("--model", config.model);
+  }
+
+  return piArgs;
+}
+
 /**
  * Spawn a headless child Pi process for the review.
  * Uses `--mode json --no-session` with read-only tools.
@@ -218,22 +240,9 @@ export async function spawnReviewer(
       mode: 0o600,
     });
 
-    // Build Pi arguments
-    const piArgs = [
-      "--mode",
-      "json",
-      "-p", // pipe mode (no interactive UI)
-      "--no-session",
-      "--no-extensions", // prevent extension loading in child to avoid stale ctx errors
-      "--tools",
-      config.tools.join(","),
-      "--append-system-prompt",
-      promptFile,
-    ];
-
-    if (config.model) {
-      piArgs.push("--model", config.model);
-    }
+    // Keep extensions enabled: safe validation runners are extension-provided
+    // in normal Pi sessions, and /pr-review must expose them to the child.
+    const piArgs = buildReviewerPiArgs(config, promptFile);
 
     // NOTE: pi CLI does not support --max-tokens; maxTokens is config-only
     // and can be used by consumers for logging or provider-specific limits.
