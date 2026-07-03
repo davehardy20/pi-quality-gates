@@ -153,15 +153,53 @@ export function createReviewerExecution(
         diff,
         input.testPlan,
       );
-      return (deps.spawnReviewer ?? spawnReviewer)(
+      const spawn = deps.spawnReviewer ?? spawnReviewer;
+      const primaryResult = await spawn(
         taskPrompt,
         systemPrompt,
         input.config,
         input.cwd,
         input.signal,
       );
+      if (primaryResult.report || !isEmptyModelFailure(primaryResult)) {
+        return primaryResult;
+      }
+      // Pi core has no native --model fallback. When the primary model fails
+      // with an empty-output model failure (quota exhaustion, empty response),
+      // retry each configured fallback model until one produces a parseable
+      // review report or a non-empty failure. Returns the primary failure if
+      // every fallback is also an empty-output model failure.
+      for (const fallbackModel of input.config.fallbackModels ?? []) {
+        const fallbackResult = await spawn(
+          taskPrompt,
+          systemPrompt,
+          { ...input.config, model: fallbackModel },
+          input.cwd,
+          input.signal,
+        );
+        if (fallbackResult.report || !isEmptyModelFailure(fallbackResult)) {
+          return fallbackResult;
+        }
+      }
+      return primaryResult;
     },
   };
+}
+
+/**
+ * Detect a child result that looks like an empty-output model failure
+ * (e.g. quota exhaustion or an empty model response) rather than a real
+ * review failure or error. Such results are retryable via model fallback:
+ * zero review output, no stderr, clean exit, and no timeout.
+ */
+function isEmptyModelFailure(result: ReviewerResult): boolean {
+  return (
+    result.report === null &&
+    result.rawOutput.trim() === "" &&
+    result.stderr.trim() === "" &&
+    result.exitCode === 0 &&
+    !result.timedOut
+  );
 }
 
 // ── Child Pi Spawn ───────────────────────────────────────────────────────────
@@ -195,6 +233,28 @@ export function buildSanitizedReviewerCommand(
   return `${rendered} [taskPrompt omitted chars=${taskPrompt.length} sha256=${sha256Hex(taskPrompt)}]`;
 }
 
+export function buildReviewerPiArgs(
+  config: ReviewConfig,
+  promptFile: string,
+): string[] {
+  const piArgs = [
+    "--mode",
+    "json",
+    "-p", // pipe mode (no interactive UI)
+    "--no-session",
+    "--tools",
+    config.tools.join(","),
+    "--append-system-prompt",
+    promptFile,
+  ];
+
+  if (config.model) {
+    piArgs.push("--model", config.model);
+  }
+
+  return piArgs;
+}
+
 /**
  * Spawn a headless child Pi process for the review.
  * Uses `--mode json --no-session` with read-only tools.
@@ -218,22 +278,9 @@ export async function spawnReviewer(
       mode: 0o600,
     });
 
-    // Build Pi arguments
-    const piArgs = [
-      "--mode",
-      "json",
-      "-p", // pipe mode (no interactive UI)
-      "--no-session",
-      "--no-extensions", // prevent extension loading in child to avoid stale ctx errors
-      "--tools",
-      config.tools.join(","),
-      "--append-system-prompt",
-      promptFile,
-    ];
-
-    if (config.model) {
-      piArgs.push("--model", config.model);
-    }
+    // Keep extensions enabled: safe validation runners are extension-provided
+    // in normal Pi sessions, and /pr-review must expose them to the child.
+    const piArgs = buildReviewerPiArgs(config, promptFile);
 
     // NOTE: pi CLI does not support --max-tokens; maxTokens is config-only
     // and can be used by consumers for logging or provider-specific limits.

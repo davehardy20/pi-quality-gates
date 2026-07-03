@@ -1,40 +1,37 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.4.10/schema.json",
-  "vcs": {
-    "enabled": true,
-    "clientKind": "git",
-    "useIgnoreFile": true
-  },
-  "files": {
-    "includes": [
-      "**",
-      "!node_modules",
-      "!.git",
-      "!dist"
-    ]
-  },
-  "formatter": {
-    "enabled": true,
-    "indentStyle": "tab",
-    "lineEnding": "lf"
-  },
-  "overrides": [
-    {
-      "includes": [
-        "src/pr-gate/gate-decision.ts",
-        "src/pr-gate/pass-token-store.ts",
-        "src/pr-gate/reviewer.ts",
-        "test/pr-gate-gate-decision.test.ts",
-        "test/pr-gate-integration.test.ts",
-        "test/pr-gate-push-gate-hook.test.ts"
-      ],
-      "formatter": {
-        "indentStyle": "space",
-        "indentWidth": 2
-      }
-    }
-  ],
-  "linter": {
-    "enabled": true
-  }
+	"$schema": "https://biomejs.dev/schemas/2.4.16/schema.json",
+	"vcs": {
+		"enabled": true,
+		"clientKind": "git",
+		"useIgnoreFile": true
+	},
+	"files": {
+		"includes": ["**", "!node_modules", "!.git", "!dist"]
+	},
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab",
+		"lineEnding": "lf"
+	},
+	"overrides": [
+		{
+			"includes": [
+				"src/linter/adapters/cli.ts",
+				"src/pr-gate/gate-decision.ts",
+				"src/pr-gate/pass-token-store.ts",
+				"src/pr-gate/reviewer.ts",
+				"test/linter-cli-adapter.test.ts",
+				"test/pr-gate-gate-decision.test.ts",
+				"test/pr-gate-integration.test.ts",
+				"test/pr-gate-push-gate-hook.test.ts"
+			],
+			"formatter": {
+				"indentStyle": "space",
+				"indentWidth": 2
+			}
+		}
+	],
+	"linter": {
+		"enabled": true
+	}
 }

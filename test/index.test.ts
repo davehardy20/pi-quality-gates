@@ -19,6 +19,7 @@ import {
 	writeLinterReportSidecar,
 } from "../src/linter/report-hygiene.js";
 import {
+	buildReviewerPiArgs,
 	buildSanitizedReviewerCommand,
 	capDiff,
 	extractOriginalTask,
@@ -718,11 +719,39 @@ describe("post-turn-reviewer: reviewer helpers", () => {
 		expect(extractOriginalTask([])).toBe("");
 	});
 
+	it("builds reviewer Pi args with extensions enabled for safe runners", () => {
+		const args = buildReviewerPiArgs(
+			{
+				model: "model/test",
+				minChangedLines: 0,
+				enabled: true,
+				maxReReviewPasses: 1,
+				autoFixThreshold: "warning",
+				maxTokens: 8192,
+				timeoutMs: 60_000,
+				tools: ["read", "run_vitest", "run_typecheck", "run_biome"],
+				allowedBashPatterns: [],
+				respectGitignore: true,
+				skipFile: null,
+				allowTestDiscovery: true,
+				testDiscoveryCommands: {},
+				maxDiffLines: 4000,
+				maxChangedLines: 5000,
+				reviewDelayMs: 0,
+			},
+			"/tmp/prompt.md",
+		);
+
+		expect(args).toContain("--tools");
+		expect(args).toContain("read,run_vitest,run_typecheck,run_biome");
+		expect(args).not.toContain("--no-extensions");
+	});
+
 	it("builds sanitized reviewer commands without task or diff text", () => {
 		const taskPrompt = [
 			"Task: preserve private request text",
-			"diff --git a/secret.ts b/secret.ts",
-			"+const apiKey = 'task-diff-secret';",
+			"diff --git a/placeholder.ts b/placeholder.ts",
+			"+const placeholder = 'safe-redacted-value';",
 		].join("\n");
 		const command = buildSanitizedReviewerCommand(
 			"pi",

@@ -13,6 +13,11 @@ import type { ReviewConfig } from "../shared/review-config.js";
  */
 export const PR_REVIEW_CONFIG: ReviewConfig = {
 	model: "openai-codex/gpt-5.5",
+	// Mirrors the `deep` profile fallback chain in ~/.pi/agent/model-fallbacks.json.
+	// Tried in order when the primary model fails with an empty-output model
+	// failure (e.g. quota exhaustion). Pi core has no native --model fallback,
+	// so the reviewer execution retries each model itself.
+	fallbackModels: ["zai/glm-5.2", "kimi-coding/kimi-for-coding"],
 	minChangedLines: 0,
 	enabled: true,
 	maxReReviewPasses: 1,
