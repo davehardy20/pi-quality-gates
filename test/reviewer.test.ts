@@ -1,5 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { parseReviewReport } from "../src/pr-gate/reviewer.js";
+import { describe, expect, it, vi } from "vitest";
+import {
+	createReviewerExecution,
+	parseReviewReport,
+	type ReviewerResult,
+} from "../src/pr-gate/reviewer.js";
+import type { ReviewConfig } from "../src/shared/review-config.js";
+import type { ReviewReport } from "../src/shared/review-types.js";
 
 describe("parseReviewReport", () => {
 	it("parses a well-formed review report", () => {
@@ -103,5 +109,171 @@ describe("parseReviewReport", () => {
 		const report = parseReviewReport(prefix + suffix);
 		expect(report?.status).toBe("PASS");
 		expect(report?.confidence).toBe("LOW");
+	});
+});
+
+describe("createReviewerExecution model fallback", () => {
+	function makeConfig(
+		model: string | null,
+		fallbackModels?: string[],
+	): ReviewConfig {
+		return {
+			model,
+			fallbackModels,
+			minChangedLines: 0,
+			enabled: true,
+			maxReReviewPasses: 0,
+			autoFixThreshold: "warning",
+			maxTokens: 8192,
+			timeoutMs: 600_000,
+			tools: ["read"],
+			allowedBashPatterns: [],
+			respectGitignore: true,
+			skipFile: null,
+			allowTestDiscovery: false,
+			testDiscoveryCommands: {},
+			maxDiffLines: 4000,
+			maxChangedLines: 5000,
+			reviewDelayMs: 0,
+		};
+	}
+
+	function emptyFailureResult(model: string): ReviewerResult {
+		return {
+			report: null,
+			rawOutput: "",
+			stderr: "",
+			exitCode: 0,
+			timedOut: false,
+			usage: "â0 â0 $0.0000",
+			command: `pi --model ${model}`,
+		};
+	}
+
+	function passResult(model: string): ReviewerResult {
+		const report: ReviewReport = {
+			status: "PASS",
+			confidence: "HIGH",
+			findings: [],
+			verified: ["tests pass"],
+			unverifiable: [],
+			testExecution: { status: "PASS", summary: "ok" },
+			summary: "ok",
+		};
+		return {
+			report,
+			rawOutput: "## Review Report\nSTATUS: PASS\n",
+			exitCode: 0,
+			timedOut: false,
+			stderr: "",
+			command: `pi --model ${model}`,
+		};
+	}
+
+	it("retries fallback models when primary produces an empty-output model failure", async () => {
+		const calls: Array<string | null> = [];
+		const spawnReviewer = vi.fn(
+			async (_task, _prompt, config: ReviewConfig) => {
+				const model = config.model ?? "unknown";
+				calls.push(model);
+				if (model === "openai-codex/gpt-5.5") {
+					return emptyFailureResult(model);
+				}
+				return passResult(model);
+			},
+		);
+		const exec = createReviewerExecution({
+			getPromptsDir: () => "/prompts",
+			spawnReviewer: spawnReviewer as never,
+			readSystemPrompt: () => "sys",
+			renderTaskTemplate: () => "task",
+		});
+		const result = await exec.runAttempt({
+			task: "t",
+			files: ["a.ts"],
+			cwd: "/r",
+			diff: "(stub)",
+			config: makeConfig("openai-codex/gpt-5.5", [
+				"zai/glm-5.2",
+				"kimi-coding/kimi-for-coding",
+			]),
+		});
+		expect(calls).toEqual(["openai-codex/gpt-5.5", "zai/glm-5.2"]);
+		expect(result.report?.status).toBe("PASS");
+	});
+
+	it("returns the primary failure when every fallback also fails empty", async () => {
+		const spawnReviewer = vi.fn(async (_task, _prompt, config: ReviewConfig) =>
+			emptyFailureResult(config.model ?? "unknown"),
+		);
+		const exec = createReviewerExecution({
+			getPromptsDir: () => "/prompts",
+			spawnReviewer: spawnReviewer as never,
+			readSystemPrompt: () => "sys",
+			renderTaskTemplate: () => "task",
+		});
+		const result = await exec.runAttempt({
+			task: "t",
+			files: [],
+			cwd: "/r",
+			config: makeConfig("openai-codex/gpt-5.5", ["zai/glm-5.2"]),
+		});
+		expect(result.report).toBeNull();
+		expect(result.command).toContain("openai-codex/gpt-5.5");
+	});
+
+	it("does not retry when the primary fails with real stderr output", async () => {
+		const calls: Array<string | null> = [];
+		const spawnReviewer = vi.fn(
+			async (_task, _prompt, config: ReviewConfig) => {
+				calls.push(config.model);
+				return {
+					report: null,
+					rawOutput: "",
+					stderr: "Error: auth failed",
+					exitCode: 1,
+					timedOut: false,
+					command: "pi --model x",
+				} satisfies ReviewerResult;
+			},
+		);
+		const exec = createReviewerExecution({
+			getPromptsDir: () => "/prompts",
+			spawnReviewer: spawnReviewer as never,
+			readSystemPrompt: () => "sys",
+			renderTaskTemplate: () => "task",
+		});
+		await exec.runAttempt({
+			task: "t",
+			files: [],
+			cwd: "/r",
+			config: makeConfig("openai-codex/gpt-5.5", ["zai/glm-5.2"]),
+		});
+		expect(calls).toEqual(["openai-codex/gpt-5.5"]);
+	});
+
+	it("does not retry when no fallback models are configured", async () => {
+		const calls: Array<string | null> = [];
+		const spawnReviewer = vi.fn(
+			async (_task, _prompt, config: ReviewConfig) => {
+				const model = config.model ?? "unknown";
+				calls.push(model);
+				return emptyFailureResult(model);
+			},
+		);
+		const exec = createReviewerExecution({
+			getPromptsDir: () => "/prompts",
+			spawnReviewer: spawnReviewer as never,
+			readSystemPrompt: () => "sys",
+			renderTaskTemplate: () => "task",
+		});
+		const result = await exec.runAttempt({
+			task: "t",
+			files: [],
+			cwd: "/r",
+			config: makeConfig("openai-codex/gpt-5.5"),
+		});
+		expect(calls).toEqual(["openai-codex/gpt-5.5"]);
+		expect(result.report).toBeNull();
 	});
 });

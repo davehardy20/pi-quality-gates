@@ -153,15 +153,53 @@ export function createReviewerExecution(
         diff,
         input.testPlan,
       );
-      return (deps.spawnReviewer ?? spawnReviewer)(
+      const spawn = deps.spawnReviewer ?? spawnReviewer;
+      const primaryResult = await spawn(
         taskPrompt,
         systemPrompt,
         input.config,
         input.cwd,
         input.signal,
       );
+      if (primaryResult.report || !isEmptyModelFailure(primaryResult)) {
+        return primaryResult;
+      }
+      // Pi core has no native --model fallback. When the primary model fails
+      // with an empty-output model failure (quota exhaustion, empty response),
+      // retry each configured fallback model until one produces a parseable
+      // review report or a non-empty failure. Returns the primary failure if
+      // every fallback is also an empty-output model failure.
+      for (const fallbackModel of input.config.fallbackModels ?? []) {
+        const fallbackResult = await spawn(
+          taskPrompt,
+          systemPrompt,
+          { ...input.config, model: fallbackModel },
+          input.cwd,
+          input.signal,
+        );
+        if (fallbackResult.report || !isEmptyModelFailure(fallbackResult)) {
+          return fallbackResult;
+        }
+      }
+      return primaryResult;
     },
   };
+}
+
+/**
+ * Detect a child result that looks like an empty-output model failure
+ * (e.g. quota exhaustion or an empty model response) rather than a real
+ * review failure or error. Such results are retryable via model fallback:
+ * zero review output, no stderr, clean exit, and no timeout.
+ */
+function isEmptyModelFailure(result: ReviewerResult): boolean {
+  return (
+    result.report === null &&
+    result.rawOutput.trim() === "" &&
+    result.stderr.trim() === "" &&
+    result.exitCode === 0 &&
+    !result.timedOut
+  );
 }
 
 // ── Child Pi Spawn ───────────────────────────────────────────────────────────

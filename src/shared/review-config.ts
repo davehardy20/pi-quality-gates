@@ -7,6 +7,10 @@ import type { AutoFixThreshold } from "./review-types.js";
 export interface ReviewConfig {
 	/** Model override for the reviewer (null = use session model) */
 	model: string | null;
+	/** Ordered fallback models tried when the primary model fails with an
+	 * empty-output model failure (e.g. quota exhaustion, empty response).
+	 * Each is tried in order until a parseable review report is produced. */
+	fallbackModels?: string[];
 	/** Minimum changed lines to trigger a review */
 	minChangedLines: number;
 	/** Whether the reviewer is enabled */
