@@ -11,7 +11,7 @@
  *   agent calls gh_safe pr_create/push
  *     -> tool_call hook vetoes (no PASS token) with a steer
  *     -> agent runs /pr-review
- *     -> review executes (in the Apple container via the pr-reviewer category)
+ *     -> review dispatch runs the configured PR reviewer
  *     -> on PASS, token stamped; agent retries the push; hook allows
  *     -> on ISSUES, agent fixes -> lint-clean -> re-review
  *     -> on CRITICAL security, escalate for human ack
@@ -22,8 +22,8 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { registerAutoReview } from "./auto-review-trigger.js";
 import { decidePushGate } from "./gate-decision.js";
+import { createOrchestratorReviewerExecution } from "./orchestrator-reviewer-execution.js";
 import {
 	createPassTokenStore,
 	type PassTokenStore,
@@ -184,9 +184,17 @@ export default function prGateExtension(
 		gatedActions: () => state.config.gatedActions,
 	});
 
+	const orchestratorReviewer = createOrchestratorReviewerExecution(pi);
+	pi.on("tool_result", (event) => {
+		orchestratorReviewer.handleToolResult(event);
+	});
+
 	const createDispatch = deps.createPrReviewDispatch ?? createPrReviewDispatch;
 	const dispatch = createDispatch({
 		getHeadSha: resolveHeadSha,
+		...(deps.createPrReviewDispatch
+			? {}
+			: { reviewerExecution: orchestratorReviewer.reviewerExecution }),
 	});
 	let reviewInProgress = false;
 	function runReviewForHead(args: {
@@ -465,42 +473,6 @@ export default function prGateExtension(
 				display: true,
 			});
 			void ctx;
-		},
-	});
-
-	registerAutoReview(pi, {
-		getHeadSha: () => resolveHeadSha(process.cwd()),
-		hasPass: (sha) => state.tokens.hasPass(sha),
-		isEnabled: () => state.config.enabled,
-		isInProgress: () => reviewInProgress,
-		runReview: async () => {
-			const headSha = resolveHeadSha(process.cwd());
-			if (!headSha) {
-				return;
-			}
-			const reviewCtx: ExtensionContext = {
-				cwd: process.cwd(),
-				hasUI: false,
-				sessionManager: undefined,
-			} as unknown as ExtensionContext;
-			runReviewForHead({
-				pi,
-				ctx: reviewCtx,
-				dispatch,
-				state,
-				headSha,
-				getInProgress: () => reviewInProgress,
-				setInProgress: (v) => {
-					reviewInProgress = v;
-				},
-			});
-		},
-		notify: (message) => {
-			pi.sendMessage({
-				customType: "pr-review-status",
-				content: message,
-				display: true,
-			});
 		},
 	});
 }

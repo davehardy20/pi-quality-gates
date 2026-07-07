@@ -35,7 +35,7 @@ function createMockPi(): {
 		sendMessage: (message: SentMessage) => {
 			messages.push(message);
 		},
-		on: () => {},
+		on: vi.fn(),
 	} as unknown as ExtensionAPI;
 
 	return { pi, commands, messages };
@@ -65,6 +65,13 @@ describe("pr-gate command registration", () => {
 
 		expect(messages.at(-1)?.customType).toBe("pr-review-status");
 		expect(messages.at(-1)?.content).toContain("HEAD has PASS");
+	});
+
+	it("does not register the retired turn_end auto-review trigger", () => {
+		const { pi } = createMockPi();
+		prGateExtension(pi);
+
+		expect(pi.on).not.toHaveBeenCalledWith("turn_end", expect.any(Function));
 	});
 
 	it("treats /pr-review status as a status alias, not a base ref", async () => {

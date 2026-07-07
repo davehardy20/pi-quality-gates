@@ -344,6 +344,27 @@ describe("pr-review dispatch", () => {
 		expect(result.message).toContain("could not parse review report");
 	});
 
+	it("fails closed when no reviewer execution bridge is configured", async () => {
+		const pi = createMockPi();
+		const dispatch = createPrReviewDispatch({
+			getHeadSha: () => HEAD_SHA,
+			getBaseRef: () => BASE_REF,
+			listChangedFiles: async () => ["src/a.ts"],
+			countDiffLines: async () => 42,
+			gatherDiff: async () => "mock diff",
+		});
+		const input = createInput(pi);
+
+		const result = await dispatch.dispatch(input);
+
+		expect(result.blocked).toBe(true);
+		expect(result.stamped).toBe(false);
+		expect(result.report).toBeNull();
+		expect(result.message).toContain(
+			"expected sandboxed orchestrator pr-reviewer routing",
+		);
+	});
+
 	it("respects an explicit base ref argument", async () => {
 		const pi = createMockPi();
 		const listChangedFiles = vi.fn().mockResolvedValue(["src/a.ts"]);

@@ -24,11 +24,11 @@ gate that blocks unsafe publishing until changes are reviewed.
 
 - Gates `gh_safe` `push` / `pr_create` behind a PASS token: the hook vetoes
   publishing until the current HEAD has been reviewed
-- `/pr-review` runs a read-only headless child Pi review scoped to the PR diff
-  (default base ref `origin/master`); on PASS it stamps a token for that HEAD
+- `/pr-review` prepares the PR diff, then requests the sandboxed orchestrator
+  `pr-reviewer` category to review it; on PASS it stamps a token for that HEAD
 - The main agent remains the sole publisher; the gate only vetoes and steers
-- Child reviewer runs `--no-extensions` with read-only tools and safe validation
-  runners only (no `bash`, no mutating tools)
+- The reviewer runs in the configured Apple-container sandbox profile with broad
+  in-container tooling, while publishing and durable state mutation stay denied
 - On CRITICAL security findings the gate escalates for a human acknowledgement
 - `/pr-review` — Run a PR review for the current HEAD (optional base ref arg)
 - `/pr-review-status` — Show PR review state
@@ -48,7 +48,7 @@ PR gate (per publish):
   Agent calls gh_safe push / pr_create
     → tool_call hook vetoes (no PASS token) with a steer
     → agent runs /pr-review
-      → review executes (read-only headless child Pi)
+      → review runs via sandboxed orchestrator pr-reviewer
       → on PASS, token stamped; agent retries the push; hook allows
       → on ISSUES, agent fixes → lint-clean → re-review
       → on CRITICAL security, escalate for human ack
@@ -96,16 +96,18 @@ Create `.pi/linter.config.json` in your project root:
 ### Reviewer
 
 This bundle previously shipped an auto-triggering post-turn reviewer. It has
-been retired in favour of the PR gate (`/pr-review`), which is the supported
-review path. `/pr-review` runs the same read-only headless child Pi reviewer,
-scoped to a PR diff and gated to a PASS token before publishing. There is no
-separate reviewer configuration file; the PR reviewer uses built-in read-only
-tool and timeout defaults.
+been retired in favour of explicit `/pr-review` and governed Seeds closeout
+review requests. `/pr-review` prepares a PR diff, asks the sandboxed
+orchestrator `pr-reviewer` category to produce the `## Review Report`, and
+stamps a PASS token before publishing. There is no separate reviewer config
+file; PR review uses built-in diff limits and the active orchestrator category
+policy.
 
 ## Notes
 
-- The `/pr-review` child reviewer runs `--no-extensions` with read-only tools
-  and safe validation runners only (no `bash`, no mutating tools).
+- `/pr-review` uses the active `pr-reviewer` orchestrator category; if the
+  `orchestrate` tool is unavailable, the gate fails closed with an explicit
+  status message instead of spawning a host reviewer.
 - LSP diagnostics are optional and disabled by default. Enable via linter config.
 - Linter sidecar `full` recovery requires `--ack-context-cost` in parent
   sessions; in orchestrator/sub-agent sessions, linter `runtimeMode: "auto"`

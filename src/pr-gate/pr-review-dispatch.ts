@@ -1,5 +1,3 @@
-import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
@@ -17,7 +15,6 @@ import { decidePushGate } from "./gate-decision.js";
 import type { PassTokenStore } from "./pass-token-store.js";
 import { PR_REVIEW_CONFIG } from "./pr-review-config.js";
 import {
-	createReviewerExecution,
 	formatReportForDisplay,
 	type ReviewerExecution,
 	type ReviewerResult,
@@ -95,10 +92,21 @@ export function isLinterClean(ctx: ExtensionContext): boolean {
 	return true;
 }
 
-function getDefaultPromptsDir(): string {
-	const sourcePath = fileURLToPath(import.meta.url);
-	const packageRoot = path.resolve(path.dirname(sourcePath), "..", "..");
-	return path.join(packageRoot, "src", "pr-gate", "prompts");
+function missingReviewerExecution(): ReviewerExecution {
+	return {
+		async runAttempt(): Promise<ReviewerResult> {
+			const message =
+				"PR review gate: no reviewer execution bridge was configured; expected sandboxed orchestrator pr-reviewer routing.";
+			return {
+				report: null,
+				rawOutput: message,
+				exitCode: 1,
+				timedOut: false,
+				stderr: message,
+				command: "orchestrate category=pr-reviewer",
+			};
+		},
+	};
 }
 
 async function defaultListChangedFiles(
@@ -150,7 +158,7 @@ function truncateReviewDiagnostic(
 
 function formatUnparseableReviewerOutput(result: ReviewerResult): string {
 	const lines = [
-		"Reviewer child diagnostics:",
+		"Reviewer diagnostics:",
 		`- exitCode: ${result.exitCode}`,
 		`- timedOut: ${result.timedOut}`,
 	];
@@ -226,9 +234,7 @@ export function createPrReviewDispatch(
 		countDiffLines: countDiffLinesFast,
 		gatherDiff,
 		extractTask: extractOriginalTask,
-		reviewerExecution: createReviewerExecution({
-			getPromptsDir: getDefaultPromptsDir,
-		}),
+		reviewerExecution: missingReviewerExecution(),
 		...partialDeps,
 	};
 
