@@ -171,6 +171,27 @@ describe("push-gate-hook (tool_call interceptor for git_safe)", () => {
       expect(result?.block).toBe(true);
     });
 
+    it("passes the full tool input to HEAD resolution for cross-repo pushes", async () => {
+      const tokens = createPassTokenStore();
+      const seenInputs: unknown[] = [];
+      const pi = createMockPi();
+      registerPushGateHook(pi as never, {
+        tokens,
+        getHeadSha: (input) => {
+          seenInputs.push(input);
+          return "head123";
+        },
+      });
+      await fireHook(pi, {
+        toolName: GATED_TOOL,
+        toolCallId: "tc1",
+        input: { action: "push", cwd: "/repo/being-pushed" },
+      });
+      expect(seenInputs).toEqual([
+        expect.objectContaining({ cwd: "/repo/being-pushed" }),
+      ]);
+    });
+
     it("BLOCKS when token exists for a stale sha (new commit on HEAD)", async () => {
       const tokens = createPassTokenStore();
       tokens.stampPass({ sha: "old1234", passedAt: 1, reportStatus: "PASS" });

@@ -3,13 +3,13 @@ import type { ReviewConfig } from "../shared/review-config.js";
 /**
  * PR reviewer configuration.
  *
- * Differs from the turn-end reviewer in two important ways:
- *  1. The toolset is read-only + safe validation runners; bash is NOT allowed.
- *  2. The diff is scoped to a base ref (e.g. origin/master) instead of HEAD.
+ * Shared PR review limits and legacy tool policy.
  *
- * This config is used by the `/pr-review` dispatch path. The spawned child Pi
- * receives exactly these tools via `--tools`, so the reviewer cannot fall back
- * to arbitrary shell commands.
+ * The default `/pr-review` extension path no longer spawns a host child Pi;
+ * it routes through the active sandboxed orchestrator `pr-reviewer` category.
+ * These values still provide model/timeout/diff defaults, and the tool policy
+ * guards any tests or dependency-injected legacy reviewer execution from
+ * accidentally receiving publishing or durable-state mutation tools.
  */
 export const PR_REVIEW_CONFIG: ReviewConfig = {
 	model: "openai-codex/gpt-5.5",
