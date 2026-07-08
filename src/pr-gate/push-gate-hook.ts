@@ -33,8 +33,8 @@ export const DEFAULT_GATED_ACTIONS: ReadonlySet<string> = new Set([
 export interface PushGateHookDeps {
 	/** The PASS token store shared with the review-result observation path. */
 	tokens: PassTokenStore;
-	/** Returns the current HEAD sha. Empty string if unknown (fails closed). */
-	getHeadSha: () => string;
+	/** Returns the HEAD sha for the tool call target. Empty string if unknown (fails closed). */
+	getHeadSha: (input: ToolCallEventLike["input"]) => string;
 	/** Whether the gate is enabled. Default: always on. */
 	enabled?: () => boolean;
 	/** Override the set of actions to gate. Default: push + pr_create. */
@@ -99,7 +99,7 @@ export function registerPushGateHook(
 		// block. An empty/throwing getter must never allow a mutating action.
 		let headSha: string;
 		try {
-			headSha = deps.getHeadSha();
+			headSha = deps.getHeadSha(event.input ?? {});
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			return {

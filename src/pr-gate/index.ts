@@ -172,10 +172,13 @@ export default function prGateExtension(
 
 	registerPushGateHook(pi, {
 		tokens: state.tokens,
-		getHeadSha: () => {
-			// Best-effort; the hook fails closed on empty/throw.
+		getHeadSha: (input) => {
+			// Best-effort; the hook fails closed on empty/throw. Prefer the
+			// mutating tool call cwd so cross-repo pushes are reviewed/gated
+			// against the repo being published, not Pi's process cwd.
 			try {
-				return resolveHeadSha(process.cwd());
+				const cwd = typeof input.cwd === "string" ? input.cwd : process.cwd();
+				return resolveHeadSha(cwd);
 			} catch {
 				return "";
 			}
