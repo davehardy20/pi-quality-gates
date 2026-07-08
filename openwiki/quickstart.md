@@ -59,9 +59,9 @@ pi -e /Users/dave/tools/pi-quality-gates
 
 ### Linter config
 
-Create `.pi/linter.config.json` in your project root (JSONC — comments allowed):
+Create `.pi/linter.config.json` or `.opencode/linter.config.json` in your project root. These files are strict JSON, so comments and trailing commas are not accepted.
 
-```jsonc
+```json
 {
   "cooldownMs": 15000,
   "reportMode": "auto-follow-up",
