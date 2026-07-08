@@ -1,10 +1,12 @@
+<!-- markdownlint-disable MD013 MD032 -->
+
 # Post-Turn Linter
 
 Automatically runs lint checks on files modified during each agent turn. Supports markdownlint, Biome, Ruff, cppcheck, tflint, cargo clippy, and optional LSP diagnostics.
 
 ## Architecture overview
 
-```
+```text
 Extension API (src/linter/index.ts)
     └── Orchestrator (src/linter/orchestrator.ts) — lifecycle, events, commands, state
          └── Pipeline (src/linter/pipeline.ts) — config, adapter selection, execution, merging
@@ -92,8 +94,8 @@ If `config.enabled` is false, returns `clean` immediately.
 ## Config loading
 
 `src/linter/config-loader.ts`:
-- `loadLinterConfig(directory)` — reads `pi-quality-gates.json` (JSONC) from the directory; falls back to `DEFAULT_CONFIG`.
-- `parseJsoncConfig(configData)` — strips `//` and `/* */` comments and trailing commas via a hand-written state machine (no external JSONC library).
+- `loadLinterConfig(directory)` — reads strict JSON from `.pi/linter.config.json`, then `.opencode/linter.config.json`; falls back to `DEFAULT_CONFIG`. These files are parsed with `JSON.parse`, so comments and trailing commas are not accepted.
+- `parseJsoncConfig(configData)` — strips `//` and `/* */` comments and trailing commas for markdownlint config only.
 - `getLinterForFile(filePath, config)` — looks up linter definition by file extension.
 - `loadMarkdownlintConfig(directory)` — loads `.markdownlint.jsonc`/`.json` and merges over `DEFAULT_MARKDOWNLINT_CONFIG`.
 - `MAX_MODIFIED_FILES = 1000` — cap on tracked modified files.
