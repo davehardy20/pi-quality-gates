@@ -26,11 +26,15 @@ gate that blocks unsafe publishing until changes are reviewed.
   publishing until the current HEAD has been reviewed
 - `/pr-review` prepares the PR diff, then requests the sandboxed orchestrator
   `pr-reviewer` category to review it; on PASS it stamps a token for that HEAD
+- An agent-callable `pr_review` custom tool requests the same sandboxed review
+  autonomously (over the shared coordinator) without a human running `/pr-review`
 - The main agent remains the sole publisher; the gate only vetoes and steers
 - The reviewer runs in the configured Apple-container sandbox profile with broad
   in-container tooling, while publishing and durable state mutation stay denied
 - On CRITICAL security findings the gate escalates for a human acknowledgement
 - `/pr-review` — Run a PR review for the current HEAD (optional base ref arg)
+- `pr_review` (LLM tool) — Agent-callable review request; asynchronous kickoff,
+  same coordinator as `/pr-review`; never publishes
 - `/pr-review-status` — Show PR review state
 - `/pr-gate-status` — Show push gate state (enabled, gated actions, tokens)
 - `/pr-gate-toggle` — Enable or disable the push gate
@@ -47,7 +51,7 @@ Post-turn (per turn):
 PR gate (per publish):
   Agent calls gh_safe push / pr_create
     → tool_call hook vetoes (no PASS token) with a steer
-    → agent runs /pr-review
+    → agent runs /pr-review OR calls pr_review
       → review runs via sandboxed orchestrator pr-reviewer
       → on PASS, token stamped; agent retries the push; hook allows
       → on ISSUES, agent fixes → lint-clean → re-review

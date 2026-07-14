@@ -70,9 +70,11 @@ Files with 2-space indent (biome.json override):
 | `test/pr-gate-pr-review-config.test.ts` | Unit | Reviewer tool policy: no forbidden tools granted, bash blocked, specific safe tools present. Tests `assertPrReviewerToolPolicy()`. |
 | `test/pr-gate-pr-review-dispatch.test.ts` | Integration | Review dispatch flow: PASS stamping, missing/failed test execution blocking, ISSUES fix instruction, CRITICAL escalation, already-passed fast-path, HEAD resolution failure, linter-not-clean guard, no-files-changed guard, unparseable report, explicit base ref, re-review override. Uses dependency-injected mocks. |
 | `test/pr-gate-auto-review-trigger.test.ts` | Unit | Auto-review decision logic: all six gating conditions. Includes regression test for sticky guard (failed review must not loop). Captures `turn_end` handlers from mock `pi.on()`. |
-| `test/pr-gate-index-commands.test.ts` | Unit/integration | Extension entry point: slash command registration, status display, linter-clean precondition, UI status updates. Uses `createMockPi()`/`createMockContext()` factories. |
+| `test/pr-gate-index-commands.test.ts` | Unit/integration | Extension entry point: slash command + `pr_review` tool registration, status display, linter-clean precondition, UI status updates, command/tool coordinator parity. Uses `createMockPi()`/`createMockContext()` factories. |
 | `test/pr-gate-test-execution.test.ts` | Unit + integration | Project ecosystem detection, test command recommendation, plan formatting. Tests against real project root. Creates temp dirs with `go.mod`. |
 | `test/pr-review-dispatch.test.ts` | Integration | Single focused test: dispatch surfaces sidecar path on unparsable output. |
+| `test/review-coordinator.test.ts` | Unit | Shared coordinator eligibility/in-progress guard: disabled, unknown HEAD, dirty linter, already-passed, explicit base-ref re-review, in-progress dedup, PASS/escalation background messages, compact kickoff contract (no bulky content). |
+| `test/pr-review-tool.test.ts` | Unit | `pr_review` custom tool: contract exposure, kickoff/already-passed/base-ref/linter/HEAD/disabled/in-progress states, no bulky details, non-deadlocking async execute. |
 | `test/reviewer.test.ts` | Unit | Report parser: well-formed report, malformed test execution status, missing marker, case-insensitivity, embedded-in-large-output (500KB prefix). |
 
 ## Patterns for adding tests

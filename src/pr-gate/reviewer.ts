@@ -67,6 +67,11 @@ export interface ReviewerAttemptInput {
   /** Optional test-execution plan rendered into the task template. */
   testPlan?: string;
   signal?: AbortSignal;
+  /**
+   * Optional HEAD sha this review covers. The orchestrator bridge uses it to
+   * stamp the exact-HEAD PASS token directly from an observed report.
+   */
+  headSha?: string;
 }
 
 export interface ReviewerExecution {

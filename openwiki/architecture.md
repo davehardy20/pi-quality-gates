@@ -51,6 +51,8 @@ src/index.ts
 │    ├── src/pr-gate/pass-token-store.ts   ← in-memory tokens
 │    ├── src/pr-gate/pr-review-dispatch.ts ← review orchestration
 │    │    ├── src/pr-gate/orchestrator-reviewer-execution.ts ← default sandboxed reviewer bridge
+│    │    ├── src/pr-gate/review-coordinator.ts ← shared review-start coordinator (/pr-review + pr_review)
+│    │    ├── src/pr-gate/pr-review-tool.ts ← agent-callable pr_review custom tool
 │    │    └── src/pr-gate/reviewer.ts      ← legacy parser/test helpers
 │    ├── src/pr-gate/pr-review-config.ts   ← tool policy
 │    ├── src/pr-gate/auto-review-trigger.ts ← retired helper, not registered

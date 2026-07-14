@@ -177,7 +177,7 @@ function formatUnparseableReviewerOutput(result: ReviewerResult): string {
 	return lines.join("\n");
 }
 
-function getPassBlockingTestExecutionReason(
+export function getPassBlockingTestExecutionReason(
 	report: ReviewReport,
 ): string | null {
 	if (report.status !== "PASS") return null;
@@ -298,6 +298,7 @@ export function createPrReviewDispatch(
 			filterOptions,
 			diff,
 			testPlan,
+			headSha: deps.getHeadSha(cwd),
 		});
 	}
 

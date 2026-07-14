@@ -13,6 +13,22 @@ interface RegisteredCommand {
 	) => Promise<void> | void;
 }
 
+interface RegisteredTool {
+	name: string;
+	label: string;
+	description: string;
+	promptSnippet?: string;
+	promptGuidelines?: string[];
+	parameters: unknown;
+	execute: (
+		toolCallId: string,
+		params: unknown,
+		signal: AbortSignal | undefined,
+		onUpdate: unknown,
+		ctx: ExtensionContext,
+	) => Promise<unknown>;
+}
+
 interface SentMessage {
 	customType?: string;
 	content?: string;
@@ -23,22 +39,30 @@ interface SentMessage {
 function createMockPi(): {
 	pi: ExtensionAPI;
 	commands: Map<string, RegisteredCommand>;
+	tools: Map<string, RegisteredTool>;
 	messages: SentMessage[];
+	activeTools: string[];
 } {
 	const commands = new Map<string, RegisteredCommand>();
+	const tools = new Map<string, RegisteredTool>();
 	const messages: SentMessage[] = [];
+	const activeTools = ["orchestrate"];
 
 	const pi = {
 		registerCommand: (name: string, command: RegisteredCommand) => {
 			commands.set(name, command);
 		},
+		registerTool: (tool: RegisteredTool) => {
+			tools.set(tool.name, tool);
+		},
+		getActiveTools: () => activeTools,
 		sendMessage: (message: SentMessage) => {
 			messages.push(message);
 		},
 		on: vi.fn(),
 	} as unknown as ExtensionAPI;
 
-	return { pi, commands, messages };
+	return { pi, commands, tools, messages, activeTools };
 }
 
 function createMockContext(
@@ -74,6 +98,62 @@ describe("pr-gate command registration", () => {
 		expect(pi.on).not.toHaveBeenCalledWith("turn_end", expect.any(Function));
 	});
 
+	it("registers the agent-callable pr_review custom tool over the shared coordinator", () => {
+		const { pi, tools } = createMockPi();
+		prGateExtension(pi);
+
+		const tool = tools.get("pr_review");
+		expect(tool).toBeDefined();
+		expect(tool?.name).toBe("pr_review");
+		expect(tool?.promptSnippet).toContain("pr_review");
+		expect(tool?.promptGuidelines?.length).toBeGreaterThan(0);
+		expect(typeof tool?.execute).toBe("function");
+	});
+
+	it("/pr-review and pr_review share one coordinator (command kickoff then tool in-progress)", async () => {
+		const { pi, commands, tools } = createMockPi();
+		let resolveDispatch: (value: unknown) => void = () => {};
+		const dispatch = vi.fn(
+			() =>
+				new Promise((resolve) => {
+					resolveDispatch = resolve;
+				}),
+		);
+		prGateExtension(pi, {
+			resolveHeadSha: () => "shared HEAD",
+			createPrReviewDispatch: () => ({ dispatch }) as never,
+		});
+
+		const command = commands.get("pr-review");
+		expect(command).toBeDefined();
+		await command?.handler("", createMockContext());
+		expect(dispatch).toHaveBeenCalledTimes(1);
+
+		// The tool must observe the SAME in-progress guard: a tool kickoff now
+		// reports in-progress rather than starting a second review.
+		const tool = tools.get("pr_review");
+		const execResult = (await tool?.execute(
+			"t1",
+			{},
+			undefined,
+			undefined,
+			createMockContext(),
+		)) as {
+			details: { status: string };
+		};
+		expect(execResult.details.status).toBe("in-progress");
+		expect(dispatch).toHaveBeenCalledTimes(1);
+
+		resolveDispatch({
+			report: null,
+			stamped: true,
+			escalated: false,
+			blocked: false,
+			message: "ok",
+		});
+		await new Promise((r) => setTimeout(r, 0));
+	});
+
 	it("treats /pr-review status as a status alias, not a base ref", async () => {
 		const { pi, commands, messages } = createMockPi();
 		prGateExtension(pi);
@@ -100,6 +180,7 @@ describe("pr-gate command registration", () => {
 		);
 
 		prGateExtension(pi, {
+			resolveHeadSha: () => "abc123 HEAD_SHA_FIXTURE",
 			createPrReviewDispatch: () => ({ dispatch }) as never,
 		});
 

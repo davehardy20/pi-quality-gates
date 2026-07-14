@@ -28,16 +28,16 @@ import {
 	createPassTokenStore,
 	type PassTokenStore,
 } from "./pass-token-store.js";
-import {
-	createPrReviewDispatch,
-	isLinterClean,
-	type PrReviewDispatchInput,
-	type PrReviewDispatchResult,
-} from "./pr-review-dispatch.js";
+import { createPrReviewDispatch } from "./pr-review-dispatch.js";
+import { createPrReviewToolDefinition } from "./pr-review-tool.js";
 import {
 	DEFAULT_GATED_ACTIONS,
 	registerPushGateHook,
 } from "./push-gate-hook.js";
+import {
+	createReviewCoordinator,
+	type ReviewKickoffResult,
+} from "./review-coordinator.js";
 
 export interface PrGateConfig {
 	/** Whether the push gate is active. Default: true. */
@@ -123,13 +123,49 @@ export function stampPassFromReview(
 	return state.tokens.size > before;
 }
 
+interface ReviewerBridgeStatus {
+	pending: ReadonlyArray<{ requestId: string; headSha: string }>;
+	lastDiagnostic: {
+		at: number;
+		requestId: string | null;
+		headSha: string | null;
+		kind: string;
+		detail: string;
+	} | null;
+}
+
 function sendPrReviewStatus(
 	pi: ExtensionAPI,
 	state: PrGateState,
 	ctx: ExtensionContext,
+	reviewerBridge?: { getStatus: () => ReviewerBridgeStatus },
 ): void {
 	const headSha = resolveHeadSha(ctx.cwd);
 	const hasPass = headSha ? state.tokens.hasPass(headSha) : false;
+	const status = reviewerBridge?.getStatus();
+	const pendingLines: string[] = [];
+	if (status && status.pending.length > 0) {
+		pendingLines.push(
+			"Pending /pr-review requests:",
+			...status.pending.map(
+				(p) =>
+					`- ${p.requestId} (HEAD ${p.headSha.slice(0, 12) || "(unknown)"})`,
+			),
+		);
+	} else {
+		pendingLines.push("Pending /pr-review requests: none");
+	}
+	const diagnosticLines: string[] = [];
+	if (status?.lastDiagnostic) {
+		const d = status.lastDiagnostic;
+		diagnosticLines.push(
+			"Last reviewer observation:",
+			`- kind: ${d.kind}`,
+			`- HEAD: ${d.headSha?.slice(0, 12) || "(unknown)"}`,
+			`- request: ${d.requestId ?? "(none)"}`,
+			`- detail: ${d.detail}`,
+		);
+	}
 	pi.sendMessage({
 		customType: "pr-review-status",
 		content: [
@@ -137,6 +173,8 @@ function sendPrReviewStatus(
 			`HEAD sha: ${headSha || "(unknown)"}`,
 			`HEAD has PASS: ${hasPass}`,
 			`Total PASS tokens: ${state.tokens.size}`,
+			...pendingLines,
+			...diagnosticLines,
 			state.config.enabled
 				? "Run /pr-review to request a PASS token for the current HEAD."
 				: "Reviews are not required while the gate is disabled.",
@@ -147,21 +185,16 @@ function sendPrReviewStatus(
 			hasPass,
 			enabled: state.config.enabled,
 			tokenCount: state.tokens.size,
+			pendingRequests: status?.pending ?? [],
+			lastDiagnostic: status?.lastDiagnostic ?? null,
 		},
 	});
 }
 
-function safeSetPrReviewStatus(
-	ctx: ExtensionContext,
-	text: string | undefined,
-): void {
-	if (ctx.hasUI) {
-		ctx.ui.setStatus("pr-review", text);
-	}
-}
-
 export interface PrGateExtensionDeps {
 	createPrReviewDispatch?: typeof createPrReviewDispatch;
+	/** Override HEAD sha resolution (tests inject a fake without spawning git). */
+	resolveHeadSha?: (cwd: string) => string;
 }
 
 export default function prGateExtension(
@@ -169,6 +202,7 @@ export default function prGateExtension(
 	deps: PrGateExtensionDeps = {},
 ): void {
 	const state = createPrGateState();
+	const resolveHead = deps.resolveHeadSha ?? resolveHeadSha;
 
 	registerPushGateHook(pi, {
 		tokens: state.tokens,
@@ -178,7 +212,7 @@ export default function prGateExtension(
 			// against the repo being published, not Pi's process cwd.
 			try {
 				const cwd = typeof input.cwd === "string" ? input.cwd : process.cwd();
-				return resolveHeadSha(cwd);
+				return resolveHead(cwd);
 			} catch {
 				return "";
 			}
@@ -187,108 +221,55 @@ export default function prGateExtension(
 		gatedActions: () => state.config.gatedActions,
 	});
 
-	const orchestratorReviewer = createOrchestratorReviewerExecution(pi);
+	const orchestratorReviewer = createOrchestratorReviewerExecution(pi, {
+		tokens: state.tokens,
+		resolveHeadSha: () => resolveHead(process.cwd()),
+	});
 	pi.on("tool_result", (event) => {
 		orchestratorReviewer.handleToolResult(event);
 	});
 
 	const createDispatch = deps.createPrReviewDispatch ?? createPrReviewDispatch;
 	const dispatch = createDispatch({
-		getHeadSha: resolveHeadSha,
+		getHeadSha: resolveHead,
 		...(deps.createPrReviewDispatch
 			? {}
 			: { reviewerExecution: orchestratorReviewer.reviewerExecution }),
 	});
-	let reviewInProgress = false;
-	function runReviewForHead(args: {
-		pi: ExtensionAPI;
-		ctx: ExtensionContext;
-		dispatch: {
-			dispatch: (
-				input: PrReviewDispatchInput,
-			) => Promise<PrReviewDispatchResult>;
-		};
-		state: PrGateState;
-		baseRef?: string;
-		headSha: string;
-		getInProgress: () => boolean;
-		setInProgress: (v: boolean) => void;
-	}): void {
-		const { pi, ctx, dispatch, state, baseRef, headSha } = args;
-		args.setInProgress(true);
-		safeSetPrReviewStatus(
-			ctx,
-			`PR review: running ${headSha.slice(0, 8) || "unknown"}`,
-		);
+
+	// Shared review coordinator — the single seam used by BOTH the human
+	// `/pr-review` command and the agent-callable `pr_review` custom tool.
+	// One dispatch instance, one in-progress guard, one token store, one set
+	// of eligibility checks. See src/pr-gate/review-coordinator.ts.
+	const coordinator = createReviewCoordinator({
+		pi,
+		resolveHeadSha: resolveHead,
+		dispatch,
+	});
+
+	// Agent-callable custom tool over the SAME coordinator/state. Registered
+	// once so the LLM can request the gate-compatible review autonomously.
+	pi.registerTool(
+		createPrReviewToolDefinition({
+			coordinator,
+			state,
+		}),
+	);
+
+	function sendKickoffMessage(result: ReviewKickoffResult): void {
 		pi.sendMessage({
 			customType: "pr-review-status",
-			content: `PR review started for HEAD ${headSha}${baseRef ? ` against ${baseRef}` : ""}. This runs in the background and may take several minutes.`,
+			content: result.message,
 			display: true,
 			details: {
-				headSha,
-				baseRef: baseRef ?? null,
-				enabled: state.config.enabled,
-				tokenCount: state.tokens.size,
-				status: "running",
+				headSha: result.headSha,
+				baseRef: result.baseRef ?? null,
+				status: result.status,
+				started: result.started,
+				enabled: result.gateEnabled,
+				tokenCount: result.tokenCount,
 			},
 		});
-		void (async () => {
-			try {
-				const result: PrReviewDispatchResult = await dispatch.dispatch({
-					ctx,
-					state,
-					pi,
-					baseRef,
-				});
-				const statusText = result.stamped
-					? `PR review: PASS ${headSha.slice(0, 8)}`
-					: result.escalated
-						? `PR review: escalation ${headSha.slice(0, 8)}`
-						: result.blocked
-							? `PR review: blocked ${headSha.slice(0, 8)}`
-							: `PR review: complete ${headSha.slice(0, 8)}`;
-				safeSetPrReviewStatus(ctx, statusText);
-				pi.sendMessage({
-					customType: result.escalated
-						? "pr-review-escalation"
-						: result.stamped
-							? "pr-review-pass"
-							: "pr-review-status",
-					content: result.message,
-					display: true,
-					details: {
-						headSha,
-						stamped: result.stamped,
-						escalated: result.escalated,
-						blocked: result.blocked,
-						verdict: result.report?.status ?? null,
-						confidence: result.report?.confidence ?? null,
-						enabled: state.config.enabled,
-						tokenCount: state.tokens.size,
-					},
-				});
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				safeSetPrReviewStatus(
-					ctx,
-					`PR review: failed ${headSha.slice(0, 8) || "unknown"}`,
-				);
-				pi.sendMessage({
-					customType: "pr-review-status",
-					content: `PR review gate: review failed — ${message}`,
-					display: true,
-					details: {
-						headSha,
-						baseRef: baseRef ?? null,
-						enabled: state.config.enabled,
-						tokenCount: state.tokens.size,
-						error: message,
-					},
-				});
-			} finally {
-				args.setInProgress(false);
-			}
-		})();
 	}
 
 	pi.registerCommand("pr-review", {
@@ -297,84 +278,18 @@ export default function prGateExtension(
 		handler: async (args, ctx: ExtensionContext) => {
 			const rawArgs = (args ?? "").trim();
 			if (rawArgs === "status" || rawArgs === "--status") {
-				sendPrReviewStatus(pi, state, ctx);
+				sendPrReviewStatus(pi, state, ctx, orchestratorReviewer);
 				return;
 			}
 
 			const baseRef = rawArgs || undefined;
-			const headSha = resolveHeadSha(ctx.cwd);
-			const hasPass = headSha ? state.tokens.hasPass(headSha) : false;
-
-			if (!state.config.enabled) {
-				pi.sendMessage({
-					customType: "pr-review-status",
-					content: "PR gate is disabled. Reviews are not required.",
-					display: true,
-				});
-				return;
-			}
-
-			if (hasPass && !baseRef) {
-				pi.sendMessage({
-					customType: "pr-review-status",
-					content: `PR gate: HEAD ${headSha} already has a PASS token. Push/pr_create will be allowed.`,
-					display: true,
-					details: {
-						headSha,
-						hasPass: true,
-						verdict: "allow",
-						enabled: state.config.enabled,
-						tokenCount: state.tokens.size,
-					},
-				});
-				return;
-			}
-
-			if (reviewInProgress) {
-				pi.sendMessage({
-					customType: "pr-review-status",
-					content:
-						"PR review is already running. Wait for the current review to finish before starting another.",
-					display: true,
-					details: {
-						headSha,
-						baseRef: baseRef ?? null,
-						enabled: state.config.enabled,
-						tokenCount: state.tokens.size,
-						status: "running",
-					},
-				});
-				return;
-			}
-
-			if (!isLinterClean(ctx)) {
-				pi.sendMessage({
-					customType: "pr-review-status",
-					content:
-						"PR review gate: post-turn linter is not clean. Run /post-turn-linter-run on the changed files and wait for a clean status before running /pr-review.",
-					display: true,
-					details: {
-						headSha,
-						enabled: state.config.enabled,
-						tokenCount: state.tokens.size,
-						linterClean: false,
-					},
-				});
-				return;
-			}
-
-			void runReviewForHead({
-				pi,
+			const result = coordinator.startReview({
 				ctx,
-				dispatch,
 				state,
 				baseRef,
-				headSha,
-				getInProgress: () => reviewInProgress,
-				setInProgress: (v) => {
-					reviewInProgress = v;
-				},
+				origin: "command",
 			});
+			sendKickoffMessage(result);
 		},
 	});
 
@@ -382,14 +297,14 @@ export default function prGateExtension(
 		description:
 			"Show PR review gate status without running a review or treating status as a base ref.",
 		handler: async (_args, ctx: ExtensionContext) => {
-			sendPrReviewStatus(pi, state, ctx);
+			sendPrReviewStatus(pi, state, ctx, orchestratorReviewer);
 		},
 	});
 
 	pi.registerCommand("pr-gate-status", {
 		description: "Show PR review gate state: enabled, HEAD sha, PASS tokens.",
 		handler: async (_args, ctx: ExtensionContext) => {
-			const headSha = resolveHeadSha(ctx.cwd);
+			const headSha = resolveHead(ctx.cwd);
 			pi.sendMessage({
 				customType: "pr-gate-status",
 				content: [
@@ -408,7 +323,7 @@ export default function prGateExtension(
 		description:
 			"Simulate a git_safe push tool_call to verify the gate blocks without a PASS token.",
 		handler: async (_args, ctx: ExtensionContext) => {
-			const headSha = resolveHeadSha(ctx.cwd);
+			const headSha = resolveHead(ctx.cwd);
 
 			if (!state.config.enabled) {
 				pi.sendMessage({
