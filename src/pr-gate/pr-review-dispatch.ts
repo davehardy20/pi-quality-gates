@@ -252,6 +252,7 @@ export function createPrReviewDispatch(
 
 	async function runPrReview(
 		input: PrReviewDispatchInput,
+		reviewedHeadSha: string,
 	): Promise<ReviewerResult> {
 		const { ctx, baseRef: explicitBaseRef } = input;
 		const cwd = ctx.cwd;
@@ -294,6 +295,13 @@ export function createPrReviewDispatch(
 			recommendTestCommands(changedFiles, cwd),
 		);
 
+		const currentHeadSha = deps.getHeadSha(cwd);
+		if (currentHeadSha !== reviewedHeadSha) {
+			throw new Error(
+				`HEAD changed while preparing PR review (${reviewedHeadSha} → ${currentHeadSha || "unknown"}). Re-run /pr-review.`,
+			);
+		}
+
 		return deps.reviewerExecution.runAttempt({
 			task,
 			files: changedFiles,
@@ -302,7 +310,7 @@ export function createPrReviewDispatch(
 			filterOptions,
 			diff,
 			testPlan,
-			headSha: deps.getHeadSha(cwd),
+			headSha: reviewedHeadSha,
 		});
 	}
 
@@ -345,7 +353,17 @@ export function createPrReviewDispatch(
 		}
 
 		try {
-			const childOutput = await runPrReview(input);
+			const childOutput = await runPrReview(input, headSha);
+			const currentHeadSha = deps.getHeadSha(ctx.cwd);
+			if (currentHeadSha !== headSha) {
+				return {
+					report: childOutput.report,
+					stamped: false,
+					escalated: false,
+					blocked: true,
+					message: `PR review gate: HEAD changed during review (${headSha} → ${currentHeadSha || "unknown"}). The result was not applied; re-run /pr-review for the current HEAD.`,
+				};
+			}
 			const report = childOutput.report;
 
 			if (!report) {
