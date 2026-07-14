@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
@@ -177,7 +178,7 @@ function formatUnparseableReviewerOutput(result: ReviewerResult): string {
 	return lines.join("\n");
 }
 
-function getPassBlockingTestExecutionReason(
+export function getPassBlockingTestExecutionReason(
 	report: ReviewReport,
 ): string | null {
 	if (report.status !== "PASS") return null;
@@ -190,22 +191,28 @@ function getPassBlockingTestExecutionReason(
 	return null;
 }
 
-function defaultGetBaseRef(cwd: string): string {
-	// Prefer the repo's default upstream branch if available.
+type GitRefVerifier = (cwd: string, ref: string) => boolean;
+
+function verifyGitRef(cwd: string, ref: string): boolean {
+	try {
+		execFileSync("git", ["rev-parse", "--verify", ref], {
+			cwd,
+			stdio: ["ignore", "ignore", "ignore"],
+		});
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+export function resolveDefaultBaseRef(
+	cwd: string,
+	verifyRef: GitRefVerifier = verifyGitRef,
+): string {
 	const candidates = ["origin/master", "origin/main", "master", "main"];
 	for (const ref of candidates) {
-		try {
-			const { execSync } = require("node:child_process");
-			execSync(`git rev-parse --verify ${ref}`, {
-				cwd,
-				stdio: ["ignore", "ignore", "ignore"],
-			});
-			return ref;
-		} catch {
-			// try next candidate
-		}
+		if (verifyRef(cwd, ref)) return ref;
 	}
-	// Fallback: compare against HEAD's first parent if nothing else works.
 	return "HEAD~1";
 }
 
@@ -216,20 +223,17 @@ export function createPrReviewDispatch(
 } {
 	const deps: PrReviewDispatchDeps = {
 		getHeadSha: (cwd: string) => {
-			const { execSync } = require("node:child_process");
 			try {
-				return execSync("git rev-parse HEAD", {
+				return execFileSync("git", ["rev-parse", "HEAD"], {
 					cwd,
 					encoding: "utf8",
 					stdio: ["ignore", "pipe", "ignore"],
-				})
-					.toString()
-					.trim();
+				}).trim();
 			} catch {
 				return "";
 			}
 		},
-		getBaseRef: defaultGetBaseRef,
+		getBaseRef: resolveDefaultBaseRef,
 		listChangedFiles: defaultListChangedFiles,
 		countDiffLines: countDiffLinesFast,
 		gatherDiff,
@@ -248,6 +252,7 @@ export function createPrReviewDispatch(
 
 	async function runPrReview(
 		input: PrReviewDispatchInput,
+		reviewedHeadSha: string,
 	): Promise<ReviewerResult> {
 		const { ctx, baseRef: explicitBaseRef } = input;
 		const cwd = ctx.cwd;
@@ -290,6 +295,13 @@ export function createPrReviewDispatch(
 			recommendTestCommands(changedFiles, cwd),
 		);
 
+		const currentHeadSha = deps.getHeadSha(cwd);
+		if (currentHeadSha !== reviewedHeadSha) {
+			throw new Error(
+				`HEAD changed while preparing PR review (${reviewedHeadSha} → ${currentHeadSha || "unknown"}). Re-run /pr-review.`,
+			);
+		}
+
 		return deps.reviewerExecution.runAttempt({
 			task,
 			files: changedFiles,
@@ -298,6 +310,7 @@ export function createPrReviewDispatch(
 			filterOptions,
 			diff,
 			testPlan,
+			headSha: reviewedHeadSha,
 		});
 	}
 
@@ -340,7 +353,17 @@ export function createPrReviewDispatch(
 		}
 
 		try {
-			const childOutput = await runPrReview(input);
+			const childOutput = await runPrReview(input, headSha);
+			const currentHeadSha = deps.getHeadSha(ctx.cwd);
+			if (currentHeadSha !== headSha) {
+				return {
+					report: childOutput.report,
+					stamped: false,
+					escalated: false,
+					blocked: true,
+					message: `PR review gate: HEAD changed during review (${headSha} → ${currentHeadSha || "unknown"}). The result was not applied; re-run /pr-review for the current HEAD.`,
+				};
+			}
 			const report = childOutput.report;
 
 			if (!report) {

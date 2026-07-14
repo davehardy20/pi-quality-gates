@@ -2,7 +2,7 @@
 
 # PR Gate
 
-Gates `git_safe push` / `gh_safe pr_create` behind a **PASS token**. The hook vetoes publishing until the current HEAD has been reviewed. `/pr-review` runs an explicit PR review scoped to the PR diff; on PASS it stamps a token for that HEAD.
+Gates `git_safe push` / `gh_safe pr_create` behind a **PASS token**. The hook vetoes publishing until the current HEAD has been reviewed. A review is requested two ways, both over the **same shared coordinator**: the human `/pr-review` command, or the agent-callable `pr_review` custom tool. On PASS it stamps a token for that HEAD.
 
 ## Architecture overview
 
@@ -227,13 +227,58 @@ The 7 review domains (source: `src/shared/review-checklist.md`):
 
 Registered in `src/pr-gate/index.ts`:
 
-| Command | Behavior |
+| Command / Tool | Behavior |
 |---|---|
 | `/pr-review [baseRef]` | Run PR review for current HEAD. Optional base ref arg. `status` subcommand shows state. |
 | `/pr-review-status` | Show PR review state |
 | `/pr-gate-status` | Show push gate state (enabled, gated actions, tokens) |
 | `/pr-gate-toggle [on\|off]` | Enable or disable push gate |
 | `/pr-gate-test-block` | Simulate hook decision without actually pushing |
+| `pr_review` (LLM tool) | Agent-callable custom tool that requests the same sandboxed review as `/pr-review` over the shared coordinator. Asynchronous kickoff; returns compact structured state. |
+
+## Agent-callable `pr_review` tool
+
+> The full agent's-perspective runbook — kickoff states, the end-to-end loop,
+> and the consolidated safety contract — lives in
+> [Agent-Driven Review Workflow](agent-review-workflow.md). The mechanism
+> details below remain the canonical reference for this file.
+
+`src/pr-gate/pr-review-tool.ts` defines a Pi custom tool named `pr_review`,
+registered once from `src/pr-gate/index.ts` via `pi.registerTool(...)`. It lets
+an autonomous agent request the gate-compatible review without a human running
+`/pr-review`.
+
+**Shared coordinator (single source of truth).** Both `/pr-review` and
+`pr_review` go through `createReviewCoordinator()` in
+`src/pr-gate/review-coordinator.ts` — one dispatch instance, one in-progress
+ guard, one exact-HEAD token store, and one set of eligibility checks. There is
+no second review or stamping path.
+
+**Asynchronous by design.** The tool's `execute` runs the synchronous
+eligibility checks and kicks off the background dispatch, then returns compact
+kickoff state. It does NOT await the later `orchestrate` tool result — that
+follow-up tool call cannot run until the current tool batch completes, so
+awaiting would deadlock. The existing matching `tool_result` handler in
+`orchestrator-reviewer-execution.ts` resumes the dispatch, parses the sandbox
+report, and stamps a PASS token only for the exact reviewed HEAD.
+
+**Kickoff states** (`ReviewKickoffStatus`): `started` | `already-passed` |
+`in-progress` | `blocked` | `disabled`. The result carries only status,
+identifying state (head sha, base ref), and a concise message — never bulky
+report/diff/findings content (kept behind the dispatch result + sidecar
+hygiene).
+
+**Actor separation (firm).** `pr_review` and the coordinator NEVER call
+`git_safe`, `gh_safe`, push, `pr_create`, update, or merge. They only request a
+review and stamp gate state. The main agent remains the sole publisher through
+the gated safe tools; the push gate stays fail-closed until the exact HEAD has
+a PASS token. An agent that calls `pr_review` and a publishing tool in the same
+parallel batch cannot bypass the gate — publication remains blocked until a
+completed PASS is visible on the exact HEAD.
+
+**Explicit base ref.** Supplying `baseRef` is treated consistently in both
+wrappers as an intentional re-review: it bypasses the `already-passed` early
+return even when the HEAD already has a token.
 
 ## Change-entrypoints
 
@@ -249,6 +294,8 @@ Registered in `src/pr-gate/index.ts`:
 | Base ref fallback chain | `src/pr-gate/pr-review-dispatch.ts` → `resolveBaseRef` | Ordered: origin/master → origin/main → master → main → HEAD~1 |
 | Auto-review guards | `src/pr-gate/auto-review-trigger.ts` → `decideAutoReview` | Sticky `lastReviewedSha` prevents loops |
 | Test execution recommendations | `src/pr-gate/test-execution.ts` | All via `container_safe` |
+| Agent review kickoff logic | `src/pr-gate/review-coordinator.ts` → `createReviewCoordinator` | Shared by `/pr-review` and `pr_review`; keep parity |
+| `pr_review` tool contract | `src/pr-gate/pr-review-tool.ts` | Tool stays async; never publishes |
 
 ## Invariants
 
@@ -262,6 +309,10 @@ Registered in `src/pr-gate/index.ts`:
 8. No persistence — session reload clears all tokens.
 9. Auto-review sticky guard: once attempted, same HEAD not auto-attempted again.
 10. Child reviewer has **no bash**, no mutating tools.
+11. `/pr-review` and `pr_review` share one coordinator, one in-progress guard, one dispatch instance, and one exact-HEAD token store — no duplicate review or stamping path.
+12. `pr_review` is asynchronous: `execute` only kicks off the background dispatch and returns compact state; it never awaits the follow-up `orchestrate` result (no deadlock).
+13. `pr_review` and the coordinator **never publish** — no `git_safe`/`gh_safe` push/pr_create/update/merge. The push gate stays fail-closed until the exact HEAD has a PASS token, so a parallel `pr_review` + publish batch cannot bypass it.
+14. An explicit `baseRef` is an intentional re-review in both wrappers (bypasses the `already-passed` early return).
 
 ## Common failure modes
 
@@ -285,7 +336,7 @@ Registered in `src/pr-gate/index.ts`:
 
 | File | Purpose |
 |---|---|
-| `src/pr-gate/index.ts` | Extension entry point, command registration, state factory |
+| `src/pr-gate/index.ts` | Extension entry point, command + tool registration, state factory |
 | `src/pr-gate/gate-decision.ts` | Pure decision core (`decidePushGate`) |
 | `src/pr-gate/push-gate-hook.ts` | `tool_call` interceptor (veto-only) |
 | `src/pr-gate/pass-token-store.ts` | In-memory PASS token store |
@@ -295,6 +346,8 @@ Registered in `src/pr-gate/index.ts`:
 | `src/pr-gate/auto-review-trigger.ts` | Linter-clean → auto-review bridge |
 | `src/pr-gate/reviewer-skip.ts` | `.pi/reviewer.skip` parser |
 | `src/pr-gate/test-execution.ts` | Ecosystem detection and test command recommendation |
+| `src/pr-gate/review-coordinator.ts` | Shared review-start coordinator (`/pr-review` + `pr_review`) |
+| `src/pr-gate/pr-review-tool.ts` | Agent-callable `pr_review` custom tool definition |
 | `src/pr-gate/prompts/system.md` | Reviewer system prompt |
 | `src/pr-gate/prompts/task-template.md` | Reviewer task template |
 | `src/pr-gate/prompts/pr-reviewer-system.md` | PR-specific system prompt variant |

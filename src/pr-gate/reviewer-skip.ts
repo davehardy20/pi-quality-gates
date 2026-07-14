@@ -8,14 +8,10 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { Ignore } from "ignore";
+import ignoreModule, { type Ignore } from "ignore";
 
-// The `ignore` ESM default export is the factory function, but TypeScript's
-// bundled types don't model the default correctly. Import as any and cast.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const _ignoreModule: { default: (opts?: { ignoreCase?: boolean }) => Ignore } =
-	require("ignore") as { default: (opts?: { ignoreCase?: boolean }) => Ignore };
-const createIgnore = _ignoreModule.default ?? _ignoreModule;
+type IgnoreFactory = (opts?: { ignoreCase?: boolean }) => Ignore;
+const createIgnore = ignoreModule as unknown as IgnoreFactory;
 
 // ── Types ──────────────────────────────────────────────────────────────
 

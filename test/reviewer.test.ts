@@ -110,6 +110,39 @@ describe("parseReviewReport", () => {
 		expect(report?.status).toBe("PASS");
 		expect(report?.confidence).toBe("LOW");
 	});
+
+	it("tolerates preamble/chatter before ## Review Report (orchestrated child output)", () => {
+		const output = [
+			"Sure, here is my review of this change.",
+			"",
+			"I checked the diff and ran the tests.",
+			"",
+			"## Review Report",
+			"STATUS: PASS",
+			"CONFIDENCE: HIGH",
+			"",
+			"### Findings",
+			"None.",
+			"",
+			"### What was verified",
+			"- No blocking findings",
+			"",
+			"### What could not be verified",
+			"None.",
+			"",
+			"### Test execution",
+			"- **Status:** PASS",
+			"- **Summary:** run_typecheck passed",
+			"",
+			"### Summary",
+			"Final summary: PASS",
+		].join("\n");
+		const report = parseReviewReport(output);
+		expect(report).not.toBeNull();
+		expect(report?.status).toBe("PASS");
+		expect(report?.testExecution?.status).toBe("PASS");
+		expect(report?.summary).toBe("Final summary: PASS");
+	});
 });
 
 describe("createReviewerExecution model fallback", () => {

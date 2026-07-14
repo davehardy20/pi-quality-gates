@@ -5,7 +5,7 @@
 `@davehardy20/pi-quality-gates` is a Pi extension package that adds two quality gates to an agent workflow:
 
 1. **Post-Turn Linter** — automatically lints files modified during each agent turn.
-2. **PR Gate** — blocks `git_safe push` / `gh_safe pr_create` until current HEAD has a PASS review token.
+2. **PR Gate** — blocks `git_safe push` / `gh_safe pr_create` until current HEAD has a PASS review token. A review can be requested via the `/pr-review` command (human) or the agent-callable `pr_review` custom tool; both share one coordinator.
 
 ## What it does
 
@@ -52,6 +52,8 @@ pi -e /Users/dave/tools/pi-quality-gates
 | `/pr-gate-status` | PR Gate | Show push gate state (enabled, gated actions, tokens) |
 | `/pr-gate-toggle [on\|off]` | PR Gate | Enable or disable the push gate |
 | `/quality-gates-status` | Both | Show package identity and debug info |
+
+> In addition to slash commands, the package registers an **agent-callable `pr_review` custom tool** (LLM-callable) that requests the same sandboxed review as `/pr-review` over the shared coordinator. It is asynchronous (kickoff + background completion) and never publishes. See [PR Gate](pr-gate.md) and the [Agent-Driven Review Workflow](agent-review-workflow.md).
 
 > Source: command registration in `src/index.ts`, `src/linter/orchestrator.ts` (`registerCommands`), and `src/pr-gate/index.ts`.
 
@@ -115,6 +117,7 @@ There is no `lint` script in `package.json`. Formatting/linting is via Biome (co
 - [Architecture](architecture.md) — Extension model, module dependency graph, shared modules, how the two subsystems interact.
 - [Post-Turn Linter](linter.md) — Lifecycle, pipeline/adapter model, orchestrator state machine, report hygiene, LSP integration, change-entrypoints, invariants, safe-edit guidance.
 - [PR Gate](pr-gate.md) — PASS token flow, gate decision logic, push gate hook, child Pi reviewer dispatch, auto-review trigger, test execution plan, change-entrypoints, invariants, safe-edit guidance.
+- [Agent-Driven Review Workflow](agent-review-workflow.md) — How the agent calls `pr_review`, kickoff states, the end-to-end loop, and the retained safety boundaries (actor separation, fail-closed gate, exact-HEAD PASS, reviewer tool policy).
 - [Testing](testing.md) — Test patterns, conventions, commands, and source maps.
 
 ## Key facts for agents
