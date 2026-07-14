@@ -136,7 +136,7 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 		].join("\n");
 	}
 
-	it("stamps the exact-HEAD PASS token even when the request id is not echoed in input (single pending)", async () => {
+	it("refuses an uncorrelated PASS even when exactly one review is pending", async () => {
 		const tokens = createPassTokenStore();
 		const headSha = "afc61f83e4b7b450284cdaee1d50c2e055f38b58";
 		const sendUserMessage = vi.fn();
@@ -148,20 +148,29 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 		const pendingResult = bridge.reviewerExecution.runAttempt(
 			makeAttemptInput(headSha),
 		);
-		expect(bridge.pendingCount()).toBe(1);
+		const requestId = String(sendUserMessage.mock.calls[0][0]).match(
+			/PR_REVIEW_REQUEST_ID: (pr-review-[^\n]+)/,
+		)?.[1];
+		expect(requestId).toBeDefined();
 
-		// NOTE: input does NOT contain the request id — this is the regression.
-		const handled = bridge.handleToolResult({
+		const uncorrelated = bridge.handleToolResult({
 			toolName: "orchestrate",
 			input: { category: "pr-reviewer" },
 			content: [{ type: "text", text: passReportWithPreamble() }],
 			isError: false,
 		});
+		expect(uncorrelated).toBe(false);
+		expect(tokens.hasPass(headSha)).toBe(false);
+		expect(bridge.pendingCount()).toBe(1);
 
-		expect(handled).toBe(true);
-		const result = await pendingResult;
-		expect(result.report?.status).toBe("PASS");
-		// Core reliability assertion: token stamped for the exact HEAD.
+		const correlated = bridge.handleToolResult({
+			toolName: "orchestrate",
+			input: { category: "pr-reviewer", task: `Request ${requestId}` },
+			content: [{ type: "text", text: passReportWithPreamble() }],
+			isError: false,
+		});
+		expect(correlated).toBe(true);
+		await pendingResult;
 		expect(tokens.hasPass(headSha)).toBe(true);
 		expect(bridge.pendingCount()).toBe(0);
 	});
@@ -200,16 +209,13 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 		expect(tokens.hasPass(headSha)).toBe(true);
 	});
 
-	it("stamps the exact-HEAD PASS from resolveHeadSha even when no pending review matches", () => {
+	it("does not stamp an uncorrelated PASS when no review request is known", () => {
 		const tokens = createPassTokenStore();
 		const headSha = "cafef00d".repeat(5);
-		const sendUserMessage = vi.fn();
 		const bridge = createOrchestratorReviewerExecution(
-			{ getActiveTools: () => ["orchestrate"], sendUserMessage },
+			{ getActiveTools: () => ["orchestrate"], sendUserMessage: vi.fn() },
 			{ tokens, resolveHeadSha: () => headSha },
 		);
-		// No pending review at all (e.g. child result arrived after timeout/retry).
-		expect(bridge.pendingCount()).toBe(0);
 
 		const handled = bridge.handleToolResult({
 			toolName: "orchestrate",
@@ -218,10 +224,47 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 			isError: false,
 		});
 
-		// Nothing to resolve, but the PASS is still stamped for the current HEAD.
 		expect(handled).toBe(false);
-		expect(tokens.hasPass(headSha)).toBe(true);
-		expect(bridge.getStatus().lastDiagnostic?.kind).toBe("parsed-pass");
+		expect(tokens.hasPass(headSha)).toBe(false);
+		expect(bridge.getStatus().lastDiagnostic?.detail).toContain(
+			"token NOT stamped",
+		);
+	});
+
+	it("stamps a late PASS only when it echoes a known timed-out request id", async () => {
+		vi.useFakeTimers();
+		try {
+			const tokens = createPassTokenStore();
+			const headSha = "faceb00c".repeat(5);
+			const sendUserMessage = vi.fn();
+			const bridge = createOrchestratorReviewerExecution(
+				{ getActiveTools: () => ["orchestrate"], sendUserMessage },
+				{ tokens, resolveHeadSha: () => "different-current-head" },
+			);
+			const input = makeAttemptInput(headSha);
+			input.config = { ...input.config, timeoutMs: 10 };
+			const pending = bridge.reviewerExecution.runAttempt(input);
+			const requestId = String(sendUserMessage.mock.calls[0][0]).match(
+				/PR_REVIEW_REQUEST_ID: (pr-review-[^\n]+)/,
+			)?.[1];
+			expect(requestId).toBeDefined();
+
+			await vi.advanceTimersByTimeAsync(10);
+			expect((await pending).timedOut).toBe(true);
+			expect(bridge.pendingCount()).toBe(0);
+
+			const handled = bridge.handleToolResult({
+				toolName: "orchestrate",
+				input: { category: "pr-reviewer", task: `Request ${requestId}` },
+				content: [{ type: "text", text: passReportWithPreamble() }],
+				isError: false,
+			});
+			expect(handled).toBe(false);
+			expect(tokens.hasPass(headSha)).toBe(true);
+			expect(tokens.hasPass("different-current-head")).toBe(false);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it("does NOT stamp a token for an ISSUES report", () => {
@@ -349,7 +392,10 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 		// Resolve so the timer doesn't keep the test alive.
 		bridge.handleToolResult({
 			toolName: "orchestrate",
-			input: { category: "pr-reviewer" },
+			input: {
+				category: "pr-reviewer",
+				task: `Request ${status.pending[0]?.requestId}`,
+			},
 			content: [{ type: "text", text: passReportWithPreamble() }],
 			isError: false,
 		});

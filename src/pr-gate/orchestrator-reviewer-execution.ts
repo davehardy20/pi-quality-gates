@@ -58,21 +58,15 @@ export interface OrchestratorReviewerDiagnostic {
 
 export interface OrchestratorReviewerExecutionOptions {
 	/**
-	 * Optional token store to stamp PASS tokens directly on observing a
-	 * parseable PASS report for a known HEAD. This DECOUPLES stamping from
-	 * the in-memory pending-request correlation, so a PASS that arrives in
-	 * the parent conversation, after a retry, or with a mismatched request
-	 * id still stamps the exact-HEAD token.
-	 *
-	 * When omitted, no direct stamping happens (legacy behavior); callers
-	 * that do not pass a store rely solely on the dispatch → decidePushGate
-	 * path and may re-hit the original bug.
+	 * Optional token store used to stamp a PASS only after a sandboxed
+	 * `pr-reviewer` result is correlated to a known request and its exact HEAD.
+	 * Timed-out requests remain known so a late, explicitly correlated result
+	 * can still stamp the reviewed SHA without trusting the current HEAD.
 	 */
 	tokens?: PassTokenStore;
 	/**
-	 * Resolve the HEAD sha for stamping when a pending review did not carry
-	 * one (e.g. runAttempt was called without one). Falls back to any
-	 * pending-review headSha, then to this resolver.
+	 * Resolve the HEAD sha captured when runAttempt does not receive one.
+	 * This resolver is never used to stamp an uncorrelated result.
 	 */
 	resolveHeadSha?: () => string;
 }
@@ -158,6 +152,9 @@ export function createOrchestratorReviewerExecution(
 	options: OrchestratorReviewerExecutionOptions = {},
 ): OrchestratorReviewerExecutionBridge {
 	const pending = new Map<string, PendingReview>();
+	// Keep request→HEAD correlation after timeout so late results can stamp the
+	// reviewed SHA. Bound the map to avoid unbounded session growth.
+	const knownRequestHeads = new Map<string, string>();
 	const tokens = options.tokens;
 	const resolveHeadSha = options.resolveHeadSha ?? (() => "");
 	let lastDiagnostic: OrchestratorReviewerDiagnostic | null = null;
@@ -169,11 +166,9 @@ export function createOrchestratorReviewerExecution(
 	}
 
 	/**
-	 * Stamp a PASS token for `headSha` directly from an observed report.
-	 * This is the exact-HEAD PASS reliability path: even if the pending
-	 * request was already resolved/timed out or the request id did not
-	 * match, a parseable PASS for a known HEAD stamps the token so the
-	 * retry push succeeds without re-review.
+	 * Stamp a PASS token for the exact HEAD captured by a known review request.
+	 * A timed-out request can still stamp when its late result echoes the request
+	 * id; uncorrelated results never reach this helper.
 	 *
 	 * Safety invariants (mirroring decidePushGate / pr-review-dispatch):
 	 *  - Only a genuine PASS report stamps (ISSUES/CANNOT_REVIEW never do).
@@ -210,47 +205,45 @@ export function createOrchestratorReviewerExecution(
 			lastDiagnostic,
 		}),
 		handleToolResult(event): boolean {
-			if (event.toolName !== "orchestrate") return false;
+			if (
+				event.toolName !== "orchestrate" ||
+				event.input?.category !== "pr-reviewer"
+			) {
+				return false;
+			}
 
 			const rawOutput = toolContentToText(event.content);
-
-			// Correlate to a pending review. Prefer an explicit request id
-			// match in event.input; then a request id echoed in the content;
-			// finally, when exactly one review is pending, treat it as the
-			// unambiguous target (the common /pr-review → orchestrate flow).
 			let matchedRequestId: string | null = null;
-			for (const [requestId, review] of pending) {
+			for (const requestId of knownRequestHeads.keys()) {
 				if (inputContainsRequestId(event.input, requestId)) {
 					matchedRequestId = requestId;
-					void review;
 					break;
 				}
 			}
 			if (!matchedRequestId) {
 				const fromText = extractRequestIdFromText(rawOutput);
-				if (fromText && pending.has(fromText)) {
+				if (fromText && knownRequestHeads.has(fromText)) {
 					matchedRequestId = fromText;
 				}
 			}
-			if (!matchedRequestId && pending.size === 1) {
-				matchedRequestId = [...pending.keys()][0] ?? null;
-			}
 
-			// Parse the report regardless of correlation. A parseable PASS for
-			// a known HEAD stamps the token directly (exact-HEAD reliability).
 			const report = event.isError ? null : parseReviewReport(rawOutput);
-
-			// Resolve a HEAD sha: prefer the matched pending review's headSha,
-			// then fall back to the resolver (so a late/uncorrelated PASS for
-			// the current HEAD still stamps).
-			const headShaForStamp =
-				(matchedRequestId && pending.get(matchedRequestId)?.headSha) ||
-				resolveHeadSha();
+			const correlatedHeadSha = matchedRequestId
+				? (knownRequestHeads.get(matchedRequestId) ?? "")
+				: "";
+			const diagnosticHeadSha = correlatedHeadSha || resolveHeadSha();
+			const stamped = matchedRequestId
+				? stampPassFromObservedReport(
+						correlatedHeadSha || null,
+						report,
+						report?.summary,
+					)
+				: false;
 
 			if (event.isError) {
 				recordDiagnostic({
 					requestId: matchedRequestId,
-					headSha: headShaForStamp || null,
+					headSha: diagnosticHeadSha || null,
 					kind: "error",
 					detail:
 						rawOutput || "orchestrate pr-reviewer returned an error result",
@@ -258,44 +251,40 @@ export function createOrchestratorReviewerExecution(
 			} else if (report) {
 				if (report.status === "PASS") {
 					const testBlocker = getPassBlockingTestExecutionReason(report);
+					const detail = testBlocker
+						? `Parsed PASS for HEAD ${diagnosticHeadSha || "(unknown)"} but token NOT stamped: ${testBlocker}.`
+						: !matchedRequestId
+							? `Parsed PASS for HEAD ${diagnosticHeadSha || "(unknown)"} but token NOT stamped: result was not correlated to a known PR review request.`
+							: stamped
+								? `Parsed PASS (${report.confidence} confidence) for HEAD ${diagnosticHeadSha}; token stamped.`
+								: `Parsed PASS for HEAD ${diagnosticHeadSha || "(unknown)"} but token NOT stamped.`;
 					recordDiagnostic({
 						requestId: matchedRequestId,
-						headSha: headShaForStamp || null,
+						headSha: diagnosticHeadSha || null,
 						kind: "parsed-pass",
-						detail: testBlocker
-							? `Parsed PASS for HEAD ${headShaForStamp || "(unknown)"} but token NOT stamped: ${testBlocker}.`
-							: `Parsed PASS (${report.confidence} confidence) for HEAD ${headShaForStamp || "(unknown)"}; token stamped.`,
+						detail,
 					});
 				} else {
 					recordDiagnostic({
 						requestId: matchedRequestId,
-						headSha: headShaForStamp || null,
+						headSha: diagnosticHeadSha || null,
 						kind: "parsed-nonpass",
-						detail: `Parsed ${report.status} (${report.confidence} confidence) for HEAD ${headShaForStamp || "(unknown)"}; no token stamped.`,
+						detail: `Parsed ${report.status} (${report.confidence} confidence) for HEAD ${diagnosticHeadSha || "(unknown)"}; no token stamped.`,
 					});
 				}
 			} else if (rawOutput) {
 				recordDiagnostic({
 					requestId: matchedRequestId,
-					headSha: headShaForStamp || null,
+					headSha: diagnosticHeadSha || null,
 					kind: "parse-failed",
 					detail:
-						`Could not parse a '## Review Report' block from orchestrate pr-reviewer output for HEAD ${headShaForStamp || "(unknown)"}. ` +
+						`Could not parse a '## Review Report' block from orchestrate pr-reviewer output for HEAD ${diagnosticHeadSha || "(unknown)"}. ` +
 						`Preview: ${rawOutput.slice(0, 200)}${rawOutput.length > 200 ? "…" : ""}`,
 				});
 			}
 
-			// Direct exact-HEAD stamping — the core reliability fix.
-			stampPassFromObservedReport(
-				headShaForStamp || null,
-				report,
-				report?.summary,
-			);
-
-			if (!matchedRequestId) {
-				// We still parsed/stamped (if possible) but nothing to resolve.
-				return false;
-			}
+			if (!matchedRequestId) return false;
+			knownRequestHeads.delete(matchedRequestId);
 
 			const review = pending.get(matchedRequestId);
 			if (!review) return false;
@@ -338,10 +327,14 @@ export function createOrchestratorReviewerExecution(
 					testPlan: input.testPlan,
 				});
 
-				// Capture the HEAD sha this attempt covers. Prefer an explicit
-				// caller-supplied sha; fall back to the resolver so stamping
-				// can still target the current HEAD.
+				// Capture the exact reviewed HEAD before dispatch. Preserve this
+				// correlation after timeout so a late result never trusts current HEAD.
 				const headSha = input.headSha || resolveHeadSha() || "";
+				if (knownRequestHeads.size >= 100) {
+					const oldestRequestId = knownRequestHeads.keys().next().value;
+					if (oldestRequestId) knownRequestHeads.delete(oldestRequestId);
+				}
+				knownRequestHeads.set(requestId, headSha);
 
 				return new Promise<ReviewerResult>((resolve) => {
 					const timer = setTimeout(() => {

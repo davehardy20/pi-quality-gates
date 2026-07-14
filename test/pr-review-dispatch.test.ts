@@ -4,7 +4,10 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import { createPassTokenStore } from "../src/pr-gate/pass-token-store.js";
-import { createPrReviewDispatch } from "../src/pr-gate/pr-review-dispatch.js";
+import {
+	createPrReviewDispatch,
+	resolveDefaultBaseRef,
+} from "../src/pr-gate/pr-review-dispatch.js";
 
 describe("createPrReviewDispatch", () => {
 	it("surfaces a sidecar path when the reviewer returns unparsable output", async () => {
@@ -38,5 +41,16 @@ describe("createPrReviewDispatch", () => {
 		expect(result.blocked).toBe(true);
 		expect(result.message).toContain("could not parse review report");
 		expect(result.message).toContain("/tmp/reviewer-failures/abc");
+	});
+
+	it("selects the first available default branch ref without CommonJS require", () => {
+		const attempted: string[] = [];
+		const baseRef = resolveDefaultBaseRef("/repo", (_cwd, ref) => {
+			attempted.push(ref);
+			return ref === "master";
+		});
+
+		expect(baseRef).toBe("master");
+		expect(attempted).toEqual(["origin/master", "origin/main", "master"]);
 	});
 });
