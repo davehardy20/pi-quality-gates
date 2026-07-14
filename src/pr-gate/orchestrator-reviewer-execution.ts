@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { hasCriticalSecurityFinding } from "../shared/review-severity.js";
 import type { ReviewReport } from "../shared/review-types.js";
 import type { PassToken, PassTokenStore } from "./pass-token-store.js";
 import { getPassBlockingTestExecutionReason } from "./pr-review-dispatch.js";
@@ -171,7 +172,7 @@ export function createOrchestratorReviewerExecution(
 	 * id; uncorrelated results never reach this helper.
 	 *
 	 * Safety invariants (mirroring decidePushGate / pr-review-dispatch):
-	 *  - Only a genuine PASS report stamps (ISSUES/CANNOT_REVIEW never do).
+	 *  - Only a genuine PASS report without CRITICAL security findings stamps.
 	 *  - A PASS that omits ### Test execution or reports a non-PASS test
 	 *    status does NOT stamp (invariant: PASS requires test execution).
 	 */
@@ -183,6 +184,7 @@ export function createOrchestratorReviewerExecution(
 		if (!tokens) return false;
 		if (!headSha?.trim()) return false;
 		if (report?.status !== "PASS") return false;
+		if (hasCriticalSecurityFinding(report)) return false;
 		const testBlocker = getPassBlockingTestExecutionReason(report);
 		if (testBlocker) return false;
 		const token: PassToken = {
@@ -250,9 +252,13 @@ export function createOrchestratorReviewerExecution(
 				});
 			} else if (report) {
 				if (report.status === "PASS") {
+					const criticalBlocker = hasCriticalSecurityFinding(report)
+						? "report contains CRITICAL security finding(s)"
+						: null;
 					const testBlocker = getPassBlockingTestExecutionReason(report);
-					const detail = testBlocker
-						? `Parsed PASS for HEAD ${diagnosticHeadSha || "(unknown)"} but token NOT stamped: ${testBlocker}.`
+					const blocker = criticalBlocker ?? testBlocker;
+					const detail = blocker
+						? `Parsed PASS for HEAD ${diagnosticHeadSha || "(unknown)"} but token NOT stamped: ${blocker}.`
 						: !matchedRequestId
 							? `Parsed PASS for HEAD ${diagnosticHeadSha || "(unknown)"} but token NOT stamped: result was not correlated to a known PR review request.`
 							: stamped

@@ -136,6 +136,36 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 		].join("\n");
 	}
 
+	function criticalSecurityPassReport(): string {
+		return [
+			"## Review Report",
+			"STATUS: PASS",
+			"CONFIDENCE: HIGH",
+			"",
+			"### Findings",
+			"#### [CRITICAL] Unsafe publication",
+			"- **File:** src/a.ts:1",
+			"- **Category:** security",
+			"- **Rule:** fail-closed-pr-gate",
+			"- **Issue:** Critical security risk",
+			"- **Evidence:** unsafe",
+			"- **Suggestion:** block publication",
+			"",
+			"### What was verified",
+			"- Tests passed",
+			"",
+			"### What could not be verified",
+			"None.",
+			"",
+			"### Test execution",
+			"- **Status:** PASS",
+			"- **Summary:** run_typecheck passed",
+			"",
+			"### Summary",
+			"Critical issue remains.",
+		].join("\n");
+	}
+
 	it("refuses an uncorrelated PASS even when exactly one review is pending", async () => {
 		const tokens = createPassTokenStore();
 		const headSha = "afc61f83e4b7b450284cdaee1d50c2e055f38b58";
@@ -209,6 +239,35 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 		expect(tokens.hasPass(headSha)).toBe(true);
 	});
 
+	it("does not stamp a correlated PASS with a CRITICAL security finding", async () => {
+		const tokens = createPassTokenStore();
+		const headSha = "c001d00d".repeat(5);
+		const sendUserMessage = vi.fn();
+		const bridge = createOrchestratorReviewerExecution(
+			{ getActiveTools: () => ["orchestrate"], sendUserMessage },
+			{ tokens, resolveHeadSha: () => headSha },
+		);
+		const pending = bridge.reviewerExecution.runAttempt(
+			makeAttemptInput(headSha),
+		);
+		const requestId = String(sendUserMessage.mock.calls[0][0]).match(
+			/PR_REVIEW_REQUEST_ID: (pr-review-[^\n]+)/,
+		)?.[1];
+
+		bridge.handleToolResult({
+			toolName: "orchestrate",
+			input: { category: "pr-reviewer", task: `Request ${requestId}` },
+			content: [{ type: "text", text: criticalSecurityPassReport() }],
+			isError: false,
+		});
+		await pending;
+
+		expect(tokens.hasPass(headSha)).toBe(false);
+		expect(bridge.getStatus().lastDiagnostic?.detail).toContain(
+			"CRITICAL security",
+		);
+	});
+
 	it("does not stamp an uncorrelated PASS when no review request is known", () => {
 		const tokens = createPassTokenStore();
 		const headSha = "cafef00d".repeat(5);
@@ -262,6 +321,37 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 			expect(handled).toBe(false);
 			expect(tokens.hasPass(headSha)).toBe(true);
 			expect(tokens.hasPass("different-current-head")).toBe(false);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("does not stamp a late correlated PASS with a CRITICAL security finding", async () => {
+		vi.useFakeTimers();
+		try {
+			const tokens = createPassTokenStore();
+			const headSha = "bad5ec00".repeat(5);
+			const sendUserMessage = vi.fn();
+			const bridge = createOrchestratorReviewerExecution(
+				{ getActiveTools: () => ["orchestrate"], sendUserMessage },
+				{ tokens, resolveHeadSha: () => headSha },
+			);
+			const input = makeAttemptInput(headSha);
+			input.config = { ...input.config, timeoutMs: 10 };
+			const pending = bridge.reviewerExecution.runAttempt(input);
+			const requestId = String(sendUserMessage.mock.calls[0][0]).match(
+				/PR_REVIEW_REQUEST_ID: (pr-review-[^\n]+)/,
+			)?.[1];
+			await vi.advanceTimersByTimeAsync(10);
+			await pending;
+
+			bridge.handleToolResult({
+				toolName: "orchestrate",
+				input: { category: "pr-reviewer", task: `Request ${requestId}` },
+				content: [{ type: "text", text: criticalSecurityPassReport() }],
+				isError: false,
+			});
+			expect(tokens.hasPass(headSha)).toBe(false);
 		} finally {
 			vi.useRealTimers();
 		}
