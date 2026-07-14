@@ -254,7 +254,13 @@ export function createReviewCoordinator(
 			runInBackground({
 				ctx,
 				state,
-				dispatchInput: { ctx, state, pi, baseRef },
+				dispatchInput: {
+					ctx,
+					state,
+					pi,
+					baseRef,
+					isReReview: Boolean(baseRef),
+				},
 				headSha,
 			});
 

@@ -170,6 +170,12 @@ describe("createReviewCoordinator (shared by /pr-review and pr_review)", () => {
 		expect(result.status).toBe("started");
 		expect(result.baseRef).toBe("origin/main");
 		expect(dispatch).toHaveBeenCalledTimes(1);
+		expect(dispatch).toHaveBeenCalledWith(
+			expect.objectContaining({
+				baseRef: "origin/main",
+				isReReview: true,
+			}),
+		);
 	});
 
 	it("returns 'in-progress' on a second concurrent kickoff and does not start a second dispatch", async () => {
