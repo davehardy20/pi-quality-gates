@@ -412,14 +412,10 @@ export async function spawnReviewer(
       let usage = "";
       let timedOut = false;
       let exited = false;
-
-      const timeoutId = setTimeout(() => {
-        timedOut = true;
-        proc.kill("SIGTERM");
-        setTimeout(() => {
-          if (!exited) proc.kill("SIGKILL");
-        }, 5000);
-      }, config.timeoutMs);
+      let terminationRequested = false;
+      let timeoutId: ReturnType<typeof setTimeout>;
+      let killTimer: ReturnType<typeof setTimeout> | undefined;
+      let onAbort: (() => void) | undefined;
 
       const proc = spawn(invocation.command, invocation.args, {
         cwd,
@@ -427,6 +423,35 @@ export async function spawnReviewer(
         stdio: ["ignore", "pipe", "pipe"],
         env: { ...process.env } as Record<string, string>,
       });
+
+      const cleanupControlState = () => {
+        clearTimeout(timeoutId);
+        if (killTimer) {
+          clearTimeout(killTimer);
+          killTimer = undefined;
+        }
+        if (signal && onAbort) {
+          signal.removeEventListener("abort", onAbort);
+          onAbort = undefined;
+        }
+      };
+
+      const requestTermination = (source: "timeout" | "abort") => {
+        if (source === "timeout") timedOut = true;
+        clearTimeout(timeoutId);
+        if (terminationRequested || exited) return;
+        terminationRequested = true;
+        proc.kill("SIGTERM");
+        killTimer = setTimeout(() => {
+          killTimer = undefined;
+          if (!exited) proc.kill("SIGKILL");
+        }, 5000);
+      };
+
+      timeoutId = setTimeout(
+        () => requestTermination("timeout"),
+        config.timeoutMs,
+      );
 
       const processLine = (line: string) => {
         if (!line.trim()) return;
@@ -467,6 +492,7 @@ export async function spawnReviewer(
 
       proc.on("close", async (code) => {
         exited = true;
+        cleanupControlState();
         clearTimeout(timeoutId);
         stdoutLines.flush();
 
@@ -514,13 +540,7 @@ export async function spawnReviewer(
 
       // Handle abort signal
       if (signal) {
-        const onAbort = () => {
-          clearTimeout(timeoutId);
-          proc.kill("SIGTERM");
-          setTimeout(() => {
-            if (!exited) proc.kill("SIGKILL");
-          }, 5000);
-        };
+        onAbort = () => requestTermination("abort");
         if (signal.aborted) onAbort();
         else signal.addEventListener("abort", onAbort, { once: true });
       }
