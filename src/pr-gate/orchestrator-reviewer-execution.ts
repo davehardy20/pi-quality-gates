@@ -289,6 +289,13 @@ export function createOrchestratorReviewerExecution(
 					matchedRequestId = fromText;
 				}
 			}
+			if (
+				!matchedRequestId &&
+				(event.isError || captured.overflowed) &&
+				pending.size === 1
+			) {
+				matchedRequestId = pending.keys().next().value ?? null;
+			}
 
 			const report =
 				event.isError || captured.overflowed

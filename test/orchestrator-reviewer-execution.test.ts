@@ -81,6 +81,38 @@ describe("createOrchestratorReviewerExecution", () => {
 		expect(bridge.pendingCount()).toBe(0);
 	});
 
+	it("resolves the sole pending review from an input-light error result", async () => {
+		const bridge = createOrchestratorReviewerExecution({
+			getActiveTools: () => ["orchestrate"],
+			sendUserMessage: vi.fn(),
+		});
+		const pendingResult = bridge.reviewerExecution.runAttempt(
+			makeAttemptInput(),
+		);
+
+		try {
+			const handled = bridge.handleToolResult({
+				toolName: "orchestrate",
+				input: { category: "pr-reviewer" },
+				content: [
+					{
+						type: "text",
+						text: "Agent failed (exit 1): reviewer failed closed",
+					},
+				],
+				isError: true,
+			});
+
+			expect(handled).toBe(true);
+			const result = await pendingResult;
+			expect(result.exitCode).toBe(1);
+			expect(result.rawOutput).toContain("reviewer failed closed");
+			expect(bridge.pendingCount()).toBe(0);
+		} finally {
+			bridge.dispose();
+		}
+	});
+
 	it("fails closed when orchestrate is unavailable", async () => {
 		const bridge = createOrchestratorReviewerExecution({
 			getActiveTools: () => [],
