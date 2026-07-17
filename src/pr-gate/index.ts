@@ -247,6 +247,12 @@ export default function prGateExtension(
 		dispatch,
 	});
 
+	pi.on("session_shutdown", async () => {
+		coordinator.dispose();
+		orchestratorReviewer.dispose();
+		state.tokens.clear();
+	});
+
 	// Agent-callable custom tool over the SAME coordinator/state. Registered
 	// once so the LLM can request the gate-compatible review autonomously.
 	pi.registerTool(

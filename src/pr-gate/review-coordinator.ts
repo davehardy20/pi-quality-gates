@@ -95,6 +95,8 @@ export interface ReviewCoordinator {
 	startReview(input: StartReviewInput): ReviewKickoffResult;
 	/** Whether a background review is currently running. */
 	isInProgress(): boolean;
+	/** Stop completion delivery and release session/UI state after shutdown. */
+	dispose(): void;
 }
 
 /**
@@ -106,8 +108,10 @@ export function createReviewCoordinator(
 	deps: ReviewCoordinatorDeps,
 ): ReviewCoordinator {
 	let inProgress = false;
+	let disposed = false;
 
 	function setStatus(ctx: ExtensionContext, text: string | undefined): void {
+		if (disposed) return;
 		if (ctx.hasUI) {
 			ctx.ui.setStatus("pr-review", text);
 		}
@@ -139,6 +143,7 @@ export function createReviewCoordinator(
 			try {
 				const result: PrReviewDispatchResult =
 					await deps.dispatch.dispatch(dispatchInput);
+				if (disposed) return;
 				const statusText = result.stamped
 					? `PR review: PASS ${headSha.slice(0, 8)}`
 					: result.escalated
@@ -167,6 +172,7 @@ export function createReviewCoordinator(
 					},
 				});
 			} catch (error) {
+				if (disposed) return;
 				const message = error instanceof Error ? error.message : String(error);
 				setStatus(ctx, `PR review: failed ${headSha.slice(0, 8) || "unknown"}`);
 				pi.sendMessage({
@@ -182,13 +188,17 @@ export function createReviewCoordinator(
 					},
 				});
 			} finally {
-				inProgress = false;
+				if (!disposed) inProgress = false;
 			}
 		})();
 	}
 
 	return {
 		isInProgress: () => inProgress,
+		dispose(): void {
+			disposed = true;
+			inProgress = false;
+		},
 		startReview(input: StartReviewInput): ReviewKickoffResult {
 			const { ctx, state, baseRef, origin } = input;
 			const headSha = deps.resolveHeadSha(ctx.cwd);
@@ -199,6 +209,16 @@ export function createReviewCoordinator(
 				gateEnabled: state.config.enabled,
 				tokenCount: state.tokens.size,
 			};
+
+			if (disposed) {
+				return {
+					...base,
+					status: "blocked",
+					message:
+						"PR review gate: session is shutting down; review unavailable.",
+					started: false,
+				};
+			}
 
 			if (!state.config.enabled) {
 				return {

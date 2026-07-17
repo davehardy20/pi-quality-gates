@@ -383,6 +383,42 @@ describe("pr-review dispatch", () => {
 		expect(listChangedFiles).toHaveBeenCalledWith("/repo", "feature/base");
 	});
 
+	it("lets repository-direct reviewer inspect base..HEAD without materializing a parent diff", async () => {
+		const pi = createMockPi();
+		const gatherDiff = vi.fn(async () => "FULL_DIFF_SENTINEL");
+		const runAttempt = vi.fn(async () => ({
+			report: makePassReport(),
+			rawOutput: "report",
+			exitCode: 0,
+			timedOut: false,
+			stderr: "",
+			command: "orchestrate category=pr-reviewer",
+		}));
+		const reviewerExecution: ReviewerExecution = {
+			inspectRepositoryDirectly: true,
+			runAttempt,
+		};
+		const dispatch = createPrReviewDispatch({
+			...createTestDeps(makePassReport()),
+			gatherDiff,
+			reviewerExecution,
+		});
+
+		const result = await dispatch.dispatch(
+			createInput(pi, { baseRef: "origin/main" }),
+		);
+
+		expect(result.stamped).toBe(true);
+		expect(gatherDiff).not.toHaveBeenCalled();
+		expect(runAttempt).toHaveBeenCalledWith(
+			expect.objectContaining({
+				baseRef: "origin/main",
+				diff: undefined,
+				headSha: HEAD_SHA,
+			}),
+		);
+	});
+
 	it("re-runs review when isReReview is true even with existing PASS", async () => {
 		const pi = createMockPi();
 		const reviewer = createMockReviewerExecution(makePassReport());

@@ -109,6 +109,7 @@ command/tool parity.
 4. The existing matching `tool_result` handler in
    `orchestrator-reviewer-execution.ts` resumes the dispatch, parses the sandbox
    report, and stamps a PASS token **only for the exact reviewed HEAD**.
+   The parent follow-up contains bounded metadata only; the full diff is not relayed through session context. The sandbox reviewer inspects the stated base ref and HEAD directly.
 5. On completion the coordinator emits one of:
    - `pr-review-pass` — PASS report, exact-HEAD token stamped.
    - `pr-review-escalation` — CRITICAL security finding; requires human ack.
@@ -118,6 +119,8 @@ command/tool parity.
 A PASS report that omits the `### Test execution` section or reports `FAIL`/
 `NOT_RUN` is overridden to `CANNOT_REVIEW` and blocked — the agent cannot stamp a
 token by claiming PASS without verified tests.
+
+On `session_shutdown`, the bridge cancels pending attempts, clears timers and request correlation, and the coordinator suppresses late UI/session messages. Reload therefore requires a fresh review.
 
 ## Retained safety boundaries
 

@@ -52,6 +52,8 @@ export interface ReviewerResult {
   command: string;
   /** Path to a retained sidecar directory when parsing fails. */
   sidecarPath?: string;
+  /** True when output capture exceeded a pre-close memory limit. */
+  outputOverflowed?: boolean;
 }
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -66,6 +68,8 @@ export interface ReviewerAttemptInput {
   diff?: string;
   /** Optional test-execution plan rendered into the task template. */
   testPlan?: string;
+  /** Base ref for repository-direct review execution. */
+  baseRef?: string;
   signal?: AbortSignal;
   /**
    * Optional HEAD sha this review covers. The orchestrator bridge uses it to
@@ -76,6 +80,8 @@ export interface ReviewerAttemptInput {
 
 export interface ReviewerExecution {
   runAttempt(input: ReviewerAttemptInput): Promise<ReviewerResult>;
+  /** Skip parent-side diff materialization; the reviewer inspects baseRef..HEAD. */
+  inspectRepositoryDirectly?: boolean;
 }
 
 export interface ReviewerExecutionDependencies {
@@ -238,6 +244,102 @@ export function buildSanitizedReviewerCommand(
   return `${rendered} [taskPrompt omitted chars=${taskPrompt.length} sha256=${sha256Hex(taskPrompt)}]`;
 }
 
+export interface BoundedTextCapture {
+  append(value: string): void;
+  value(): string;
+  overflowed(): boolean;
+  totalChars(): number;
+}
+
+/** Retain only a bounded tail while tracking whether any content was dropped. */
+export function createBoundedTextCapture(maxChars: number): BoundedTextCapture {
+  if (!Number.isSafeInteger(maxChars) || maxChars < 1) {
+    throw new Error("maxChars must be a positive safe integer");
+  }
+  let retained = "";
+  let total = 0;
+  let didOverflow = false;
+  return {
+    append(value): void {
+      if (!value) return;
+      total += value.length;
+      if (value.length >= maxChars) {
+        retained = value.slice(-maxChars);
+        didOverflow =
+          didOverflow || value.length > maxChars || total > maxChars;
+        return;
+      }
+      const overflowBy = retained.length + value.length - maxChars;
+      if (overflowBy > 0) {
+        retained = retained.slice(overflowBy) + value;
+        didOverflow = true;
+      } else {
+        retained += value;
+      }
+    },
+    value: () => retained,
+    overflowed: () => didOverflow,
+    totalChars: () => total,
+  };
+}
+
+export interface BoundedLineProcessor {
+  append(chunk: string): void;
+  flush(): void;
+  overflowed(): boolean;
+  bufferedChars(): number;
+}
+
+/** Parse newline-delimited output without retaining an unterminated line forever. */
+export function createBoundedLineProcessor(
+  maxLineChars: number,
+  onLine: (line: string) => void,
+): BoundedLineProcessor {
+  if (!Number.isSafeInteger(maxLineChars) || maxLineChars < 1) {
+    throw new Error("maxLineChars must be a positive safe integer");
+  }
+  let buffer = "";
+  let currentLineOverflowed = false;
+  let didOverflow = false;
+
+  function finishLine(): void {
+    if (!currentLineOverflowed) onLine(buffer);
+    buffer = "";
+    currentLineOverflowed = false;
+  }
+
+  return {
+    append(chunk): void {
+      let start = 0;
+      while (start < chunk.length) {
+        const newline = chunk.indexOf("\n", start);
+        const end = newline === -1 ? chunk.length : newline;
+        const fragment = chunk.slice(start, end);
+        if (!currentLineOverflowed) {
+          const remaining = maxLineChars - buffer.length;
+          if (fragment.length > remaining) {
+            buffer += fragment.slice(0, Math.max(0, remaining));
+            currentLineOverflowed = true;
+            didOverflow = true;
+          } else {
+            buffer += fragment;
+          }
+        }
+        if (newline === -1) break;
+        finishLine();
+        start = newline + 1;
+      }
+    },
+    flush: finishLine,
+    overflowed: () => didOverflow,
+    bufferedChars: () => buffer.length,
+  };
+}
+
+const MAX_REVIEWER_JSON_LINE_CHARS = 1_048_576;
+const MAX_REVIEWER_OUTPUT_CHARS = 262_144;
+const MAX_REVIEWER_STDERR_CHARS = 65_536;
+
 export function buildReviewerPiArgs(
   config: ReviewConfig,
   promptFile: string,
@@ -304,9 +406,9 @@ export async function spawnReviewer(
     const invocation = getPiInvocation(piArgs);
 
     return await new Promise<ReviewerResult>((resolve) => {
-      let buffer = "";
-      let output = "";
-      let stderr = "";
+      const output = createBoundedTextCapture(MAX_REVIEWER_OUTPUT_CHARS);
+      const stderr = createBoundedTextCapture(MAX_REVIEWER_STDERR_CHARS);
+      const overflowSources = new Set<string>();
       let usage = "";
       let timedOut = false;
       let exited = false;
@@ -335,43 +437,58 @@ export async function spawnReviewer(
             event?.message?.role === "assistant"
           ) {
             for (const part of event.message.content || []) {
-              if (part.type === "text") output += part.text ?? "";
+              if (part.type === "text") output.append(part.text ?? "");
             }
+            if (output.overflowed()) overflowSources.add("assistant output");
             if (event.message.usage) {
               const u = event.message.usage;
               usage = `↑${u.input || 0} ↓${u.output || 0} $${u.cost?.total?.toFixed(4) || 0}`;
             }
           }
         } catch {
-          // Not JSON — might be stderr or other output; collect in stderr
+          // Ignore non-JSON stdout. Structured reviewer output is required.
         }
       };
 
+      const stdoutLines = createBoundedLineProcessor(
+        MAX_REVIEWER_JSON_LINE_CHARS,
+        processLine,
+      );
+
       proc.stdout.on("data", (data: Buffer) => {
-        buffer += data.toString();
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-        for (const line of lines) processLine(line);
+        stdoutLines.append(data.toString());
+        if (stdoutLines.overflowed()) overflowSources.add("stdout JSON line");
       });
 
       proc.stderr.on("data", (data: Buffer) => {
-        stderr += data.toString();
+        stderr.append(data.toString());
+        if (stderr.overflowed()) overflowSources.add("stderr");
       });
 
       proc.on("close", async (code) => {
         exited = true;
         clearTimeout(timeoutId);
-        if (buffer.trim()) processLine(buffer);
+        stdoutLines.flush();
 
-        // Fallback: if no structured output but stderr has content, use it
-        const rawOutput = output || stderr;
-        const report = parseReviewReport(rawOutput);
+        const outputValue = output.value();
+        const stderrValue = stderr.value();
+        const outputOverflowed = overflowSources.size > 0;
+        const overflowNote = outputOverflowed
+          ? `[reviewer output exceeded memory limits: ${[...overflowSources].join(", ")}].`
+          : "";
+        // Fallback: if no structured output but stderr has content, use it.
+        const capturedOutput = outputValue || stderrValue;
+        const rawOutput = overflowNote
+          ? `${overflowNote}\n${capturedOutput}`
+          : capturedOutput;
+        // Any overflow fails closed: a partial report cannot stamp a PASS token.
+        const report = outputOverflowed ? null : parseReviewReport(rawOutput);
         let sidecarPath: string | undefined;
         if (!report) {
           try {
             sidecarPath = await writeParseFailureSidecar(tmpDir, {
               rawOutput,
-              stderr,
+              stderr: stderrValue,
               exitCode: code ?? 0,
               timedOut,
               usage: usage || undefined,
@@ -388,9 +505,10 @@ export async function spawnReviewer(
           exitCode: code ?? 0,
           timedOut,
           usage: usage || undefined,
-          stderr,
+          stderr: stderrValue,
           command: commandStr,
           sidecarPath,
+          outputOverflowed,
         });
       });
 

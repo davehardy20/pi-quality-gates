@@ -98,7 +98,7 @@ Tokens are stored in-memory via `PassTokenStore` (`src/pr-gate/pass-token-store.
    - List changed files via `git diff --name-only`.
    - Count diff lines → reject if exceeds `maxChangedLines` (5000).
    - Load skip filter (`.pi/reviewer.skip`).
-   - Gather diff (capped at `maxDiffLines` = 4000).
+   - For legacy/injected execution, gather a capped diff (`maxDiffLines` = 4000). The default orchestrator bridge skips parent diff materialization.
    - Extract original task from session entries.
    - Generate test execution plan.
    - Call `reviewerExecution.runAttempt()`.
@@ -121,15 +121,17 @@ execution bridge.
 
 **Sandboxed orchestrator dispatch:**
 - Creates a unique `PR_REVIEW_REQUEST_ID`.
-- Sends a parent follow-up instructing Pi to call `orchestrate` with category
-  `pr-reviewer` and the prepared PR review task.
+- Sends a bounded parent follow-up containing request/head/base metadata, a capped task/test-plan summary, and at most 32 capped file paths.
+- Deliberately excludes the full diff; the sandbox reviewer inspects `baseRef..HEAD` directly.
 - Listens for the matching `tool_result` from `orchestrate`.
-- Parses that result's text output for the `## Review Report` block.
-- Fails closed if `orchestrate` is unavailable or the request times out.
+- Bounds result capture at 262,144 characters and fails closed on overflow.
+- Fails closed if `orchestrate` is unavailable, the request times out, or the session shuts down. Shutdown clears pending timers/correlation state.
 
 `src/pr-gate/reviewer.ts` still contains the legacy report parser and injectable
 reviewer execution helpers for tests/compatibility, but the package default no
 longer host-spawns a headless child Pi for `/pr-review`.
+
+Legacy direct child capture is also pre-close bounded: 1,048,576 characters per JSON line, 262,144 characters of assistant output, and 65,536 characters of stderr. Overflow produces a parse-failure sidecar and cannot stamp PASS.
 
 **Report parsing** (`parseReviewReport`):
 - Finds `## Review Report` marker (regex, case-insensitive).

@@ -16,6 +16,7 @@ import { decidePushGate } from "./gate-decision.js";
 import type { PassTokenStore } from "./pass-token-store.js";
 import { PR_REVIEW_CONFIG } from "./pr-review-config.js";
 import {
+	createBoundedTextCapture,
 	formatReportForDisplay,
 	type ReviewerExecution,
 	type ReviewerResult,
@@ -120,25 +121,35 @@ async function defaultListChangedFiles(
 			cwd,
 			stdio: ["ignore", "pipe", "pipe"],
 		});
-		let stdout = "";
-		let stderr = "";
+		const stdout = createBoundedTextCapture(262_144);
+		const stderr = createBoundedTextCapture(65_536);
 		proc.stdout.on("data", (data: Buffer) => {
-			stdout += data.toString();
+			stdout.append(data.toString());
 		});
 		proc.stderr.on("data", (data: Buffer) => {
-			stderr += data.toString();
+			stderr.append(data.toString());
 		});
 		proc.on("close", (code) => {
+			const stderrValue = stderr.value();
+			if (stdout.overflowed() || stderr.overflowed()) {
+				reject(
+					new Error(
+						`git diff --name-only ${baseRef}..HEAD exceeded bounded output limits`,
+					),
+				);
+				return;
+			}
 			if (code !== 0) {
 				reject(
 					new Error(
-						`git diff --name-only ${baseRef}..HEAD exited ${code ?? 0}${stderr ? `: ${stderr.trim()}` : ""}`,
+						`git diff --name-only ${baseRef}..HEAD exited ${code ?? 0}${stderrValue ? `: ${stderrValue.trim()}` : ""}`,
 					),
 				);
 				return;
 			}
 			resolve(
 				stdout
+					.value()
 					.split("\n")
 					.map((l) => l.trim())
 					.filter((l) => l.length > 0),
@@ -279,17 +290,20 @@ export function createPrReviewDispatch(
 			skipFilter,
 		};
 
-		const diff = await deps.gatherDiff(
-			changedFiles,
-			cwd,
-			PR_REVIEW_CONFIG.maxDiffLines,
-			baseRef,
-			filterOptions,
-		);
+		const diff = deps.reviewerExecution.inspectRepositoryDirectly
+			? undefined
+			: await deps.gatherDiff(
+					changedFiles,
+					cwd,
+					PR_REVIEW_CONFIG.maxDiffLines,
+					baseRef,
+					filterOptions,
+				);
 
-		const task =
+		const extractedTask =
 			deps.extractTask(ctx.sessionManager?.getBranch() ?? []) ||
 			"Review the current HEAD diff before push.";
+		const task = truncateReviewDiagnostic(extractedTask, 8_000);
 
 		const testPlan = formatTestExecutionPlan(
 			recommendTestCommands(changedFiles, cwd),
@@ -309,6 +323,7 @@ export function createPrReviewDispatch(
 			config: PR_REVIEW_CONFIG,
 			filterOptions,
 			diff,
+			baseRef,
 			testPlan,
 			headSha: reviewedHeadSha,
 		});
