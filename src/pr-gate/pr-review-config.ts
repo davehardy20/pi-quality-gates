@@ -23,7 +23,7 @@ export const PR_REVIEW_CONFIG: ReviewConfig = {
 	maxReReviewPasses: 1,
 	autoFixThreshold: "warning",
 	maxTokens: 8192,
-	timeoutMs: 600_000,
+	timeoutMs: 45 * 60_000,
 	tools: [
 		"read",
 		"grep",

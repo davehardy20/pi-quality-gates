@@ -18,7 +18,7 @@ Both subsystems subscribe to Pi lifecycle events via `pi.on(...)`:
 |---|---|---|
 | `session_start` | `orchestrator.initialize(ctx)` | — |
 | `session_tree` | `orchestrator.onSessionTree(ctx)` | — |
-| `session_shutdown` | `orchestrator.shutdown(ctx)` | — |
+| `session_shutdown` | `orchestrator.shutdown(ctx)` | cancel pending reviews, clear timers/tokens, suppress late completion |
 | `tool_execution_start` | `orchestrator.onToolExecutionStart(event)` | — |
 | `tool_execution_end` | `orchestrator.onToolExecutionEnd(event, ctx)` | — |
 | `turn_end` | `orchestrator.onTurnEnd(ctx)` | — |

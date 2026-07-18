@@ -155,6 +155,7 @@ function createTestDeps(
 		getHeadSha: () => HEAD_SHA,
 		getBaseRef: () => BASE_REF,
 		listChangedFiles: async () => ["src/a.ts", "src/b.ts"],
+		applyDiffFilters: async (files) => files,
 		countDiffLines: async () => 42,
 		gatherDiff: async () => "mock diff",
 		reviewerExecution: createMockReviewerExecution(report),
@@ -331,6 +332,26 @@ describe("pr-review dispatch", () => {
 		expect(result.message).toContain("No files changed");
 	});
 
+	it("blocks when review filters exclude every changed file", async () => {
+		const pi = createMockPi();
+		const reviewerExecution = createMockReviewerExecution(makePassReport());
+		const countDiffLines = vi.fn(async () => 42);
+		const dispatch = createPrReviewDispatch({
+			...createTestDeps(makePassReport()),
+			applyDiffFilters: async () => [],
+			countDiffLines,
+			reviewerExecution,
+		});
+
+		const result = await dispatch.dispatch(createInput(pi));
+
+		expect(result.blocked).toBe(true);
+		expect(result.stamped).toBe(false);
+		expect(result.message).toContain("excluded by review filters");
+		expect(countDiffLines).not.toHaveBeenCalled();
+		expect(reviewerExecution.runAttempt).not.toHaveBeenCalled();
+	});
+
 	it("blocks when the reviewer report cannot be parsed", async () => {
 		const pi = createMockPi();
 		const dispatch = createPrReviewDispatch(createTestDeps(null));
@@ -350,6 +371,7 @@ describe("pr-review dispatch", () => {
 			getHeadSha: () => HEAD_SHA,
 			getBaseRef: () => BASE_REF,
 			listChangedFiles: async () => ["src/a.ts"],
+			applyDiffFilters: async (files) => files,
 			countDiffLines: async () => 42,
 			gatherDiff: async () => "mock diff",
 		});
@@ -372,6 +394,7 @@ describe("pr-review dispatch", () => {
 			getHeadSha: () => HEAD_SHA,
 			getBaseRef: () => "origin/main",
 			listChangedFiles,
+			applyDiffFilters: async (files) => files,
 			countDiffLines: async () => 42,
 			gatherDiff: async () => "mock diff",
 			reviewerExecution: createMockReviewerExecution(makePassReport()),
@@ -381,6 +404,62 @@ describe("pr-review dispatch", () => {
 		await dispatch.dispatch(input);
 
 		expect(listChangedFiles).toHaveBeenCalledWith("/repo", "feature/base");
+	});
+
+	it("applies skip filters before repository-direct review scope", async () => {
+		const pi = createMockPi();
+		const gatherDiff = vi.fn(async () => "FULL_DIFF_SENTINEL");
+		const listChangedFiles = vi.fn(async () => [
+			"src/a.ts",
+			"generated/vendor.js",
+		]);
+		const applyDiffFilters = vi.fn(async () => ["src/a.ts"]);
+		const countDiffLines = vi.fn(async () => 42);
+		const runAttempt = vi.fn(async () => ({
+			report: makePassReport(),
+			rawOutput: "report",
+			exitCode: 0,
+			timedOut: false,
+			stderr: "",
+			command: "orchestrate category=pr-reviewer",
+		}));
+		const reviewerExecution: ReviewerExecution = {
+			inspectRepositoryDirectly: true,
+			runAttempt,
+		};
+		const dispatch = createPrReviewDispatch({
+			...createTestDeps(makePassReport()),
+			listChangedFiles,
+			applyDiffFilters,
+			countDiffLines,
+			gatherDiff,
+			reviewerExecution,
+		});
+
+		const result = await dispatch.dispatch(
+			createInput(pi, { baseRef: "origin/main" }),
+		);
+
+		expect(result.stamped).toBe(true);
+		expect(applyDiffFilters).toHaveBeenCalledWith(
+			["src/a.ts", "generated/vendor.js"],
+			"/repo",
+			expect.objectContaining({ respectGitignore: true }),
+		);
+		expect(countDiffLines).toHaveBeenCalledWith(
+			["src/a.ts"],
+			"/repo",
+			"origin/main",
+		);
+		expect(gatherDiff).not.toHaveBeenCalled();
+		expect(runAttempt).toHaveBeenCalledWith(
+			expect.objectContaining({
+				baseRef: "origin/main",
+				diff: undefined,
+				files: ["src/a.ts"],
+				headSha: HEAD_SHA,
+			}),
+		);
 	});
 
 	it("re-runs review when isReReview is true even with existing PASS", async () => {

@@ -54,9 +54,21 @@ describe("createOrchestratorReviewerExecution", () => {
 		expect(sendUserMessage).toHaveBeenCalledTimes(1);
 		const [instruction, options] = sendUserMessage.mock.calls[0];
 		expect(options).toEqual({ deliverAs: "followUp" });
-		expect(instruction).toContain("category: `pr-reviewer`");
+		expect(instruction).toContain("category `pr-reviewer`");
 		expect(instruction).toContain("PR_REVIEW_REQUEST_ID:");
-		expect(instruction).toContain("diff --git a/src/a.ts b/src/a.ts");
+		expect(instruction).not.toContain("diff --git a/src/a.ts b/src/a.ts");
+		expect(instruction).toContain("Parent diff omitted:");
+		expect(instruction).toContain("git_inspect_safe is optional");
+		expect(instruction).toContain("built-in sandbox-local read-only Git");
+		expect(instruction).toContain(
+			"trusted package scripts inside the disposable sandbox",
+		);
+		expect(instruction).toContain(
+			"Treat the supplied changed-file list as the authoritative filtered review scope",
+		);
+		expect(instruction).toContain("Apply repository `.gitignore` rules");
+		expect(instruction).toContain("`.pi/reviewer.skip`");
+		expect(bridge.reviewerExecution.inspectRepositoryDirectly).toBe(true);
 		expect(bridge.pendingCount()).toBe(1);
 
 		const requestId = String(instruction).match(
@@ -79,6 +91,71 @@ describe("createOrchestratorReviewerExecution", () => {
 		expect(bridge.pendingCount()).toBe(0);
 	});
 
+	it("resolves the sole pending review from an input-light error result", async () => {
+		const bridge = createOrchestratorReviewerExecution({
+			getActiveTools: () => ["orchestrate"],
+			sendUserMessage: vi.fn(),
+		});
+		const pendingResult = bridge.reviewerExecution.runAttempt(
+			makeAttemptInput(),
+		);
+
+		try {
+			const handled = bridge.handleToolResult({
+				toolName: "orchestrate",
+				input: { category: "pr-reviewer" },
+				content: [
+					{
+						type: "text",
+						text: "Agent failed (exit 1): reviewer failed closed",
+					},
+				],
+				isError: true,
+			});
+
+			expect(handled).toBe(true);
+			const result = await pendingResult;
+			expect(result.exitCode).toBe(1);
+			expect(result.rawOutput).toContain("reviewer failed closed");
+			expect(bridge.pendingCount()).toBe(0);
+		} finally {
+			bridge.dispose();
+		}
+	});
+
+	it("resolves the sole pending review from an input-light unparseable result", async () => {
+		const bridge = createOrchestratorReviewerExecution({
+			getActiveTools: () => ["orchestrate"],
+			sendUserMessage: vi.fn(),
+		});
+		const pendingResult = bridge.reviewerExecution.runAttempt(
+			makeAttemptInput(),
+		);
+
+		try {
+			const handled = bridge.handleToolResult({
+				toolName: "orchestrate",
+				input: { category: "pr-reviewer" },
+				content: [
+					{
+						type: "text",
+						text: "Reviewer output was truncated before its Review Report header.",
+					},
+				],
+				isError: false,
+			});
+
+			expect(handled).toBe(true);
+			const result = await pendingResult;
+			expect(result.exitCode).toBe(0);
+			expect(result.report).toBeNull();
+			expect(result.rawOutput).toContain("truncated");
+			expect(bridge.pendingCount()).toBe(0);
+		} finally {
+			bridge.dispose();
+		}
+	});
+
 	it("fails closed when orchestrate is unavailable", async () => {
 		const bridge = createOrchestratorReviewerExecution({
 			getActiveTools: () => [],
@@ -93,6 +170,85 @@ describe("createOrchestratorReviewerExecution", () => {
 		expect(result.exitCode).toBe(1);
 		expect(result.stderr).toContain("orchestrate tool is unavailable");
 		expect(bridge.pendingCount()).toBe(0);
+	});
+
+	it("bounds parent relay metadata independently of full diff size", async () => {
+		const sendUserMessage = vi.fn();
+		const bridge = createOrchestratorReviewerExecution({
+			getActiveTools: () => ["orchestrate"],
+			sendUserMessage,
+		});
+		const input = makeAttemptInput();
+		input.task = "task".repeat(10_000);
+		input.diff = `FULL_DIFF_SENTINEL${"d".repeat(2_000_000)}`;
+		input.testPlan = "test".repeat(10_000);
+		input.files = Array.from(
+			{ length: 100 },
+			(_, i) => `src/${i}-${"p".repeat(500)}.ts`,
+		);
+
+		const pending = bridge.reviewerExecution.runAttempt(input);
+		const instruction = String(sendUserMessage.mock.calls[0]?.[0]);
+		expect(instruction.length).toBeLessThan(20_000);
+		expect(instruction).not.toContain("FULL_DIFF_SENTINEL");
+		expect(instruction).toContain("Parent diff omitted: 2000018 chars");
+		expect(instruction).toContain("68 more file(s) omitted");
+		bridge.dispose();
+		expect((await pending).stderr).toContain("session shut down");
+	});
+
+	it("fails closed and retains bounded tail evidence for oversized tool output", async () => {
+		const sendUserMessage = vi.fn();
+		const tokens = createPassTokenStore();
+		const headSha = "abc123";
+		const bridge = createOrchestratorReviewerExecution(
+			{ getActiveTools: () => ["orchestrate"], sendUserMessage },
+			{ tokens },
+		);
+		const input = makeAttemptInput();
+		input.headSha = headSha;
+		const pending = bridge.reviewerExecution.runAttempt(input);
+		const instruction = String(sendUserMessage.mock.calls[0]?.[0]);
+		const requestId = instruction.match(
+			/PR_REVIEW_REQUEST_ID: (pr-review-[^\n]+)/,
+		)?.[1];
+
+		bridge.handleToolResult({
+			toolName: "orchestrate",
+			input: { category: "pr-reviewer", task: `Request ${requestId}` },
+			content: [
+				{ type: "text", text: "x".repeat(300_000) },
+				{ type: "text", text: passReport() },
+			],
+		});
+		const result = await pending;
+		expect(result.report).toBeNull();
+		expect(result.rawOutput.length).toBeLessThan(263_000);
+		expect(result.rawOutput).toContain("exceeded 262144");
+		expect(tokens.hasPass(headSha)).toBe(false);
+	});
+
+	it("disposes pending timers and rejects new attempts after shutdown", async () => {
+		vi.useFakeTimers();
+		try {
+			const bridge = createOrchestratorReviewerExecution({
+				getActiveTools: () => ["orchestrate"],
+				sendUserMessage: vi.fn(),
+			});
+			const pending = bridge.reviewerExecution.runAttempt(makeAttemptInput());
+			expect(bridge.pendingCount()).toBe(1);
+			bridge.dispose("reload cancellation");
+			expect(bridge.pendingCount()).toBe(0);
+			expect((await pending).stderr).toContain("reload cancellation");
+			expect(bridge.getStatus().lastDiagnostic?.kind).toBe("cancelled");
+			const afterDispose = await bridge.reviewerExecution.runAttempt(
+				makeAttemptInput(),
+			);
+			expect(afterDispose.stderr).toContain("disposed");
+			expect(vi.getTimerCount()).toBe(0);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });
 

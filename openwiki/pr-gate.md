@@ -96,9 +96,9 @@ Tokens are stored in-memory via `PassTokenStore` (`src/pr-gate/pass-token-store.
 4. Run `runPrReview()`:
    - Resolve base ref (defaults: `origin/master` → `origin/main` → `master` → `main` → `HEAD~1`).
    - List changed files via `git diff --name-only`.
-   - Count diff lines → reject if exceeds `maxChangedLines` (5000).
-   - Load skip filter (`.pi/reviewer.skip`).
-   - Gather diff (capped at `maxDiffLines` = 4000).
+   - Load and apply `.gitignore` plus `.pi/reviewer.skip` filters to the review file scope; block if every changed file is excluded.
+   - Count changed lines in the filtered scope → reject if it exceeds `maxChangedLines` (5000).
+   - Pass the filtered file list to repository-direct sandbox review. For legacy/injected execution, gather a capped diff (`maxDiffLines` = 4000). The default orchestrator bridge skips parent diff materialization.
    - Extract original task from session entries.
    - Generate test execution plan.
    - Call `reviewerExecution.runAttempt()`.
@@ -121,15 +121,17 @@ execution bridge.
 
 **Sandboxed orchestrator dispatch:**
 - Creates a unique `PR_REVIEW_REQUEST_ID`.
-- Sends a parent follow-up instructing Pi to call `orchestrate` with category
-  `pr-reviewer` and the prepared PR review task.
+- Sends a bounded parent follow-up containing request/head/base metadata, a capped task/test-plan summary, and at most 32 capped file paths.
+- Deliberately excludes the full diff; the sandbox reviewer inspects `baseRef..HEAD` directly.
 - Listens for the matching `tool_result` from `orchestrate`.
-- Parses that result's text output for the `## Review Report` block.
-- Fails closed if `orchestrate` is unavailable or the request times out.
+- Bounds result capture at 262,144 characters and fails closed on overflow.
+- Fails closed if `orchestrate` is unavailable, the request times out, or the session shuts down. Shutdown clears pending timers/correlation state.
 
 `src/pr-gate/reviewer.ts` still contains the legacy report parser and injectable
 reviewer execution helpers for tests/compatibility, but the package default no
 longer host-spawns a headless child Pi for `/pr-review`.
+
+Legacy direct child capture is also pre-close bounded: 1,048,576 characters per JSON line, 262,144 characters of assistant output, and 65,536 characters of stderr. Overflow produces a parse-failure sidecar and cannot stamp PASS.
 
 **Report parsing** (`parseReviewReport`):
 - Finds `## Review Report` marker (regex, case-insensitive).
@@ -150,12 +152,19 @@ tool allowlist and blocklist.
 
 **`PR_REVIEW_CONFIG`** (source: `src/pr-gate/pr-review-config.ts`):
 - Model: `openai-codex/gpt-5.5` *(verify in source)*
-- `timeoutMs: 600_000`
+- `timeoutMs: 45 * 60_000` (45 minutes)
 - `maxDiffLines: 4000`, `maxChangedLines: 5000`
 - Tool policy intentionally excludes host publishing and durable state mutation
 
 **`PR_REVIEWER_FORBIDDEN_TOOLS`**: bash, git_safe, gh_safe, write/edit-style
-mutation tools, and all mulch/seeds mutating tools.
+mutation tools, and all mulch/seeds mutating tools. This allowlist protects
+legacy/dependency-injected reviewer execution.
+
+The default orchestrator `pr-reviewer` runs inside a disposable sandbox. It
+prefers `git_inspect_safe` and custom validation runners; when unavailable, the
+parent instruction permits sandbox-local read-only Git and trusted package
+scripts. Host mutation and publishing remain forbidden, and unverifiable
+HEAD/base state still fails closed.
 
 **`assertPrReviewerToolPolicy()`**: startup-time safety check — throws if any
 forbidden tool appears in `PR_REVIEW_CONFIG.tools`.
@@ -308,7 +317,7 @@ return even when the HEAD already has a token.
 7. Tokens are sha-scoped, not branch-scoped.
 8. No persistence — session reload clears all tokens.
 9. Auto-review sticky guard: once attempted, same HEAD not auto-attempted again.
-10. Child reviewer has **no bash**, no mutating tools.
+10. Legacy/injected reviewer execution has no bash; the default disposable sandbox may use built-in shell only for sandbox-local read-only Git and trusted package scripts. Neither path permits host mutation or publishing.
 11. `/pr-review` and `pr_review` share one coordinator, one in-progress guard, one dispatch instance, and one exact-HEAD token store — no duplicate review or stamping path.
 12. `pr_review` is asynchronous: `execute` only kicks off the background dispatch and returns compact state; it never awaits the follow-up `orchestrate` result (no deadlock).
 13. `pr_review` and the coordinator **never publish** — no `git_safe`/`gh_safe` push/pr_create/update/merge. The push gate stays fail-closed until the exact HEAD has a PASS token, so a parallel `pr_review` + publish batch cannot bypass it.

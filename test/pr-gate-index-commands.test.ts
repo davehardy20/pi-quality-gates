@@ -42,11 +42,18 @@ function createMockPi(): {
 	tools: Map<string, RegisteredTool>;
 	messages: SentMessage[];
 	activeTools: string[];
+	handlers: Map<string, (...args: unknown[]) => unknown>;
 } {
 	const commands = new Map<string, RegisteredCommand>();
 	const tools = new Map<string, RegisteredTool>();
 	const messages: SentMessage[] = [];
 	const activeTools = ["orchestrate"];
+	const handlers = new Map<string, (...args: unknown[]) => unknown>();
+	const on = vi.fn(
+		(event: string, handler: (...args: unknown[]) => unknown) => {
+			handlers.set(event, handler);
+		},
+	);
 
 	const pi = {
 		registerCommand: (name: string, command: RegisteredCommand) => {
@@ -59,10 +66,10 @@ function createMockPi(): {
 		sendMessage: (message: SentMessage) => {
 			messages.push(message);
 		},
-		on: vi.fn(),
+		on,
 	} as unknown as ExtensionAPI;
 
-	return { pi, commands, tools, messages, activeTools };
+	return { pi, commands, tools, messages, activeTools, handlers };
 }
 
 function createMockContext(
@@ -238,6 +245,41 @@ describe("pr-gate command registration", () => {
 		expect(messages.at(-1)?.customType).toBe("pr-review-status");
 		expect(messages.at(-1)?.content).toContain("linter is not clean");
 		expect(messages.some((m) => m.content?.includes("PR review started"))).toBe(
+			false,
+		);
+	});
+});
+
+describe("pr-gate session shutdown", () => {
+	it("registers cleanup and suppresses late review completion delivery", async () => {
+		const { pi, commands, messages, handlers } = createMockPi();
+		let resolveDispatch: (value: unknown) => void = () => {};
+		const dispatch = vi.fn(
+			() =>
+				new Promise((resolve) => {
+					resolveDispatch = resolve;
+				}),
+		);
+		prGateExtension(pi, {
+			resolveHeadSha: () => "shutdown-head",
+			createPrReviewDispatch: () => ({ dispatch }) as never,
+		});
+		await commands.get("pr-review")?.handler("", createMockContext());
+		expect(dispatch).toHaveBeenCalledTimes(1);
+		const messageCountBeforeShutdown = messages.length;
+
+		await handlers.get("session_shutdown")?.();
+		resolveDispatch({
+			report: null,
+			stamped: false,
+			escalated: false,
+			blocked: true,
+			message: "late completion must not be delivered",
+		});
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(messages).toHaveLength(messageCountBeforeShutdown);
+		expect(messages.some((m) => m.content?.includes("late completion"))).toBe(
 			false,
 		);
 	});

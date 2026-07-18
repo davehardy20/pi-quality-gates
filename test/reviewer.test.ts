@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+	createBoundedLineProcessor,
+	createBoundedTextCapture,
 	createReviewerExecution,
 	parseReviewReport,
 	type ReviewerResult,
@@ -142,6 +144,37 @@ describe("parseReviewReport", () => {
 		expect(report?.status).toBe("PASS");
 		expect(report?.testExecution?.status).toBe("PASS");
 		expect(report?.summary).toBe("Final summary: PASS");
+	});
+});
+
+describe("bounded reviewer output capture", () => {
+	it("retains a bounded tail and reports oversized multi-chunk output", () => {
+		const capture = createBoundedTextCapture(10);
+		capture.append("123456");
+		capture.append("7890abcdef");
+		expect(capture.value()).toBe("7890abcdef");
+		expect(capture.totalChars()).toBe(16);
+		expect(capture.overflowed()).toBe(true);
+	});
+
+	it("bounds an unterminated JSON line before process close", () => {
+		const lines: string[] = [];
+		const processor = createBoundedLineProcessor(16, (line) =>
+			lines.push(line),
+		);
+		processor.append("x".repeat(1_000_000));
+		expect(processor.bufferedChars()).toBe(16);
+		expect(processor.overflowed()).toBe(true);
+		processor.flush();
+		expect(lines).toEqual([]);
+	});
+
+	it("continues parsing lines after an oversized line", () => {
+		const lines: string[] = [];
+		const processor = createBoundedLineProcessor(8, (line) => lines.push(line));
+		processor.append(`${"x".repeat(100)}\nok\n`);
+		expect(processor.overflowed()).toBe(true);
+		expect(lines).toEqual(["ok"]);
 	});
 });
 

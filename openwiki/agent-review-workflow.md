@@ -54,7 +54,7 @@ Everything else on this page follows from that rule.
    5. Background dispatch starts (NOT awaited by execute)
           │
           ▼
-   6. Sandbox pr-reviewer runs (read-only tools, no bash, no mutation)
+   6. Sandbox pr-reviewer runs (read-only sandbox tools, no host mutation)
           │
           ▼
    7. Matching tool_result handler resumes dispatch
@@ -109,6 +109,7 @@ command/tool parity.
 4. The existing matching `tool_result` handler in
    `orchestrator-reviewer-execution.ts` resumes the dispatch, parses the sandbox
    report, and stamps a PASS token **only for the exact reviewed HEAD**.
+   The parent follow-up contains bounded metadata only; the full diff is not relayed through session context. The sandbox reviewer inspects the stated base ref and HEAD directly.
 5. On completion the coordinator emits one of:
    - `pr-review-pass` — PASS report, exact-HEAD token stamped.
    - `pr-review-escalation` — CRITICAL security finding; requires human ack.
@@ -118,6 +119,8 @@ command/tool parity.
 A PASS report that omits the `### Test execution` section or reports `FAIL`/
 `NOT_RUN` is overridden to `CANNOT_REVIEW` and blocked — the agent cannot stamp a
 token by claiming PASS without verified tests.
+
+On `session_shutdown`, the bridge cancels pending attempts, clears timers and request correlation, and the coordinator suppresses late UI/session messages. Reload therefore requires a fresh review.
 
 ## Retained safety boundaries
 
@@ -164,13 +167,19 @@ clears all tokens, so a re-review is required after reload (fail-safe default).
 
 ### Reviewer tool policy
 
-The sandbox pr-reviewer runs with a strict read-only + safe-runner tool policy
-(`src/pr-gate/pr-review-config.ts`):
+The legacy/dependency-injected reviewer path is guarded by the strict tool policy
+in `src/pr-gate/pr-review-config.ts`:
 
 - No `bash`, no `git_safe`/`gh_safe`, no write/edit-style mutation tools.
 - No mulch/seeds mutating tools.
 - `assertPrReviewerToolPolicy()` runs at startup and **throws** if any forbidden
   tool appears in the allowed list.
+
+The default orchestrator `pr-reviewer` runs in a disposable sandbox. It prefers
+`git_inspect_safe` and custom validation runners, but may use sandbox-local
+read-only Git and trusted package scripts when those custom tools are absent.
+Host mutation and publishing remain forbidden; HEAD/base verification remains
+fail-closed.
 
 ### Linter prerequisite
 
@@ -252,7 +261,8 @@ pr-reviewer to return PASS with verified test execution, on the exact HEAD.
    parallel `pr_review` + publish batch cannot bypass it.
 5. An explicit `baseRef` is an intentional re-review in both wrappers.
 6. The kickoff result carries no report/diff/findings content.
-7. The reviewer sandbox has no bash and no mutating tools; the startup policy
-   check throws on violation.
+7. Legacy/injected execution has no bash; the default disposable sandbox may
+   use built-in shell only for sandbox-local read-only Git and trusted package
+   scripts. Neither path permits host mutation or publishing.
 8. PASS requires verified test execution; missing/failed tests →
    `CANNOT_REVIEW` → blocked.

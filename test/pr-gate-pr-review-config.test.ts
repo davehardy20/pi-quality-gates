@@ -32,6 +32,10 @@ describe("PR reviewer config", () => {
 		expect(PR_REVIEW_CONFIG.model).toBe("openai-codex/gpt-5.5");
 	});
 
+	it("allows enough time for sandbox image startup and deep review", () => {
+		expect(PR_REVIEW_CONFIG.timeoutMs).toBeGreaterThanOrEqual(45 * 60_000);
+	});
+
 	it("does not grant bash", () => {
 		expect(PR_REVIEWER_TOOLS.has("bash")).toBe(false);
 		expect(PR_REVIEWER_FORBIDDEN_TOOLS.has("bash")).toBe(true);
