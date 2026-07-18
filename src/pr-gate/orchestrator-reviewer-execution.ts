@@ -179,9 +179,10 @@ function renderParentInstruction(input: {
 		"",
 		"Reviewer instructions:",
 		"- Inspect the current repository and compare the stated base ref with HEAD inside the disposable sandbox.",
-		"- Use git_inspect_safe first; if it cannot expose the committed base diff, use sandbox-local read-only git commands.",
-		"- Read the changed files and run the relevant safe validation tools.",
-		"- Fail closed if the stated HEAD/base cannot be verified.",
+		"- git_inspect_safe is optional: use it first when available; otherwise you MUST use built-in sandbox-local read-only Git commands against the disposable `.git` clone.",
+		"- Prefer safe validation runners; when unavailable, use trusted package scripts inside the disposable sandbox according to the supplied test plan.",
+		"- Read the changed files and run the relevant validation. Never use host mutation or publishing commands.",
+		"- Fail closed only if HEAD/base still cannot be verified after the disposable Git fallback.",
 	].join("\n");
 }
 

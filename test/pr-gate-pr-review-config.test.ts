@@ -33,7 +33,7 @@ describe("PR reviewer config", () => {
 	});
 
 	it("allows enough time for sandbox image startup and deep review", () => {
-		expect(PR_REVIEW_CONFIG.timeoutMs).toBeGreaterThanOrEqual(30 * 60_000);
+		expect(PR_REVIEW_CONFIG.timeoutMs).toBeGreaterThanOrEqual(45 * 60_000);
 	});
 
 	it("does not grant bash", () => {

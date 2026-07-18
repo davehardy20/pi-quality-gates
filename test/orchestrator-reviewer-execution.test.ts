@@ -58,6 +58,11 @@ describe("createOrchestratorReviewerExecution", () => {
 		expect(instruction).toContain("PR_REVIEW_REQUEST_ID:");
 		expect(instruction).not.toContain("diff --git a/src/a.ts b/src/a.ts");
 		expect(instruction).toContain("Parent diff omitted:");
+		expect(instruction).toContain("git_inspect_safe is optional");
+		expect(instruction).toContain("built-in sandbox-local read-only Git");
+		expect(instruction).toContain(
+			"trusted package scripts inside the disposable sandbox",
+		);
 		expect(bridge.reviewerExecution.inspectRepositoryDirectly).toBe(true);
 		expect(bridge.pendingCount()).toBe(1);
 
