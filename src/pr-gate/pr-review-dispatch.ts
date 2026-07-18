@@ -5,6 +5,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import type { ReviewConfig } from "../shared/review-config.js";
 import {
+	applyDiffFilters,
 	countDiffLinesFast,
 	type DiffFilterOptions,
 	extractOriginalTask,
@@ -31,6 +32,11 @@ export interface PrReviewDispatchDeps {
 	getHeadSha: (cwd: string) => string;
 	getBaseRef: (cwd: string) => string;
 	listChangedFiles: (cwd: string, baseRef: string) => Promise<string[]>;
+	applyDiffFilters: (
+		files: string[],
+		cwd: string,
+		filterOptions?: DiffFilterOptions,
+	) => Promise<string[]>;
 	countDiffLines: (
 		files: string[],
 		cwd: string,
@@ -246,6 +252,7 @@ export function createPrReviewDispatch(
 		},
 		getBaseRef: resolveDefaultBaseRef,
 		listChangedFiles: defaultListChangedFiles,
+		applyDiffFilters,
 		countDiffLines: countDiffLinesFast,
 		gatherDiff,
 		extractTask: extractOriginalTask,
@@ -270,10 +277,26 @@ export function createPrReviewDispatch(
 
 		const baseRef = explicitBaseRef ?? deps.getBaseRef(cwd);
 
-		const changedFiles = await deps.listChangedFiles(cwd, baseRef);
-		if (changedFiles.length === 0) {
+		const unfilteredChangedFiles = await deps.listChangedFiles(cwd, baseRef);
+		if (unfilteredChangedFiles.length === 0) {
 			throw new Error(
 				`No files changed between ${baseRef} and HEAD. Nothing to review.`,
+			);
+		}
+
+		const skipFilter = await loadSkipFilterForConfig(cwd, PR_REVIEW_CONFIG);
+		const filterOptions: DiffFilterOptions = {
+			respectGitignore: PR_REVIEW_CONFIG.respectGitignore,
+			skipFilter,
+		};
+		const changedFiles = await deps.applyDiffFilters(
+			unfilteredChangedFiles,
+			cwd,
+			filterOptions,
+		);
+		if (changedFiles.length === 0) {
+			throw new Error(
+				`All files changed between ${baseRef} and HEAD are excluded by review filters. Nothing to review.`,
 			);
 		}
 
@@ -283,12 +306,6 @@ export function createPrReviewDispatch(
 				`Diff too large: ${diffLines} changed lines exceed the PR review limit (${PR_REVIEW_CONFIG.maxChangedLines}).`,
 			);
 		}
-
-		const skipFilter = await loadSkipFilterForConfig(cwd, PR_REVIEW_CONFIG);
-		const filterOptions: DiffFilterOptions = {
-			respectGitignore: PR_REVIEW_CONFIG.respectGitignore,
-			skipFilter,
-		};
 
 		const diff = deps.reviewerExecution.inspectRepositoryDirectly
 			? undefined

@@ -146,6 +146,8 @@ function renderParentInstruction(input: {
 	testPlan: string | undefined;
 	baseRef: string | undefined;
 	headSha: string | undefined;
+	respectGitignore: boolean;
+	skipFile: string | null;
 }): string {
 	const visibleFiles = input.files.slice(0, MAX_PARENT_FILES);
 	const omittedFiles = Math.max(0, input.files.length - visibleFiles.length);
@@ -179,9 +181,25 @@ function renderParentInstruction(input: {
 		"",
 		"Reviewer instructions:",
 		"- Inspect the current repository and compare the stated base ref with HEAD inside the disposable sandbox.",
+		"- Treat the supplied changed-file list as the authoritative filtered review scope for every path shown; never inspect or report findings for excluded paths.",
+		...(omittedFiles > 0
+			? [
+					"- The parent omitted some filtered paths for bounded metadata. Derive only those remaining paths from base..HEAD, then apply the same filters before inspecting content.",
+				]
+			: []),
+		...(input.respectGitignore
+			? [
+					"- Apply repository `.gitignore` rules to any changed paths derived inside the sandbox before inspecting file content.",
+				]
+			: []),
+		...(input.skipFile
+			? [
+					`- Read and apply \`${truncateMetadata(input.skipFile, 256)}\` using gitignore semantics to any changed paths derived inside the sandbox before inspecting file content.`,
+				]
+			: []),
 		"- git_inspect_safe is optional: use it first when available; otherwise you MUST use built-in sandbox-local read-only Git commands against the disposable `.git` clone.",
 		"- Prefer safe validation runners; when unavailable, use trusted package scripts inside the disposable sandbox according to the supplied test plan.",
-		"- Read the changed files and run the relevant validation. Never use host mutation or publishing commands.",
+		"- Read only the filtered changed files and run the relevant validation. Never use host mutation or publishing commands.",
 		"- Fail closed only if HEAD/base still cannot be verified after the disposable Git fallback.",
 	].join("\n");
 }
@@ -413,6 +431,10 @@ export function createOrchestratorReviewerExecution(
 					testPlan: input.testPlan,
 					baseRef: input.baseRef,
 					headSha,
+					respectGitignore:
+						input.filterOptions?.respectGitignore ??
+						input.config.respectGitignore,
+					skipFile: input.config.skipFile,
 				});
 
 				// Preserve exact request→HEAD correlation after timeout so a late

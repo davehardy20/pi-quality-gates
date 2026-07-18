@@ -63,6 +63,11 @@ describe("createOrchestratorReviewerExecution", () => {
 		expect(instruction).toContain(
 			"trusted package scripts inside the disposable sandbox",
 		);
+		expect(instruction).toContain(
+			"Treat the supplied changed-file list as the authoritative filtered review scope",
+		);
+		expect(instruction).toContain("Apply repository `.gitignore` rules");
+		expect(instruction).toContain("`.pi/reviewer.skip`");
 		expect(bridge.reviewerExecution.inspectRepositoryDirectly).toBe(true);
 		expect(bridge.pendingCount()).toBe(1);
 
