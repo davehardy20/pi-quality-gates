@@ -113,6 +113,39 @@ describe("createOrchestratorReviewerExecution", () => {
 		}
 	});
 
+	it("resolves the sole pending review from an input-light unparseable result", async () => {
+		const bridge = createOrchestratorReviewerExecution({
+			getActiveTools: () => ["orchestrate"],
+			sendUserMessage: vi.fn(),
+		});
+		const pendingResult = bridge.reviewerExecution.runAttempt(
+			makeAttemptInput(),
+		);
+
+		try {
+			const handled = bridge.handleToolResult({
+				toolName: "orchestrate",
+				input: { category: "pr-reviewer" },
+				content: [
+					{
+						type: "text",
+						text: "Reviewer output was truncated before its Review Report header.",
+					},
+				],
+				isError: false,
+			});
+
+			expect(handled).toBe(true);
+			const result = await pendingResult;
+			expect(result.exitCode).toBe(0);
+			expect(result.report).toBeNull();
+			expect(result.rawOutput).toContain("truncated");
+			expect(bridge.pendingCount()).toBe(0);
+		} finally {
+			bridge.dispose();
+		}
+	});
+
 	it("fails closed when orchestrate is unavailable", async () => {
 		const bridge = createOrchestratorReviewerExecution({
 			getActiveTools: () => [],

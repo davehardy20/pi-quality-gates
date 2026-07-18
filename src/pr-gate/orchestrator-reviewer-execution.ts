@@ -289,18 +289,17 @@ export function createOrchestratorReviewerExecution(
 					matchedRequestId = fromText;
 				}
 			}
-			if (
-				!matchedRequestId &&
-				(event.isError || captured.overflowed) &&
-				pending.size === 1
-			) {
-				matchedRequestId = pending.keys().next().value ?? null;
-			}
-
 			const report =
 				event.isError || captured.overflowed
 					? null
 					: parseReviewReport(rawOutput);
+			if (
+				!matchedRequestId &&
+				pending.size === 1 &&
+				(event.isError || captured.overflowed || report?.status !== "PASS")
+			) {
+				matchedRequestId = pending.keys().next().value ?? null;
+			}
 			const correlatedHeadSha = matchedRequestId
 				? (knownRequestHeads.get(matchedRequestId) ?? "")
 				: "";
