@@ -211,6 +211,7 @@ describe("post-turn-linter: core helpers", () => {
 		const summary = buildSummaryFirstLintMessage({
 			report,
 			filesChecked: ["/repo/docs/a.md", "/repo/docs/b.md", "/repo/docs/c.md"],
+			skippedFiles: ["/repo/generated.bin"],
 			affectedFiles: ["/repo/docs/a.md", "/repo/docs/b.md", "/repo/docs/c.md"],
 			cwd: "/repo",
 			reportId: 7,
@@ -223,6 +224,7 @@ describe("post-turn-linter: core helpers", () => {
 		expect(summary.message.length).toBeLessThanOrEqual(1800);
 		expect(summary.message).toContain("Report #7");
 		expect(summary.message).toContain("Linters: markdownlint");
+		expect(summary.message).toContain("skipped 1 file(s)");
 		expect(summary.message).toContain("docs/a.md:10");
 		expect(summary.message).toContain("MD012/no-multiple-blanks");
 		expect(summary.message).toContain("fix: delete 1");
@@ -233,6 +235,7 @@ describe("post-turn-linter: core helpers", () => {
 		expect(summary.details.visibleFindings).toBe(3);
 		expect(summary.details.lowPriorityFindings).toBe(3);
 		expect(summary.details.excerptsOmitted).toBe(true);
+		expect(summary.details.skippedFileCount).toBe(1);
 
 		const ruffSummary = buildSummaryFirstLintMessage({
 			report: [

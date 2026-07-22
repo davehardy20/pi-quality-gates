@@ -102,6 +102,7 @@ export async function runQueuedLspChecks(
 			report: "",
 			affectedFiles: [],
 			signature: JSON.stringify({ lsp: "disabled" }),
+			checkedFiles: [],
 		};
 	}
 
@@ -112,6 +113,7 @@ export async function runQueuedLspChecks(
 			report: "",
 			affectedFiles: [],
 			signature: JSON.stringify({ lsp: "no-eligible-files" }),
+			checkedFiles: [],
 		};
 	}
 
@@ -157,6 +159,7 @@ export async function runQueuedLspChecks(
 						files: filesToSync,
 						lines: reportLines,
 					}),
+					checkedFiles: filesToSync,
 				});
 			} else {
 				outcomes.push({
@@ -164,6 +167,7 @@ export async function runQueuedLspChecks(
 					report: "",
 					affectedFiles: [],
 					signature: JSON.stringify({ files: filesToSync, clean: true }),
+					checkedFiles: filesToSync,
 				});
 			}
 		} catch (error) {
@@ -173,6 +177,7 @@ export async function runQueuedLspChecks(
 				report: `LSP error: ${message}`,
 				affectedFiles: [],
 				signature: JSON.stringify({ error: message }),
+				checkedFiles: [],
 			});
 		}
 	}
@@ -187,12 +192,16 @@ function mergeLspOutcomes(outcomes: ValidationOutcome[]): ValidationOutcome {
 			report: "",
 			affectedFiles: [],
 			signature: JSON.stringify({ lsp: "no-servers" }),
+			checkedFiles: [],
 		};
 	}
 
 	const findings = outcomes.filter((outcome) => outcome.kind === "findings");
 	const toolErrors = outcomes.filter(
 		(outcome) => outcome.kind === "tool-error",
+	);
+	const checkedFiles = normalizeAndSortPaths(
+		outcomes.flatMap((outcome) => outcome.checkedFiles ?? []),
 	);
 
 	if (findings.length > 0) {
@@ -205,6 +214,7 @@ function mergeLspOutcomes(outcomes: ValidationOutcome[]): ValidationOutcome {
 				findings.flatMap((outcome) => outcome.affectedFiles),
 			),
 			signature: buildLspCombinedSignature(outcomes),
+			checkedFiles,
 		};
 	}
 
@@ -214,6 +224,7 @@ function mergeLspOutcomes(outcomes: ValidationOutcome[]): ValidationOutcome {
 			report: toolErrors.map((outcome) => outcome.report).join("\n\n"),
 			affectedFiles: [],
 			signature: buildLspCombinedSignature(outcomes),
+			checkedFiles,
 		};
 	}
 
@@ -222,6 +233,7 @@ function mergeLspOutcomes(outcomes: ValidationOutcome[]): ValidationOutcome {
 		report: "",
 		affectedFiles: [],
 		signature: buildLspCombinedSignature(outcomes),
+		checkedFiles,
 	};
 }
 

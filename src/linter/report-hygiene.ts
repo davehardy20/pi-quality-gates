@@ -66,6 +66,7 @@ export interface ParsedLintFinding {
 export interface LinterReportSummaryDetails {
 	reportId: number;
 	checkedFileCount: number;
+	skippedFileCount: number;
 	affectedFileCount: number;
 	affectedFiles: string[];
 	linterNames: string[];
@@ -122,6 +123,7 @@ export async function recoverLinterReportSidecar(
 export function buildSummaryFirstLintMessage(args: {
 	report: string;
 	filesChecked: string[];
+	skippedFiles?: string[];
 	affectedFiles: string[];
 	cwd: string;
 	reportId: number;
@@ -152,7 +154,7 @@ export function buildSummaryFirstLintMessage(args: {
 
 	const lines: string[] = [
 		"Post-turn lint check completed: findings.",
-		`Report #${args.reportId}. Checked ${args.filesChecked.length} file(s); affected ${args.affectedFiles.length} file(s).`,
+		`Report #${args.reportId}. Checked ${args.filesChecked.length} file(s); affected ${args.affectedFiles.length} file(s)${args.skippedFiles?.length ? `; skipped ${args.skippedFiles.length} file(s)` : ""}.`,
 		`Linters: ${linterNames.join(", ")}.`,
 		`Summary caps: showing ${selectedFindings.length} of ${parsed.findings.length} parsed finding(s) (max ${maxFindings} global, ${maxFindingsPerFile} per file).`,
 	];
@@ -215,6 +217,7 @@ export function buildSummaryFirstLintMessage(args: {
 		details: {
 			reportId: args.reportId,
 			checkedFileCount: args.filesChecked.length,
+			skippedFileCount: args.skippedFiles?.length ?? 0,
 			affectedFileCount: args.affectedFiles.length,
 			affectedFiles,
 			linterNames,

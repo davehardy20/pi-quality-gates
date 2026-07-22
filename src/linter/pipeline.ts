@@ -1,4 +1,6 @@
+import { normalizeAndSortPaths } from "../shared/path-utils.js";
 import { createCliAdapter } from "./adapters/cli.js";
+import { createGoAdapter } from "./adapters/go.js";
 import { createLspAdapter } from "./adapters/lsp.js";
 import { createMarkdownlintAdapter } from "./adapters/markdownlint.js";
 import type { LinterAdapter } from "./adapters/types.js";
@@ -82,8 +84,8 @@ export function createLinterPipeline(
 	): Promise<CombinedValidationOutcome> {
 		const config = await loadConfig();
 		const adapters = getAdapters(config);
-		const filteredFiles = filePaths.filter(
-			(f) => !isBuiltInIgnoredAgentArtifact(f),
+		const filteredFiles = normalizeAndSortPaths(
+			filePaths.filter((filePath) => !isBuiltInIgnoredAgentArtifact(filePath)),
 		);
 
 		const lspAdapter = adapters.find((a) => a.key === "lsp");
@@ -102,8 +104,10 @@ export function createLinterPipeline(
 			}),
 		);
 
+		let lspCheckedFiles: string[] = [];
 		if (lspAdapter) {
 			const lspResult = await lspAdapter.run(filteredFiles, cwd);
+			lspCheckedFiles = lspResult.checkedFiles ?? [];
 			results.push(lspResult);
 		}
 
@@ -111,15 +115,24 @@ export function createLinterPipeline(
 			reportMode: config.reportMode ?? "auto-follow-up",
 			results,
 		});
+		const checkedFiles = normalizeAndSortPaths([
+			...Array.from(groups.values()).flat(),
+			...lspCheckedFiles,
+		]);
+		const checkedSet = new Set(checkedFiles);
+		const skippedFiles = normalizeAndSortPaths(
+			filteredFiles.filter((filePath) => !checkedSet.has(filePath)),
+		);
+		const outcome = { ...merged, checkedFiles, skippedFiles };
 
-		if (merged.kind !== "findings") {
-			return merged;
+		if (outcome.kind !== "findings") {
+			return outcome;
 		}
 
-		const excerpts = await buildCodeExcerptSection(merged.report, cwd);
+		const excerpts = await buildCodeExcerptSection(outcome.report, cwd);
 		return {
-			...merged,
-			report: excerpts ? `${merged.report}\n\n${excerpts}` : merged.report,
+			...outcome,
+			report: excerpts ? `${outcome.report}\n\n${excerpts}` : outcome.report,
 		};
 	}
 
@@ -129,7 +142,8 @@ export function createLinterPipeline(
 	): ReturnType<typeof buildSummaryFirstLintMessage> {
 		return buildSummaryFirstLintMessage({
 			report: outcome.report,
-			filesChecked: [],
+			filesChecked: outcome.checkedFiles,
+			skippedFiles: outcome.skippedFiles,
 			affectedFiles: outcome.affectedFiles,
 			cwd,
 			reportId,
@@ -211,6 +225,8 @@ function buildAdaptersFromConfig(
 					config: config.markdownlintConfig ?? DEFAULT_MARKDOWNLINT_CONFIG,
 				}),
 			);
+		} else if (linter.type === "api" && linter.name === "go") {
+			adapters.push(createGoAdapter({ timeoutMs: config.timeoutMs }));
 		} else if (linter.type === "cli") {
 			adapters.push(
 				createCliAdapter({

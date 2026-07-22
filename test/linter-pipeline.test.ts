@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { runQueuedLspChecks } from "../src/linter/adapters/lsp.js";
 import type { LinterAdapter } from "../src/linter/adapters/types.js";
 import {
 	mergeValidationOutcomes,
@@ -278,6 +279,73 @@ describe("linter pipeline characterization", () => {
 		expect(combined.reportMode).toBe("report-only");
 	});
 
+	it("reports files routed to validators separately from skipped files", async () => {
+		const checkedFile = makeFile("src/a.ts", "const x = 1;\n");
+		const checkedAlias = `${tempDir}/src/../src/a.ts`;
+		const skippedFile = makeFile("notes.txt", "not linted\n");
+		const adapter: LinterAdapter = {
+			name: "FakeCLI",
+			key: "cli:node:fake.js",
+			run: async () => ({
+				kind: "clean",
+				report: "",
+				affectedFiles: [],
+				signature: "clean",
+			}),
+		};
+		const pipeline = createLinterPipeline({
+			cwd: tempDir,
+			adapters: [adapter],
+			loadConfig: async () =>
+				({
+					linters: {
+						".ts": {
+							type: "cli",
+							command: "node",
+							args: ["fake.js"],
+							name: "FakeCLI",
+						},
+					},
+					lsp: { enabled: false },
+				}) as LinterConfig,
+		});
+
+		const outcome = await pipeline.runChecks([checkedAlias, skippedFile]);
+
+		expect(outcome.checkedFiles).toEqual([checkedFile]);
+		expect(outcome.skippedFiles).toEqual([skippedFile]);
+
+		const summary = pipeline.summarize(
+			{
+				...outcome,
+				kind: "findings",
+				report: `--- FakeCLI (1 file) ---\n${checkedFile}:1:1 fake issue`,
+				affectedFiles: [checkedFile],
+			},
+			9,
+		);
+		expect(summary.message).toContain("skipped 1 file(s)");
+		expect(summary.details.skippedFileCount).toBe(1);
+	});
+
+	it("does not claim an unsupported file was checked", async () => {
+		const skippedFile = makeFile("main.go.unknown", "not linted\n");
+		const pipeline = createLinterPipeline({
+			cwd: tempDir,
+			adapters: [],
+			loadConfig: async () => ({
+				linters: {},
+				lsp: { enabled: false },
+			}),
+		});
+
+		const outcome = await pipeline.runChecks([skippedFile]);
+
+		expect(outcome.kind).toBe("clean");
+		expect(outcome.checkedFiles).toEqual([]);
+		expect(outcome.skippedFiles).toEqual([skippedFile]);
+	});
+
 	it("runs the LSP adapter independently of extension-based adapters", async () => {
 		const filePath = makeFile("src/a.ts", "const x = 1;\n");
 		const calls: { key: string; paths: string[] }[] = [];
@@ -333,6 +401,55 @@ describe("linter pipeline characterization", () => {
 		expect(
 			calls.some((c) => c.key === "lsp" && c.paths.includes(filePath)),
 		).toBe(true);
+	});
+
+	it("counts files completed by an LSP-only validator as checked", async () => {
+		const filePath = makeFile("data.json", "{}\n");
+		const lspAdapter: LinterAdapter = {
+			name: "LSP diagnostics",
+			key: "lsp",
+			run: async () => ({
+				kind: "clean",
+				report: "",
+				affectedFiles: [],
+				signature: "lsp-clean",
+				checkedFiles: [filePath],
+			}),
+		};
+		const pipeline = createLinterPipeline({
+			cwd: tempDir,
+			adapters: [lspAdapter],
+			loadConfig: async () => ({
+				linters: {},
+				lsp: { enabled: true },
+			}),
+		});
+
+		const outcome = await pipeline.runChecks([filePath]);
+
+		expect(outcome.checkedFiles).toEqual([filePath]);
+		expect(outcome.skippedFiles).toEqual([]);
+	});
+
+	it("does not report files as LSP-checked when client startup fails", async () => {
+		const filePath = makeFile("src/a.ts", "const x = 1;\n");
+
+		const outcome = await runQueuedLspChecks(
+			{
+				filePaths: [filePath],
+				cwd: tempDir,
+				ctx: {} as never,
+				config: { enabled: true },
+			},
+			{
+				getLspClient: async () => {
+					throw new Error("startup failed");
+				},
+			} as never,
+		);
+
+		expect(outcome.kind).toBe("tool-error");
+		expect(outcome.checkedFiles).toEqual([]);
 	});
 
 	it("honors custom markdownlint config loaded from the repo", async () => {

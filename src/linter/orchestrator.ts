@@ -430,6 +430,11 @@ export function createLinterOrchestrator(
 		const result = await pipeline.runChecks(filesToLint);
 
 		state.reportMode = result.reportMode;
+		const checkedFiles = result.checkedFiles ?? filesToLint;
+		const skippedFiles = result.skippedFiles ?? [];
+		const coverageSummary = `${checkedFiles.length} file(s) checked${
+			skippedFiles.length > 0 ? `, ${skippedFiles.length} skipped` : ""
+		}`;
 
 		if (result.kind === "tool-error") {
 			safeSetStatus(ctx, "post-turn-linter: tool error");
@@ -442,9 +447,13 @@ export function createLinterOrchestrator(
 
 			pi.sendMessage({
 				customType: "post-turn-linter-status",
-				content: `post-turn-linter: tool error (${filesToLint.length} file(s) checked)`,
+				content: `post-turn-linter: tool error (${coverageSummary})`,
 				display: false,
-				details: { status: "tool-error", files: filesToLint },
+				details: {
+					status: "tool-error",
+					files: checkedFiles,
+					skippedFiles,
+				},
 			});
 
 			return;
@@ -461,12 +470,12 @@ export function createLinterOrchestrator(
 
 			pi.sendMessage({
 				customType: "post-turn-linter-status",
-				content: `post-turn-linter: clean (${filesToLint.length} file(s) checked)`,
+				content: `post-turn-linter: clean (${coverageSummary})`,
 				display: false,
-				details: { status: "clean", files: filesToLint },
+				details: { status: "clean", files: checkedFiles, skippedFiles },
 			});
 
-			for (const filePath of filesToLint) {
+			for (const filePath of checkedFiles) {
 				const stats = getFileStats(filePath, deps.statSync);
 				if (stats) {
 					state.recentlyClean.set(filePath, stats);
@@ -477,7 +486,7 @@ export function createLinterOrchestrator(
 
 		const report = result.report;
 		const filesWithErrors = new Set(result.affectedFiles);
-		for (const filePath of filesToLint) {
+		for (const filePath of checkedFiles) {
 			if (!filesWithErrors.has(filePath)) {
 				const stats = getFileStats(filePath, deps.statSync);
 				if (stats) {
@@ -518,7 +527,8 @@ export function createLinterOrchestrator(
 
 		const summary = buildSummaryFirstLintMessage({
 			report,
-			filesChecked: filesToLint,
+			filesChecked: checkedFiles,
+			skippedFiles,
 			affectedFiles: result.affectedFiles,
 			cwd: cwd(),
 			reportId,
@@ -541,11 +551,12 @@ export function createLinterOrchestrator(
 
 		pi.sendMessage({
 			customType: "post-turn-linter-status",
-			content: `post-turn-linter: findings (${result.affectedFiles.length} file(s) affected)`,
+			content: `post-turn-linter: findings (${result.affectedFiles.length} file(s) affected; ${coverageSummary})`,
 			display: false,
 			details: {
 				status: "findings",
-				files: filesToLint,
+				files: checkedFiles,
+				skippedFiles,
 				affectedFiles: result.affectedFiles,
 				summary: summary.details,
 			},

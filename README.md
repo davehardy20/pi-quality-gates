@@ -8,8 +8,8 @@ gate that blocks unsafe publishing until changes are reviewed.
 ### Post-Turn Linter
 
 - Automatically runs lint checks on files modified during each agent turn
-- Supports: markdownlint, biome, ruff, cppcheck, tflint, cargo clippy
-- Optional LSP diagnostics integration (typescript-language-server, pyright, etc.)
+- Supports: markdownlint, Biome, Ruff, cppcheck, tflint, cargo clippy, and Go (`gofmt` + `go vet`)
+- Optional LSP diagnostics integration, including `gopls` for supplementary Go diagnostics
 - Auto-fix follow-up turns for findings
 - Summary-first finding reports that keep parent context bounded by default
 - Full redacted linter reports are written to sidecars for manual recovery
@@ -113,6 +113,10 @@ policy.
   `orchestrate` tool is unavailable, the gate fails closed with an explicit
   status message instead of spawning a host reviewer.
 - LSP diagnostics are optional and disabled by default. Enable via linter config.
+- Go files are validated by default with `gofmt -l` for modified files and
+  `go vet ./...` once per nearest `go.mod` module. This does not require LSP.
+- Clean/status messages distinguish files routed to validators from unsupported
+  files that were skipped.
 - Linter sidecar `full` recovery requires `--ack-context-cost` in parent
   sessions; in orchestrator/sub-agent sessions, linter `runtimeMode: "auto"`
   detects `PI_QUALITY_GATES_SUBAGENT_MODE=1` or `PI_ORCH_*` worker env and
