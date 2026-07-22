@@ -143,6 +143,7 @@ export function createLinterPipeline(
 		return buildSummaryFirstLintMessage({
 			report: outcome.report,
 			filesChecked: outcome.checkedFiles,
+			skippedFiles: outcome.skippedFiles,
 			affectedFiles: outcome.affectedFiles,
 			cwd,
 			reportId,

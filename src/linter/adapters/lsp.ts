@@ -177,7 +177,7 @@ export async function runQueuedLspChecks(
 				report: `LSP error: ${message}`,
 				affectedFiles: [],
 				signature: JSON.stringify({ error: message }),
-				checkedFiles: filesToSync,
+				checkedFiles: [],
 			});
 		}
 	}
