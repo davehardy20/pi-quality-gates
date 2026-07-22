@@ -280,6 +280,7 @@ describe("linter pipeline characterization", () => {
 
 	it("reports files routed to validators separately from skipped files", async () => {
 		const checkedFile = makeFile("src/a.ts", "const x = 1;\n");
+		const checkedAlias = `${tempDir}/src/../src/a.ts`;
 		const skippedFile = makeFile("notes.txt", "not linted\n");
 		const adapter: LinterAdapter = {
 			name: "FakeCLI",
@@ -308,7 +309,7 @@ describe("linter pipeline characterization", () => {
 				}) as LinterConfig,
 		});
 
-		const outcome = await pipeline.runChecks([checkedFile, skippedFile]);
+		const outcome = await pipeline.runChecks([checkedAlias, skippedFile]);
 
 		expect(outcome.checkedFiles).toEqual([checkedFile]);
 		expect(outcome.skippedFiles).toEqual([skippedFile]);

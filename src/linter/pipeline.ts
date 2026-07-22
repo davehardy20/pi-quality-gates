@@ -84,8 +84,8 @@ export function createLinterPipeline(
 	): Promise<CombinedValidationOutcome> {
 		const config = await loadConfig();
 		const adapters = getAdapters(config);
-		const filteredFiles = filePaths.filter(
-			(f) => !isBuiltInIgnoredAgentArtifact(f),
+		const filteredFiles = normalizeAndSortPaths(
+			filePaths.filter((filePath) => !isBuiltInIgnoredAgentArtifact(filePath)),
 		);
 
 		const lspAdapter = adapters.find((a) => a.key === "lsp");
