@@ -5,12 +5,18 @@ export interface ValidationOutcome {
 	report: string;
 	affectedFiles: string[];
 	signature: string;
+	/** Files the adapter actually submitted to its validation engine. */
+	checkedFiles?: string[];
 }
 
 export type ReportMode = "report-only" | "auto-follow-up";
 
 export interface CombinedValidationOutcome extends ValidationOutcome {
 	reportMode: ReportMode;
+	/** Files routed to at least one configured validator. */
+	checkedFiles: string[];
+	/** Files with no configured extension validator or completed LSP check. */
+	skippedFiles: string[];
 }
 
 export interface LspDiagnosticsConfig {

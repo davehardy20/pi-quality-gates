@@ -48,4 +48,22 @@ describe("linter cli adapter", () => {
       ),
     ).toBe("/caller/repo");
   });
+
+  it("normalizes gofmt file output into actionable findings", () => {
+    expect(
+      cliAdapterTest.normalizeCliOutput("gofmt", "/tmp/project/main.go\n", 0),
+    ).toBe(
+      "/tmp/project/main.go:1:1 [warning] GOFMT file is not gofmt-formatted",
+    );
+  });
+
+  it("normalizes go vet path prefixes", () => {
+    expect(
+      cliAdapterTest.normalizeCliOutput(
+        "go",
+        "vet: ./broken.go:2:28: undefined: missing\n",
+        1,
+      ),
+    ).toBe("./broken.go:2:28: undefined: missing");
+  });
 });

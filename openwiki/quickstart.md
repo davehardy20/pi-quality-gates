@@ -90,7 +90,7 @@ Key fields (source: `src/linter/types.ts`, `src/linter/config-loader.ts`):
 
 If no config file exists, `DEFAULT_CONFIG` from `src/linter/config-loader.ts` is used.
 
-Default linter assignments: `.md` → markdownlint, `.ts/.tsx/.js/.jsx/.mjs/.cjs` → Biome, `.py/.pyi` → Ruff, `.c/.cpp/.cc/.h/.hpp` → cppcheck, `.tf/.tfvars` → tflint, `.rs` → cargo clippy.
+Default linter assignments: `.md` → markdownlint, `.ts/.tsx/.js/.jsx/.mjs/.cjs` → Biome, `.py/.pyi` → Ruff, `.go` → `gofmt -l` plus module-scoped `go vet ./...`, `.c/.cpp/.cc/.h/.hpp` → cppcheck, `.tf/.tfvars` → tflint, `.rs` → cargo clippy. Files without an extension adapter or completed LSP check are reported as skipped rather than counted as checked.
 
 ### PR gate config
 

@@ -2,7 +2,7 @@
 
 # Post-Turn Linter
 
-Automatically runs lint checks on files modified during each agent turn. Supports markdownlint, Biome, Ruff, cppcheck, tflint, cargo clippy, and optional LSP diagnostics.
+Automatically runs lint checks on files modified during each agent turn. Supports markdownlint, Biome, Ruff, Go (`gofmt` plus `go vet`), cppcheck, tflint, cargo clippy, and optional LSP diagnostics.
 
 ## Architecture overview
 
@@ -10,7 +10,7 @@ Automatically runs lint checks on files modified during each agent turn. Support
 Extension API (src/linter/index.ts)
     └── Orchestrator (src/linter/orchestrator.ts) — lifecycle, events, commands, state
          └── Pipeline (src/linter/pipeline.ts) — config, adapter selection, execution, merging
-              ├── Adapters (src/linter/adapters/) — CLI, Markdownlint, LSP
+              ├── Adapters (src/linter/adapters/) — CLI, Markdownlint, Go, LSP
               ├── Report Builder (src/linter/report-builder.ts) — issue parsing, code excerpts
               ├── Outcome Merger (src/linter/outcome-merger.ts) — combine adapter results
               └── Report Hygiene (src/linter/report-hygiene.ts) — summary, sidecar persistence
@@ -51,7 +51,8 @@ It also checks `result.details.modifiedFiles` (a shared contract) as a fallback.
 5. Run all extension adapters in parallel (`Promise.all`).
 6. Run LSP adapter separately on all filtered files (always last).
 7. Merge all results via `mergeValidationOutcomes`.
-8. If findings: append `buildCodeExcerptSection` (code snippets around issue lines).
+8. Record `checkedFiles` routed to a validator and `skippedFiles` with no validator.
+9. If findings: append `buildCodeExcerptSection` (code snippets around issue lines).
 
 ### Adapter interface
 
@@ -85,11 +86,15 @@ Exit-code semantics: 0 → `clean`; non-zero → `findings`; spawn error/timeout
 
 Thin adapter wrapping the markdownlint engine (`src/linter/markdownlint.ts`). The engine module handles `.markdownlintignore` discovery/filtering (via `minimatch`), violation formatting, and the default config (`{ default: true, MD013: { line_length: 120 } }`). Dynamically imports `markdownlint/promise` at call time.
 
+### Go adapter (`src/linter/adapters/go.ts`)
+
+Composes two CLI adapters behind one `.go` API adapter. `gofmt -l` checks only the modified Go files and normalizes listed paths into actionable `GOFMT` findings. `go vet ./...` runs once per nearest `go.mod` root through project-root mode, providing semantic and static-analysis validation without executing the program. Either missing executable produces a `tool-error`; findings from one check are preserved alongside tool errors from the other.
+
 ### LSP adapter (`src/linter/adapters/lsp.ts`)
 
-Runs LSP diagnostics using cached clients from `src/shared/lsp-service.ts`. Groups files by server+workspace, opens documents, waits for diagnostics to settle (`settleMs`), filters by severity, formats results as `path:line:col [severity] message (code)`.
+Runs LSP diagnostics using cached clients from `src/shared/lsp-service.ts`. Groups files by server+workspace, opens documents, waits for diagnostics to settle (`settleMs`), filters by severity, formats results as `path:line:col [severity] message (code)`, and reports the files actually synchronized through `checkedFiles`.
 
-If `config.enabled` is false, returns `clean` immediately.
+If `config.enabled` is false, returns `clean` with no checked files. Go LSP support resolves to `gopls`, but remains optional because the default Go adapter already runs `gofmt` and `go vet`.
 
 ## Config loading
 
@@ -142,11 +147,13 @@ Defined in `src/linter/types.ts`:
 | Type | Values |
 |---|---|
 | `ValidationKind` | `"clean"` \| `"findings"` \| `"tool-error"` |
-| `ValidationOutcome` | `{ kind, report, affectedFiles, signature }` |
+| `ValidationOutcome` | `{ kind, report, affectedFiles, signature, checkedFiles? }` |
 | `ReportMode` | `"report-only"` \| `"auto-follow-up"` |
-| `CombinedValidationOutcome` | Extends `ValidationOutcome` with `reportMode` |
+| `CombinedValidationOutcome` | Extends `ValidationOutcome` with `reportMode`, required `checkedFiles`, and `skippedFiles` |
 
 Merging logic (`src/linter/outcome-merger.ts`): `findings > tool-error > clean`. If any findings exist, the merged kind is `findings`; tool-errors are appended to the findings report.
+
+The pipeline derives coverage after adapter execution. Status and findings summaries use `checkedFiles` for the checked count and report `skippedFiles` separately. Only checked files without findings enter the `recentlyClean` cache.
 
 ## Core shim (`src/linter/core.ts`)
 
@@ -173,7 +180,7 @@ A proof-of-concept remark-lint runner using `remark()` with plugins (`remark-lin
 1. Only one lint run at a time (`runInProgress` guard).
 2. Cooldown enforced before turn-end runs.
 3. Modified files capped at 1000.
-4. Clean files with unchanged mtime+size are not re-linted.
+4. Checked, clean files with unchanged mtime+size are not re-linted; skipped files are never cached as clean.
 5. Signature dedup prevents re-reporting identical findings.
 6. LSP adapter always runs after extension adapters and receives all filtered files.
 7. Sidecar files written atomically with `mode: 0o600`; secrets always redacted.
@@ -182,6 +189,9 @@ A proof-of-concept remark-lint runner using `remark()` with plugins (`remark-lin
 ## Common failure modes
 
 - **Linter not found**: CLI linter binary missing → adapter returns `tool-error`, which is merged into findings report.
+- **Go tool missing**: The default Go adapter requires both `gofmt` and `go` on `PATH`; a missing command is reported as a tool error rather than clean.
+- **Go module not found**: `go vet ./...` runs from the modified file's directory when no parent `go.mod` exists, so the resulting module error is surfaced rather than silently skipped.
+- **Unsupported extension**: Files not routed to an extension adapter or completed LSP check appear in `skippedFiles` and are excluded from the checked count.
 - **Biome wrong cwd**: If Biome is not run from its config directory, it may fail or produce no results. The adapter groups files by execution cwd to handle this.
 - **LSP diagnostics not settling**: If `settleMs` is too low, diagnostics may be incomplete. Default is 500ms.
 - **Duplicate commands**: If Pi loads both this package and old local extension files, commands appear twice. Disable old local extensions.
@@ -211,5 +221,6 @@ A proof-of-concept remark-lint runner using `remark()` with plugins (`remark-lin
 | `src/linter/remark-lint-poc.ts` | Inactive remark-lint proof-of-concept |
 | `src/linter/adapters/types.ts` | `LinterAdapter` interface |
 | `src/linter/adapters/cli.ts` | CLI linter adapter (Biome, Ruff, cppcheck, tflint, cargo) |
+| `src/linter/adapters/go.ts` | Go adapter composing modified-file `gofmt` checks with module-scoped `go vet` |
 | `src/linter/adapters/markdownlint.ts` | Markdownlint adapter wrapper |
 | `src/linter/adapters/lsp.ts` | LSP diagnostics adapter |

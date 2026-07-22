@@ -47,6 +47,7 @@ export const DEFAULT_CONFIG: LinterConfig = {
 		".cjs": { type: "cli", command: "biome", args: ["check"], name: "Biome" },
 		".py": { type: "cli", command: "ruff", args: ["check"], name: "Ruff" },
 		".pyi": { type: "cli", command: "ruff", args: ["check"], name: "Ruff" },
+		".go": { type: "api", name: "go" },
 		".c": {
 			type: "cli",
 			command: "cppcheck",

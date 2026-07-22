@@ -1,3 +1,5 @@
+<!-- markdownlint-disable MD013 MD022 MD031 MD032 -->
+
 # Testing
 
 ## Commands
@@ -53,9 +55,11 @@ Files with 2-space indent (biome.json override):
 | File | Type | Coverage |
 |---|---|---|
 | `test/index.test.ts` | Unit + integration | Post-turn linter file detection, arg tokenization, JSONC config parsing, markdownlint formatting, summary-first message building, sidecar write/recover, built-in ignored file filtering, path utilities, reviewer helpers (`buildReviewerPiArgs`, `parseReviewReport`, `capDiff`, `extractOriginalTask`), reviewer-skip logic. Uses `__test__` export from `src/linter/index.js`. |
-| `test/linter-cli-adapter.test.ts` | Unit | CLI adapter working-directory resolution (Biome vs non-Biome). Creates temp dirs with `mkdtempSync`. Uses `__test__` from `src/linter/adapters/cli.js`. |
-| `test/linter-pipeline.test.ts` | Integration | Full linter pipeline — markdownlint execution, CLI linters, project-root/workspace modes, multi-file grouping, tool-error handling, code excerpts, outcome merging, LSP adapter independence. Creates real executable fake linter scripts. |
+| `test/linter-cli-adapter.test.ts` | Unit | CLI adapter working-directory resolution and `gofmt` finding normalization. Creates temp dirs with `mkdtempSync`. Uses `__test__` from `src/linter/adapters/cli.js`. |
+| `test/linter-go-adapter.test.ts` | Unit | Default `.go` routing and Go adapter composition of `gofmt -l` with module-scoped `go vet ./...`, including merged findings and tool errors. |
+| `test/linter-pipeline.test.ts` | Integration | Full linter pipeline — markdownlint execution, CLI linters, project-root/workspace modes, multi-file grouping, checked/skipped coverage, tool-error handling, code excerpts, outcome merging, LSP adapter independence. Creates real executable fake linter scripts. |
 | `test/markdownlint-characterization.test.ts` | Integration | **Characterization tests** locking byte-level output of `runMarkdownlint`, `formatMarkdownlintResults`, and adapter `.run()`. Designed to be unmodified during refactoring. File header documents the refactor invariant. |
+| `test/post-turn-linter-coverage.test.ts` | Unit/integration | Verifies the orchestrator reports actual checked and skipped files instead of counting every queued path as checked. |
 | `test/post-turn-linter-fix-prompt.test.ts` | Unit/integration | Verifies fix prompt instructs agent to continue active task. Uses `createLinterOrchestrator` with fully-mocked deps. Simulates full lifecycle: `initialize` → `onToolExecutionEnd` → `onTurnEnd`. |
 | `test/sidecar.test.ts` | Integration | Secret redaction, sidecar write with metadata, recovery modes (metadata/preview/slice/full), session ID derivation, recovery arg parsing, env-var sidecar directory. Real filesystem I/O. |
 

@@ -43,6 +43,8 @@ export function mergeValidationOutcomes(args: {
 			),
 			reportMode: args.reportMode,
 			signature,
+			checkedFiles: [],
+			skippedFiles: [],
 		};
 	}
 
@@ -53,6 +55,8 @@ export function mergeValidationOutcomes(args: {
 			affectedFiles: [],
 			reportMode: args.reportMode,
 			signature,
+			checkedFiles: [],
+			skippedFiles: [],
 		};
 	}
 
@@ -63,6 +67,8 @@ export function mergeValidationOutcomes(args: {
 			affectedFiles: [],
 			reportMode: args.reportMode,
 			signature,
+			checkedFiles: [],
+			skippedFiles: [],
 		};
 	}
 
@@ -72,6 +78,8 @@ export function mergeValidationOutcomes(args: {
 		affectedFiles: [],
 		reportMode: args.reportMode,
 		signature,
+		checkedFiles: [],
+		skippedFiles: [],
 	};
 }
 

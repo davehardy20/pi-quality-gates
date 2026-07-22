@@ -303,6 +303,23 @@ function normalizeCliOutput(
   const trimmed = output.trim();
   if (!trimmed) return "";
 
+  if (command === "gofmt" && exitCode === 0) {
+    return trimmed
+      .split(/\r?\n/)
+      .map(
+        (filePath) =>
+          `${filePath}:1:1 [warning] GOFMT file is not gofmt-formatted`,
+      )
+      .join("\n");
+  }
+
+  if (command === "go") {
+    return trimmed
+      .split(/\r?\n/)
+      .map((line) => line.replace(/^vet:\s+(?=.+:\d+(?::\d+)?:)/, ""))
+      .join("\n");
+  }
+
   if (
     command === "biome" &&
     exitCode === 0 &&

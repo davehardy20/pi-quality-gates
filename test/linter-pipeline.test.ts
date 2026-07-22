@@ -278,6 +278,60 @@ describe("linter pipeline characterization", () => {
 		expect(combined.reportMode).toBe("report-only");
 	});
 
+	it("reports files routed to validators separately from skipped files", async () => {
+		const checkedFile = makeFile("src/a.ts", "const x = 1;\n");
+		const skippedFile = makeFile("notes.txt", "not linted\n");
+		const adapter: LinterAdapter = {
+			name: "FakeCLI",
+			key: "cli:node:fake.js",
+			run: async () => ({
+				kind: "clean",
+				report: "",
+				affectedFiles: [],
+				signature: "clean",
+			}),
+		};
+		const pipeline = createLinterPipeline({
+			cwd: tempDir,
+			adapters: [adapter],
+			loadConfig: async () =>
+				({
+					linters: {
+						".ts": {
+							type: "cli",
+							command: "node",
+							args: ["fake.js"],
+							name: "FakeCLI",
+						},
+					},
+					lsp: { enabled: false },
+				}) as LinterConfig,
+		});
+
+		const outcome = await pipeline.runChecks([checkedFile, skippedFile]);
+
+		expect(outcome.checkedFiles).toEqual([checkedFile]);
+		expect(outcome.skippedFiles).toEqual([skippedFile]);
+	});
+
+	it("does not claim an unsupported file was checked", async () => {
+		const skippedFile = makeFile("main.go.unknown", "not linted\n");
+		const pipeline = createLinterPipeline({
+			cwd: tempDir,
+			adapters: [],
+			loadConfig: async () => ({
+				linters: {},
+				lsp: { enabled: false },
+			}),
+		});
+
+		const outcome = await pipeline.runChecks([skippedFile]);
+
+		expect(outcome.kind).toBe("clean");
+		expect(outcome.checkedFiles).toEqual([]);
+		expect(outcome.skippedFiles).toEqual([skippedFile]);
+	});
+
 	it("runs the LSP adapter independently of extension-based adapters", async () => {
 		const filePath = makeFile("src/a.ts", "const x = 1;\n");
 		const calls: { key: string; paths: string[] }[] = [];
@@ -333,6 +387,34 @@ describe("linter pipeline characterization", () => {
 		expect(
 			calls.some((c) => c.key === "lsp" && c.paths.includes(filePath)),
 		).toBe(true);
+	});
+
+	it("counts files completed by an LSP-only validator as checked", async () => {
+		const filePath = makeFile("data.json", "{}\n");
+		const lspAdapter: LinterAdapter = {
+			name: "LSP diagnostics",
+			key: "lsp",
+			run: async () => ({
+				kind: "clean",
+				report: "",
+				affectedFiles: [],
+				signature: "lsp-clean",
+				checkedFiles: [filePath],
+			}),
+		};
+		const pipeline = createLinterPipeline({
+			cwd: tempDir,
+			adapters: [lspAdapter],
+			loadConfig: async () => ({
+				linters: {},
+				lsp: { enabled: true },
+			}),
+		});
+
+		const outcome = await pipeline.runChecks([filePath]);
+
+		expect(outcome.checkedFiles).toEqual([filePath]);
+		expect(outcome.skippedFiles).toEqual([]);
 	});
 
 	it("honors custom markdownlint config loaded from the repo", async () => {
