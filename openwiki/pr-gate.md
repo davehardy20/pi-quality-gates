@@ -124,6 +124,7 @@ execution bridge.
 - Sends a bounded parent follow-up containing request/head/base metadata, a capped task/test-plan summary, and at most 32 capped file paths.
 - Deliberately excludes the full diff; the sandbox reviewer inspects `baseRef..HEAD` directly.
 - Listens for the matching `tool_result` from `orchestrate`.
+- Parses a well-formed report even when `orchestrate` marks the result as an error, but stamps PASS only with explicit request-ID correlation, the exact recorded HEAD, and all normal PASS blockers satisfied; the raw error exit remains preserved. Malformed or uncorrelated error output fails closed.
 - Bounds result capture at 262,144 characters and fails closed on overflow.
 - Fails closed if `orchestrate` is unavailable, the request times out, or the session shuts down. Shutdown clears pending timers/correlation state.
 
