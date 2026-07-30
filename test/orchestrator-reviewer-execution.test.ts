@@ -344,7 +344,7 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 
 		expect(handled).toBe(true);
 		const result = await pending;
-		expect(result.report?.status).toBe("PASS");
+		expect(result.report).toBeNull();
 		expect(result.exitCode).toBe(1);
 		expect(tokens.hasPass(headSha)).toBe(false);
 		expect(bridge.getStatus().lastDiagnostic?.kind).toBe("error");

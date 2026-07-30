@@ -310,6 +310,8 @@ export function createOrchestratorReviewerExecution(
 			}
 			const hasExplicitCorrelation = matchedRequestId !== null;
 			const report = captured.overflowed ? null : parseReviewReport(rawOutput);
+			const resultReport =
+				event.isError && !hasExplicitCorrelation ? null : report;
 			if (
 				!matchedRequestId &&
 				pending.size === 1 &&
@@ -399,7 +401,7 @@ export function createOrchestratorReviewerExecution(
 					? rawOutput || "orchestrate pr-reviewer returned an error"
 					: "";
 				review.resolve({
-					report,
+					report: resultReport,
 					rawOutput,
 					exitCode: failed ? 1 : 0,
 					timedOut: false,
