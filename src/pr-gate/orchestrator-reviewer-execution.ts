@@ -308,10 +308,10 @@ export function createOrchestratorReviewerExecution(
 					matchedRequestId = fromText;
 				}
 			}
-			const report =
-				event.isError || captured.overflowed
-					? null
-					: parseReviewReport(rawOutput);
+			const hasExplicitCorrelation = matchedRequestId !== null;
+			const report = captured.overflowed ? null : parseReviewReport(rawOutput);
+			const resultReport =
+				event.isError && !hasExplicitCorrelation ? null : report;
 			if (
 				!matchedRequestId &&
 				pending.size === 1 &&
@@ -323,24 +323,23 @@ export function createOrchestratorReviewerExecution(
 				? (knownRequestHeads.get(matchedRequestId) ?? "")
 				: "";
 			const diagnosticHeadSha = correlatedHeadSha || resolveHeadSha();
-			const stamped = matchedRequestId
-				? stampPassFromObservedReport(
-						correlatedHeadSha || null,
-						report,
-						report?.summary,
-					)
-				: false;
+			const stamped =
+				matchedRequestId && (!event.isError || hasExplicitCorrelation)
+					? stampPassFromObservedReport(
+							correlatedHeadSha || null,
+							report,
+							report?.summary,
+						)
+					: false;
 
-			if (event.isError || captured.overflowed) {
+			if (captured.overflowed) {
 				recordDiagnostic({
 					requestId: matchedRequestId,
 					headSha: diagnosticHeadSha || null,
 					kind: "error",
-					detail: event.isError
-						? rawOutput || "orchestrate pr-reviewer returned an error result"
-						: `orchestrate pr-reviewer output exceeded ${MAX_ORCHESTRATOR_RESULT_CHARS} characters; PASS refused`,
+					detail: `orchestrate pr-reviewer output exceeded ${MAX_ORCHESTRATOR_RESULT_CHARS} characters; PASS refused`,
 				});
-			} else if (report) {
+			} else if (report && (!event.isError || hasExplicitCorrelation)) {
 				if (report.status === "PASS") {
 					const criticalBlocker = hasCriticalSecurityFinding(report)
 						? "report contains CRITICAL security finding(s)"
@@ -368,6 +367,14 @@ export function createOrchestratorReviewerExecution(
 						detail: `Parsed ${report.status} (${report.confidence} confidence) for HEAD ${diagnosticHeadSha || "(unknown)"}; no token stamped.`,
 					});
 				}
+			} else if (event.isError) {
+				recordDiagnostic({
+					requestId: matchedRequestId,
+					headSha: diagnosticHeadSha || null,
+					kind: "error",
+					detail:
+						rawOutput || "orchestrate pr-reviewer returned an error result",
+				});
 			} else if (rawOutput) {
 				recordDiagnostic({
 					requestId: matchedRequestId,
@@ -394,7 +401,7 @@ export function createOrchestratorReviewerExecution(
 					? rawOutput || "orchestrate pr-reviewer returned an error"
 					: "";
 				review.resolve({
-					report,
+					report: resultReport,
 					rawOutput,
 					exitCode: failed ? 1 : 0,
 					timedOut: false,

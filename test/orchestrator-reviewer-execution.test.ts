@@ -292,6 +292,98 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 		].join("\n");
 	}
 
+	it("stamps an exact-HEAD PASS parsed from a correlated error result", async () => {
+		const tokens = createPassTokenStore();
+		const headSha = "0b1b2c3d".repeat(5);
+		const sendUserMessage = vi.fn();
+		const bridge = createOrchestratorReviewerExecution(
+			{ getActiveTools: () => ["orchestrate"], sendUserMessage },
+			{ tokens, resolveHeadSha: () => headSha },
+		);
+		const pending = bridge.reviewerExecution.runAttempt(
+			makeAttemptInput(headSha),
+		);
+		const requestId = String(sendUserMessage.mock.calls[0][0]).match(
+			/PR_REVIEW_REQUEST_ID: (pr-review-[^\n]+)/,
+		)?.[1];
+		expect(requestId).toBeDefined();
+
+		const handled = bridge.handleToolResult({
+			toolName: "orchestrate",
+			input: { category: "pr-reviewer", task: `Request ${requestId}` },
+			content: [{ type: "text", text: passReportWithPreamble() }],
+			isError: true,
+		});
+
+		expect(handled).toBe(true);
+		const result = await pending;
+		expect(result.report?.status).toBe("PASS");
+		expect(result.exitCode).toBe(1);
+		expect(tokens.hasPass(headSha)).toBe(true);
+		expect(bridge.getStatus().lastDiagnostic?.kind).toBe("parsed-pass");
+	});
+
+	it("does not stamp an uncorrelated PASS carried by an error result", async () => {
+		const tokens = createPassTokenStore();
+		const headSha = "5e6f7a8b".repeat(5);
+		const sendUserMessage = vi.fn();
+		const bridge = createOrchestratorReviewerExecution(
+			{ getActiveTools: () => ["orchestrate"], sendUserMessage },
+			{ tokens, resolveHeadSha: () => headSha },
+		);
+		const pending = bridge.reviewerExecution.runAttempt(
+			makeAttemptInput(headSha),
+		);
+
+		const handled = bridge.handleToolResult({
+			toolName: "orchestrate",
+			input: { category: "pr-reviewer" },
+			content: [{ type: "text", text: passReportWithPreamble() }],
+			isError: true,
+		});
+
+		expect(handled).toBe(true);
+		const result = await pending;
+		expect(result.report).toBeNull();
+		expect(result.exitCode).toBe(1);
+		expect(tokens.hasPass(headSha)).toBe(false);
+		expect(bridge.getStatus().lastDiagnostic?.kind).toBe("error");
+	});
+
+	it("fails closed when an error result contains a malformed review report", async () => {
+		const tokens = createPassTokenStore();
+		const headSha = "9a8b7c6d".repeat(5);
+		const sendUserMessage = vi.fn();
+		const bridge = createOrchestratorReviewerExecution(
+			{ getActiveTools: () => ["orchestrate"], sendUserMessage },
+			{ tokens, resolveHeadSha: () => headSha },
+		);
+		const pending = bridge.reviewerExecution.runAttempt(
+			makeAttemptInput(headSha),
+		);
+		const requestId = String(sendUserMessage.mock.calls[0][0]).match(
+			/PR_REVIEW_REQUEST_ID: (pr-review-[^\n]+)/,
+		)?.[1];
+
+		const handled = bridge.handleToolResult({
+			toolName: "orchestrate",
+			input: { category: "pr-reviewer", task: `Request ${requestId}` },
+			content: [
+				{
+					type: "text",
+					text: "## Review Report\nSTATUS: MAYBE\n### Findings\nNone.",
+				},
+			],
+			isError: true,
+		});
+
+		expect(handled).toBe(true);
+		const result = await pending;
+		expect(result.report).toBeNull();
+		expect(tokens.hasPass(headSha)).toBe(false);
+		expect(bridge.getStatus().lastDiagnostic?.kind).toBe("error");
+	});
+
 	function criticalSecurityPassReport(): string {
 		return [
 			"## Review Report",
