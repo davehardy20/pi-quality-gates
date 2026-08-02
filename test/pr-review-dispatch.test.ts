@@ -19,6 +19,7 @@ describe("createPrReviewDispatch", () => {
 		const dispatch = createPrReviewDispatch({
 			getHeadSha: () => "abc123",
 			getBaseRef: () => "origin/main",
+			isWorktreeClean: () => true,
 			listChangedFiles: async () => ["src/foo.ts"],
 			applyDiffFilters: async (files) => files,
 			countDiffLines: async () => 10,
@@ -83,6 +84,7 @@ describe("createPrReviewDispatch", () => {
 		const dispatch = createPrReviewDispatch({
 			getHeadSha,
 			getBaseRef: () => "master",
+			isWorktreeClean: () => true,
 			listChangedFiles: async () => ["src/foo.ts"],
 			applyDiffFilters: async (files) => files,
 			countDiffLines: async () => 10,
@@ -252,6 +254,17 @@ describe("createPrReviewDispatch", () => {
 			expect(defaultIsWorktreeClean(dir)).toBe(true);
 			// Tracked modification must block.
 			writeFileSync(join(dir, "committed.txt"), "b");
+			expect(defaultIsWorktreeClean(dir)).toBe(false);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("defaultIsWorktreeClean fails closed when git status cannot prove cleanliness", () => {
+		// A directory that is not a git worktree: `git status` exits non-zero, so
+		// cleanliness is unprovable — fail closed (block) rather than lenient.
+		const dir = mkdtempSync(join(tmpdir(), "wt-nogit-"));
+		try {
 			expect(defaultIsWorktreeClean(dir)).toBe(false);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });

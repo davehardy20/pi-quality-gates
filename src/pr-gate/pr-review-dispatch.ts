@@ -249,16 +249,18 @@ export function resolveDefaultBaseRef(
  * working tree matches HEAD with no staged, unstaged, OR untracked changes.
  * Blocking on any non-empty output prevents an untracked file (e.g. a generated
  * module) from letting the host reviewer PASS+stamp a HEAD whose exact content
- * was never validated. Non-zero/error (e.g. not a git worktree) is treated
- * leniently as clean so the gate does not hard-block where the check is
- * inapplicable.
+ * was never validated. If `git status` itself fails (e.g. a corrupt
+ * status.showUntrackedFiles config while HEAD still resolves), this fails
+ * CLOSED (returns false) so an unprovable worktree blocks the review.
  *
- * Accepted residual: this samples the worktree at review start and before
- * stamping (bookends). It cannot detect a tracked edit introduced AND reverted
- * while the child runs. The fully-isolating fix is to run the reviewer against an
- * immutable checkout of the captured SHA — tracked as a follow-up. The host
- * reviewer runs in a trusted single session, so that adversarial-concurrent race
- * is accepted for now.
+ * Accepted residuals (trusted single-session host reviewer; immutable-checkout
+ * fix tracked in Seeds pi-quality-gates-52c9):
+ *  - a tracked edit introduced AND reverted while the child runs (bookend
+ *    sampling cannot see it);
+ *  - IGNORED files (`--porcelain` omits them; `--ignored` can't be used since
+ *    node_modules etc. are always ignored) — an ignored generated source that
+ *    satisfies a tracked import could let a stale/ignored file influence
+ *    validation. The immutable-checkout removes all live-worktree influence.
  */
 export function defaultIsWorktreeClean(cwd: string): boolean {
 	try {
@@ -269,7 +271,7 @@ export function defaultIsWorktreeClean(cwd: string): boolean {
 		});
 		return out.trim().length === 0;
 	} catch {
-		return true;
+		return false;
 	}
 }
 
