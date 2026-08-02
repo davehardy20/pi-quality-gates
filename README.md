@@ -24,13 +24,16 @@ gate that blocks unsafe publishing until changes are reviewed.
 
 - Gates `gh_safe` `push` / `pr_create` behind a PASS token: the hook vetoes
   publishing until the current HEAD has been reviewed
-- `/pr-review` prepares the PR diff, then requests the sandboxed orchestrator
-  `pr-reviewer` category to review it; on PASS it stamps a token for that HEAD
-- An agent-callable `pr_review` custom tool requests the same sandboxed review
-  autonomously (over the shared coordinator) without a human running `/pr-review`
+- `/pr-review` prepares the PR diff, then runs the configured reviewer bridge
+  (default host; Apple-container `pr-reviewer` via `PI_PR_REVIEW_BRIDGE=orchestrator`)
+  to review it; on PASS it stamps a token for that HEAD
+- An agent-callable `pr_review` custom tool requests the same review autonomously
+  (over the shared coordinator) without a human running `/pr-review`
 - The main agent remains the sole publisher; the gate only vetoes and steers
-- The reviewer runs in the configured Apple-container sandbox profile with broad
-  in-container tooling, while publishing and durable state mutation stay denied
+- The default host bridge runs read-only validation (`run_typecheck`, `run_vitest`,
+  `run_biome`, etc.) against the repository checkout; the orchestrator bridge runs
+  in the Apple-container sandbox with broad in-container tooling. Publishing and
+  durable state mutation stay denied on both paths
 - On CRITICAL security findings the gate escalates for a human acknowledgement
 - `/pr-review` — Run a PR review for the current HEAD (optional base ref arg)
 - `pr_review` (LLM tool) — Agent-callable review request; asynchronous kickoff,

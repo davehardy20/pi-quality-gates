@@ -5,8 +5,9 @@ import type { ReviewConfig } from "../shared/review-config.js";
  *
  * Shared PR review limits and legacy tool policy.
  *
- * The default `/pr-review` extension path no longer spawns a host child Pi;
- * it routes through the active sandboxed orchestrator `pr-reviewer` category.
+ * The default `/pr-review` extension path spawns a read-only host child Pi
+ * (`src/pr-gate/reviewer.ts`); the sandboxed orchestrator `pr-reviewer` is
+ * opt-in via PI_PR_REVIEW_BRIDGE=orchestrator.
  * These values still provide model/timeout/diff defaults, and the tool policy
  * guards any tests or dependency-injected legacy reviewer execution from
  * accidentally receiving publishing or durable-state mutation tools.
@@ -38,7 +39,6 @@ export const PR_REVIEW_CONFIG: ReviewConfig = {
 		"lsp_prepare_rename",
 		"git_inspect_safe",
 		"container_safe",
-		"pi_docs",
 		"context7_library",
 		"context7_docs",
 		"web_search",

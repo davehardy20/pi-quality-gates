@@ -106,12 +106,13 @@ command/tool parity.
 1. It runs the synchronous eligibility checks via the shared coordinator and
    kicks off the background dispatch.
 2. It returns compact kickoff state immediately.
-3. It does **not** await the later `orchestrate` tool result — that follow-up
-   tool call cannot run until the current tool batch completes, so awaiting would
-   deadlock.
-4. The existing matching `tool_result` handler in
-   `orchestrator-reviewer-execution.ts` resumes the dispatch, parses the sandbox
-   report, and stamps a PASS token **only for the exact reviewed HEAD**.
+3. It never blocks on completion — awaiting the follow-up would deadlock (a tool
+   result cannot run until the current tool batch completes).
+4. Completion depends on the configured reviewer bridge:
+   - host (default): the headless child Pi returns the report directly.
+   - orchestrator (`PI_PR_REVIEW_BRIDGE=orchestrator`): the matching `tool_result`
+     handler in `orchestrator-reviewer-execution.ts` parses the sandbox report.
+   Either way the dispatch stamps a PASS token **only for the exact reviewed HEAD**.
    The parent follow-up contains bounded metadata only; the full diff is not relayed through session context. The sandbox reviewer inspects the stated base ref and HEAD directly.
 5. On completion the coordinator emits one of:
    - `pr-review-pass` — PASS report, exact-HEAD token stamped.

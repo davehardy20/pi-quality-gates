@@ -324,7 +324,7 @@ return even when the HEAD already has a token.
 | Report parsing format | `src/pr-gate/reviewer.ts` → `parseReviewReport` | Must match prompt output format in `system.md` |
 | Base ref fallback chain | `src/pr-gate/pr-review-dispatch.ts` → `resolveBaseRef` | Ordered: origin/master → origin/main → master → main → HEAD~1 |
 | Auto-review guards | `src/pr-gate/auto-review-trigger.ts` → `decideAutoReview` | Sticky `lastReviewedSha` prevents loops |
-| Test execution recommendations | `src/pr-gate/test-execution.ts` | All via `container_safe` |
+| Test execution recommendations | `src/pr-gate/test-execution.ts` | All via safe runners (`run_*` host / `container_safe` orchestrator) |
 | Agent review kickoff logic | `src/pr-gate/review-coordinator.ts` → `createReviewCoordinator` | Shared by `/pr-review` and `pr_review`; keep parity |
 | `pr_review` tool contract | `src/pr-gate/pr-review-tool.ts` | Tool stays async; never publishes |
 
