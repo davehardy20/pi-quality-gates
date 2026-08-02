@@ -1,7 +1,10 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 import { createPrGateState, type PrGateState } from "../src/pr-gate/index.js";
-import type { PrReviewDispatchResult } from "../src/pr-gate/pr-review-dispatch.js";
+import type {
+	PrReviewDispatchInput,
+	PrReviewDispatchResult,
+} from "../src/pr-gate/pr-review-dispatch.js";
 import {
 	createReviewCoordinator,
 	type ReviewKickoffResult,
@@ -297,5 +300,37 @@ describe("createReviewCoordinator (shared by /pr-review and pr_review)", () => {
 		expect(keys).not.toContain("report");
 		expect(keys).not.toContain("findings");
 		expect(keys).not.toContain("diff");
+	});
+
+	it("aborts the in-flight dispatch signal on dispose", async () => {
+		let resolveDispatch: (value: PrReviewDispatchResult) => void = () => {};
+		const dispatch = vi.fn(
+			(_input: PrReviewDispatchInput) =>
+				new Promise<PrReviewDispatchResult>((resolve) => {
+					resolveDispatch = resolve;
+				}),
+		);
+		const { coordinator, state } = createCoordinator({ dispatch });
+		coordinator.startReview({
+			ctx: createContext(),
+			state,
+			origin: "command",
+		});
+		expect(dispatch).toHaveBeenCalledTimes(1);
+		const input = dispatch.mock.calls[0][0];
+		expect(input.signal).toBeInstanceOf(AbortSignal);
+		expect(input.signal?.aborted).toBe(false);
+
+		coordinator.dispose();
+		expect(input.signal?.aborted).toBe(true);
+
+		resolveDispatch({
+			report: null,
+			stamped: false,
+			escalated: false,
+			blocked: true,
+			message: "aborted",
+		});
+		await new Promise((r) => setTimeout(r, 0));
 	});
 });

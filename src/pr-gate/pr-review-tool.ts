@@ -1,7 +1,7 @@
 /**
  * Agent-callable `pr_review` custom tool.
  *
- * Exposes the SAME sandboxed pr-reviewer workflow that `/pr-review` triggers,
+ * Exposes the SAME reviewer-bridge workflow that `/pr-review` triggers,
  * so an autonomous agent can request the gate-compatible review without asking
  * a human to run a slash command (plan pl-1461, seed pi-quality-gates-ff15).
  *
@@ -77,9 +77,9 @@ export function createPrReviewToolDefinition(deps: PrReviewToolDeps): {
 		name: "pr_review",
 		label: "PR Review",
 		description:
-			"Request a sandboxed pr-reviewer review for the current HEAD to obtain the PASS token required by the PR gate before git_safe push / gh_safe pr_create. Asynchronous: returns kickoff state; the review completes in the background and emits a pr-review-pass message. Never publishes.",
+			"Request a PR review for the current HEAD via the configured reviewer bridge (default host; Apple-container when PI_PR_REVIEW_BRIDGE=orchestrator) to obtain the PASS token required by the PR gate before git_safe push / gh_safe pr_create. Asynchronous: returns kickoff state; the review completes in the background and emits a pr-review-pass message. Never publishes.",
 		promptSnippet:
-			"pr_review — request a sandboxed PR review for the current HEAD; required to obtain the PASS token before git_safe push / gh_safe pr_create. Returns kickoff state; wait for the pr-review-pass message before publishing.",
+			"pr_review — request a PR review for the current HEAD via the configured reviewer bridge (default host); required to obtain the PASS token before git_safe push / gh_safe pr_create. Returns kickoff state; wait for the pr-review-pass message before publishing.",
 		promptGuidelines: [
 			"Call pr_review before calling git_safe push or gh_safe pr_create; the PR gate blocks publication until the exact HEAD has a PASS token.",
 			"pr_review is asynchronous: it returns kickoff state and the review completes in the background. Do NOT call git_safe push / gh_safe pr_create in the same batch — wait for the pr-review-pass message, then re-check before publishing.",

@@ -18,16 +18,21 @@
  */
 
 import { execSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { decidePushGate } from "./gate-decision.js";
-import { createOrchestratorReviewerExecution } from "./orchestrator-reviewer-execution.js";
+import {
+	createOrchestratorReviewerExecution,
+	type OrchestratorReviewerExecutionBridge,
+} from "./orchestrator-reviewer-execution.js";
 import {
 	createPassTokenStore,
 	type PassTokenStore,
 } from "./pass-token-store.js";
+import { assertPrReviewerToolPolicy } from "./pr-review-config.js";
 import { createPrReviewDispatch } from "./pr-review-dispatch.js";
 import { createPrReviewToolDefinition } from "./pr-review-tool.js";
 import {
@@ -38,6 +43,7 @@ import {
 	createReviewCoordinator,
 	type ReviewKickoffResult,
 } from "./review-coordinator.js";
+import { createReviewerExecution, type ReviewerExecution } from "./reviewer.js";
 
 export interface PrGateConfig {
 	/** Whether the push gate is active. Default: true. */
@@ -191,16 +197,46 @@ function sendPrReviewStatus(
 	});
 }
 
+/**
+ * PR reviewer execution bridge. The review is read-only, so the default `host`
+ * bridge spawns a headless child Pi that runs validation (e.g. run_typecheck)
+ * against the repository checkout, where dependencies already live. The Apple
+ * container sandbox is reserved for mutating workers; opt back into the
+ * sandboxed orchestrator `pr-reviewer` with PI_PR_REVIEW_BRIDGE=orchestrator
+ * once the container reviewer is stable (see mx-87a9dd).
+ */
+export type PrReviewerBridgeMode = "host" | "orchestrator";
+
+/** Resolve the shipped reviewer prompts directory (src/pr-gate/prompts). */
+function getPromptsDir(): string {
+	return fileURLToPath(new URL("./prompts", import.meta.url));
+}
+
+function resolveReviewerBridgeMode(
+	override?: PrReviewerBridgeMode,
+): PrReviewerBridgeMode {
+	if (override === "host" || override === "orchestrator") return override;
+	const fromEnv = (process.env.PI_PR_REVIEW_BRIDGE ?? "").trim().toLowerCase();
+	return fromEnv === "orchestrator" ? "orchestrator" : "host";
+}
+
 export interface PrGateExtensionDeps {
 	createPrReviewDispatch?: typeof createPrReviewDispatch;
 	/** Override HEAD sha resolution (tests inject a fake without spawning git). */
 	resolveHeadSha?: (cwd: string) => string;
+	/**
+	 * Force the reviewer bridge (tests). Defaults to PI_PR_REVIEW_BRIDGE or
+	 * "host" (read-only review runs on the host; the container sandbox is for
+	 * mutating workers).
+	 */
+	reviewerBridgeMode?: PrReviewerBridgeMode;
 }
 
 export default function prGateExtension(
 	pi: ExtensionAPI,
 	deps: PrGateExtensionDeps = {},
 ): void {
+	assertPrReviewerToolPolicy();
 	const state = createPrGateState();
 	const resolveHead = deps.resolveHeadSha ?? resolveHeadSha;
 
@@ -221,20 +257,32 @@ export default function prGateExtension(
 		gatedActions: () => state.config.gatedActions,
 	});
 
-	const orchestratorReviewer = createOrchestratorReviewerExecution(pi, {
-		tokens: state.tokens,
-		resolveHeadSha: () => resolveHead(process.cwd()),
-	});
-	pi.on("tool_result", (event) => {
-		orchestratorReviewer.handleToolResult(event);
-	});
+	const bridgeMode = resolveReviewerBridgeMode(deps.reviewerBridgeMode);
+	let orchestratorReviewer: OrchestratorReviewerExecutionBridge | undefined;
+	if (bridgeMode === "orchestrator") {
+		orchestratorReviewer = createOrchestratorReviewerExecution(pi, {
+			tokens: state.tokens,
+			resolveHeadSha: () => resolveHead(process.cwd()),
+		});
+	}
+	const reviewerExecution: ReviewerExecution = orchestratorReviewer
+		? orchestratorReviewer.reviewerExecution
+		: createReviewerExecution({ getPromptsDir });
+
+	// The orchestrator bridge is async: it routes review through a follow-up
+	// `orchestrate` call and stamps PASS from the observed tool_result. The host
+	// bridge spawns a headless child Pi directly and returns its report, so it
+	// needs no tool_result listener.
+	if (orchestratorReviewer) {
+		pi.on("tool_result", (event) => {
+			orchestratorReviewer.handleToolResult(event);
+		});
+	}
 
 	const createDispatch = deps.createPrReviewDispatch ?? createPrReviewDispatch;
 	const dispatch = createDispatch({
 		getHeadSha: resolveHead,
-		...(deps.createPrReviewDispatch
-			? {}
-			: { reviewerExecution: orchestratorReviewer.reviewerExecution }),
+		...(deps.createPrReviewDispatch ? {} : { reviewerExecution }),
 	});
 
 	// Shared review coordinator — the single seam used by BOTH the human
@@ -249,7 +297,7 @@ export default function prGateExtension(
 
 	pi.on("session_shutdown", async () => {
 		coordinator.dispose();
-		orchestratorReviewer.dispose();
+		orchestratorReviewer?.dispose();
 		state.tokens.clear();
 	});
 

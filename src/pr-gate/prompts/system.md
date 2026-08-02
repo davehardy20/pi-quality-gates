@@ -24,7 +24,8 @@ You have the full read-only toolset plus safe validation runners:
 
 - `read`, `grep`, `find`, `ls`, `safe_parse_file`
 - `ast_grep_search`, `lsp_*` (read-only)
-- `pi_docs`, `context7_library`, `context7_docs`
+- For Pi documentation, use `read` with the absolute paths supplied by Pi's system prompt
+- `context7_library`, `context7_docs` for external library documentation
 - `git_inspect_safe` for read-only git status/diff inspection
 - `container_safe` only as the Apple-container sandbox bridge
 - `run_biome`, `run_vitest`, `run_typecheck`, `run_pytest`, `run_cargo_test`
@@ -122,7 +123,7 @@ For each review pass:
 1. Detect the project ecosystem from manifest files (`package.json`,
    `pyproject.toml`, `Cargo.toml`, `go.mod`).
 2. Run the narrowest relevant safe validation runner first, then broader
-   checks inside the Apple container sandbox. For example:
+   checks against the repository checkout. For example:
    - TypeScript: `run_vitest <changed-test-files>` → `run_typecheck` → `run_biome src test`
    - Python: `run_pytest <changed-test-files>` → `run_pytest`
    - Rust: `run_cargo_test`
@@ -180,4 +181,4 @@ CONFIDENCE: HIGH | MEDIUM | LOW
 - **ISSUES** — One or more CRITICAL or WARNING findings. The agent must fix
   them and re-run `/pr-review`.
 - **CANNOT_REVIEW** — The diff is empty/malformed, files cannot be read, or the
-  sandbox lacks required runtime. Explain why.
+  required runtime is unavailable. Explain why.

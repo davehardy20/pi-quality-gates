@@ -22,7 +22,7 @@ Before `pr_review`, the PR gate could only be satisfied by a human running
 `/pr-review`. That interrupted autonomous runs: an agent that had finished its
 work was stuck at the gate until a person intervened. The `pr_review` custom tool
 (plan pl-1461, seed `pi-quality-gates-ff15`) lets the agent request the **same**
-sandboxed pr-reviewer review, over the **same** shared coordinator, so autonomy
+reviewer-bridge review, over the **same** shared coordinator, so autonomy
 no longer depends on a slash command — **without** granting the agent any
 publication authority.
 
@@ -54,11 +54,14 @@ Everything else on this page follows from that rule.
    5. Background dispatch starts (NOT awaited by execute)
           │
           ▼
-   6. Sandbox pr-reviewer runs (read-only sandbox tools, no host mutation)
+   6. Configured reviewer bridge runs (read-only; no host mutation):
+      host (default): headless child Pi runs validation against the checkout
+      orchestrator (PI_PR_REVIEW_BRIDGE=orchestrator): sandboxed pr-reviewer
           │
           ▼
-   7. Matching tool_result handler resumes dispatch
-      parse report → exact-HEAD PASS stamp (or block / escalate)
+   7. Bridge completion resumes dispatch → exact-HEAD PASS stamp (or block / escalate)
+      host: child returns the report directly
+      orchestrator: matching tool_result handler parses the sandbox report
           │
           ▼
    8. Completion message emitted
@@ -103,12 +106,13 @@ command/tool parity.
 1. It runs the synchronous eligibility checks via the shared coordinator and
    kicks off the background dispatch.
 2. It returns compact kickoff state immediately.
-3. It does **not** await the later `orchestrate` tool result — that follow-up
-   tool call cannot run until the current tool batch completes, so awaiting would
-   deadlock.
-4. The existing matching `tool_result` handler in
-   `orchestrator-reviewer-execution.ts` resumes the dispatch, parses the sandbox
-   report, and stamps a PASS token **only for the exact reviewed HEAD**.
+3. It never blocks on completion — awaiting the follow-up would deadlock (a tool
+   result cannot run until the current tool batch completes).
+4. Completion depends on the configured reviewer bridge:
+   - host (default): the headless child Pi returns the report directly.
+   - orchestrator (`PI_PR_REVIEW_BRIDGE=orchestrator`): the matching `tool_result`
+     handler in `orchestrator-reviewer-execution.ts` parses the sandbox report.
+   Either way the dispatch stamps a PASS token **only for the exact reviewed HEAD**.
    The parent follow-up contains bounded metadata only; the full diff is not relayed through session context. The sandbox reviewer inspects the stated base ref and HEAD directly.
 5. On completion the coordinator emits one of:
    - `pr-review-pass` — PASS report, exact-HEAD token stamped.
@@ -175,11 +179,12 @@ in `src/pr-gate/pr-review-config.ts`:
 - `assertPrReviewerToolPolicy()` runs at startup and **throws** if any forbidden
   tool appears in the allowed list.
 
-The default orchestrator `pr-reviewer` runs in a disposable sandbox. It prefers
-`git_inspect_safe` and custom validation runners, but may use sandbox-local
-read-only Git and trusted package scripts when those custom tools are absent.
-Host mutation and publishing remain forbidden; HEAD/base verification remains
-fail-closed.
+The configured reviewer bridge runs the review. The default `host` bridge runs
+`git_inspect_safe` and custom validation runners on the host; the `orchestrator`
+bridge (`PI_PR_REVIEW_BRIDGE=orchestrator`) runs `pr-reviewer` in a disposable
+Apple container that may use sandbox-local read-only Git and trusted package
+scripts when those custom tools are absent. Host mutation and publishing remain
+forbidden on both paths; HEAD/base verification remains fail-closed.
 
 ### Linter prerequisite
 
@@ -261,8 +266,8 @@ pr-reviewer to return PASS with verified test execution, on the exact HEAD.
    parallel `pr_review` + publish batch cannot bypass it.
 5. An explicit `baseRef` is an intentional re-review in both wrappers.
 6. The kickoff result carries no report/diff/findings content.
-7. Legacy/injected execution has no bash; the default disposable sandbox may
-   use built-in shell only for sandbox-local read-only Git and trusted package
-   scripts. Neither path permits host mutation or publishing.
+7. Legacy/injected execution has no bash; the orchestrator bridge's disposable
+   sandbox may use built-in shell only for sandbox-local read-only Git and
+   trusted package scripts. Neither path permits host mutation or publishing.
 8. PASS requires verified test execution; missing/failed tests →
    `CANNOT_REVIEW` → blocked.

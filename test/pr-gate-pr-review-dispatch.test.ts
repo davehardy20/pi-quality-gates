@@ -154,6 +154,7 @@ function createTestDeps(
 	return {
 		getHeadSha: () => HEAD_SHA,
 		getBaseRef: () => BASE_REF,
+		isWorktreeClean: () => true,
 		listChangedFiles: async () => ["src/a.ts", "src/b.ts"],
 		applyDiffFilters: async (files) => files,
 		countDiffLines: async () => 42,
@@ -370,6 +371,7 @@ describe("pr-review dispatch", () => {
 		const dispatch = createPrReviewDispatch({
 			getHeadSha: () => HEAD_SHA,
 			getBaseRef: () => BASE_REF,
+			isWorktreeClean: () => true,
 			listChangedFiles: async () => ["src/a.ts"],
 			applyDiffFilters: async (files) => files,
 			countDiffLines: async () => 42,
@@ -393,6 +395,7 @@ describe("pr-review dispatch", () => {
 		const dispatch = createPrReviewDispatch({
 			getHeadSha: () => HEAD_SHA,
 			getBaseRef: () => "origin/main",
+			isWorktreeClean: () => true,
 			listChangedFiles,
 			applyDiffFilters: async (files) => files,
 			countDiffLines: async () => 42,

@@ -30,6 +30,12 @@ import {
 
 export interface PrReviewDispatchDeps {
 	getHeadSha: (cwd: string) => string;
+	/**
+	 * Whether the worktree has no uncommitted tracked changes vs HEAD. The host
+	 * reviewer validates the live checkout, so a dirty worktree would be
+	 * validated while a clean committed HEAD is stamped — block before review.
+	 */
+	isWorktreeClean: (cwd: string) => boolean;
 	getBaseRef: (cwd: string) => string;
 	listChangedFiles: (cwd: string, baseRef: string) => Promise<string[]>;
 	applyDiffFilters: (
@@ -72,6 +78,12 @@ export interface PrReviewDispatchInput {
 	pi: ExtensionAPI;
 	baseRef?: string;
 	isReReview?: boolean;
+	/**
+	 * Abort signal owned by the coordinator. When aborted (e.g. session
+	 * shutdown) the in-flight host child is killed and the result is never
+	 * stamped, even if a report slipped through before the process exited.
+	 */
+	signal?: AbortSignal;
 }
 
 export interface PrReviewDispatchResult {
@@ -232,6 +244,36 @@ export function resolveDefaultBaseRef(
 	}
 	return "HEAD~1";
 }
+/**
+ * Default worktree-clean check: `git status --porcelain` is empty only when the
+ * working tree matches HEAD with no staged, unstaged, OR untracked changes.
+ * Blocking on any non-empty output prevents an untracked file (e.g. a generated
+ * module) from letting the host reviewer PASS+stamp a HEAD whose exact content
+ * was never validated. If `git status` itself fails (e.g. a corrupt
+ * status.showUntrackedFiles config while HEAD still resolves), this fails
+ * CLOSED (returns false) so an unprovable worktree blocks the review.
+ *
+ * Accepted residuals (trusted single-session host reviewer; immutable-checkout
+ * fix tracked in Seeds pi-quality-gates-52c9):
+ *  - a tracked edit introduced AND reverted while the child runs (bookend
+ *    sampling cannot see it);
+ *  - IGNORED files (`--porcelain` omits them; `--ignored` can't be used since
+ *    node_modules etc. are always ignored) — an ignored generated source that
+ *    satisfies a tracked import could let a stale/ignored file influence
+ *    validation. The immutable-checkout removes all live-worktree influence.
+ */
+export function defaultIsWorktreeClean(cwd: string): boolean {
+	try {
+		const out = execFileSync("git", ["status", "--porcelain"], {
+			cwd,
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+		});
+		return out.trim().length === 0;
+	} catch {
+		return false;
+	}
+}
 
 export function createPrReviewDispatch(
 	partialDeps: Partial<PrReviewDispatchDeps> = {},
@@ -251,6 +293,7 @@ export function createPrReviewDispatch(
 			}
 		},
 		getBaseRef: resolveDefaultBaseRef,
+		isWorktreeClean: defaultIsWorktreeClean,
 		listChangedFiles: defaultListChangedFiles,
 		applyDiffFilters,
 		countDiffLines: countDiffLinesFast,
@@ -343,6 +386,7 @@ export function createPrReviewDispatch(
 			baseRef,
 			testPlan,
 			headSha: reviewedHeadSha,
+			signal: input.signal,
 		});
 	}
 
@@ -384,6 +428,20 @@ export function createPrReviewDispatch(
 			};
 		}
 
+		// Stamp integrity: the host reviewer validates the live checkout, so a
+		// dirty worktree would be validated while a clean committed HEAD is
+		// stamped. Require a clean worktree before running the review.
+		if (!deps.isWorktreeClean(ctx.cwd)) {
+			return {
+				report: null,
+				stamped: false,
+				escalated: false,
+				blocked: true,
+				message:
+					"PR review gate: worktree has uncommitted changes. The host reviewer validates the live checkout, so commit or stash before requesting a review.",
+			};
+		}
+
 		try {
 			const childOutput = await runPrReview(input, headSha);
 			const currentHeadSha = deps.getHeadSha(ctx.cwd);
@@ -394,6 +452,29 @@ export function createPrReviewDispatch(
 					escalated: false,
 					blocked: true,
 					message: `PR review gate: HEAD changed during review (${headSha} → ${currentHeadSha || "unknown"}). The result was not applied; re-run /pr-review for the current HEAD.`,
+				};
+			}
+			// Abort fail-closed: if the coordinator aborted (session shutdown)
+			// before we stamped, never apply the result even if a report slipped
+			// through as the child was being killed.
+			if (input.signal?.aborted) {
+				return {
+					report: childOutput.report,
+					stamped: false,
+					escalated: false,
+					blocked: true,
+					message: `PR review gate: review was aborted (session shutdown) before stamping HEAD ${headSha}. Not stamped; re-run /pr-review.`,
+				};
+			}
+			// Re-verify worktree cleanliness: edits made while the async review ran
+			// would mean the validated content no longer matches the stamped HEAD.
+			if (!deps.isWorktreeClean(ctx.cwd)) {
+				return {
+					report: childOutput.report,
+					stamped: false,
+					escalated: false,
+					blocked: true,
+					message: `PR review gate: worktree changed during review of HEAD ${headSha}. The result was not applied; re-run /pr-review with a clean worktree.`,
 				};
 			}
 			const report = childOutput.report;

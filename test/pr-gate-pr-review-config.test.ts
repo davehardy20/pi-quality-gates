@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
 	assertPrReviewerToolPolicy,
@@ -14,6 +15,8 @@ describe("PR reviewer config", () => {
 	});
 
 	it("grants the Apple-container validation/read-only tools", () => {
+		expect(PR_REVIEWER_TOOLS.has("read")).toBe(true);
+		expect(PR_REVIEWER_TOOLS.has("pi_docs")).toBe(false);
 		expect(PR_REVIEWER_TOOLS.has("container_safe")).toBe(true);
 		expect(PR_REVIEWER_TOOLS.has("git_inspect_safe")).toBe(true);
 		expect(PR_REVIEWER_TOOLS.has("web_search")).toBe(true);
@@ -43,5 +46,16 @@ describe("PR reviewer config", () => {
 
 	it("passes the policy assertion", () => {
 		expect(() => assertPrReviewerToolPolicy()).not.toThrow();
+	});
+
+	it("directs Pi documentation research through the native read tool", () => {
+		for (const promptPath of [
+			"../src/pr-gate/prompts/system.md",
+			"../src/pr-gate/prompts/pr-reviewer-system.md",
+		]) {
+			const prompt = readFileSync(new URL(promptPath, import.meta.url), "utf8");
+			expect(prompt).not.toMatch(/\bpi_docs\b/);
+			expect(prompt).toMatch(/Pi.*documentation.*read/i);
+		}
 	});
 });

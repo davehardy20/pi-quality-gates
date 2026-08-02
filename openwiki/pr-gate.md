@@ -98,7 +98,7 @@ Tokens are stored in-memory via `PassTokenStore` (`src/pr-gate/pass-token-store.
    - List changed files via `git diff --name-only`.
    - Load and apply `.gitignore` plus `.pi/reviewer.skip` filters to the review file scope; block if every changed file is excluded.
    - Count changed lines in the filtered scope → reject if it exceeds `maxChangedLines` (5000).
-   - Pass the filtered file list to repository-direct sandbox review. For legacy/injected execution, gather a capped diff (`maxDiffLines` = 4000). The default orchestrator bridge skips parent diff materialization.
+   - Pass the filtered file list to repository-direct sandbox review. For legacy/injected execution, gather a capped diff (`maxDiffLines` = 4000). The orchestrator bridge (`PI_PR_REVIEW_BRIDGE=orchestrator`) skips parent diff materialization.
    - Extract original task from session entries.
    - Generate test execution plan.
    - Call `reviewerExecution.runAttempt()`.
@@ -116,10 +116,16 @@ Tokens are stored in-memory via `PassTokenStore` (`src/pr-gate/pass-token-store.
 
 ## Reviewer engine
 
-`src/pr-gate/orchestrator-reviewer-execution.ts` is the default `/pr-review`
-execution bridge.
+`src/pr-gate/index.ts` selects the reviewer execution bridge at startup
+(`PrReviewerBridgeMode`, env `PI_PR_REVIEW_BRIDGE`). The **default `host`
+bridge** (`src/pr-gate/reviewer.ts`) spawns a read-only headless child Pi that
+runs the safe validation runners against the repository checkout, where
+dependencies already live — the review is read-only, so the Apple-container
+sandbox (reserved for mutating workers) is not required. Opt back into the
+sandboxed orchestrator `pr-reviewer` with `PI_PR_REVIEW_BRIDGE=orchestrator`
+once the container reviewer is stable.
 
-**Sandboxed orchestrator dispatch:**
+**Orchestrator bridge dispatch** (`PI_PR_REVIEW_BRIDGE=orchestrator`):
 - Creates a unique `PR_REVIEW_REQUEST_ID`.
 - Sends a bounded parent follow-up containing request/head/base metadata, a capped task/test-plan summary, and at most 32 capped file paths.
 - Deliberately excludes the full diff; the sandbox reviewer inspects `baseRef..HEAD` directly.
@@ -128,9 +134,11 @@ execution bridge.
 - Bounds result capture at 262,144 characters and fails closed on overflow.
 - Fails closed if `orchestrate` is unavailable, the request times out, or the session shuts down. Shutdown clears pending timers/correlation state.
 
-`src/pr-gate/reviewer.ts` still contains the legacy report parser and injectable
-reviewer execution helpers for tests/compatibility, but the package default no
-longer host-spawns a headless child Pi for `/pr-review`.
+`src/pr-gate/reviewer.ts` is the default host bridge: report parsing,
+injectable reviewer execution, and `spawnReviewer` (the headless child Pi). The
+host bridge materializes a capped diff (`maxDiffLines` = 4000) and passes it to
+the child; the orchestrator bridge sets `inspectRepositoryDirectly` and skips
+parent diff materialization.
 
 Legacy direct child capture is also pre-close bounded: 1,048,576 characters per JSON line, 262,144 characters of assistant output, and 65,536 characters of stderr. Overflow produces a parse-failure sidecar and cannot stamp PASS.
 
@@ -161,10 +169,12 @@ tool allowlist and blocklist.
 mutation tools, and all mulch/seeds mutating tools. This allowlist protects
 legacy/dependency-injected reviewer execution.
 
-The default orchestrator `pr-reviewer` runs inside a disposable sandbox. It
-prefers `git_inspect_safe` and custom validation runners; when unavailable, the
-parent instruction permits sandbox-local read-only Git and trusted package
-scripts. Host mutation and publishing remain forbidden, and unverifiable
+The configured reviewer bridge runs the review. The default `host` bridge runs
+`git_inspect_safe` and custom validation runners on the host; the `orchestrator`
+bridge (`PI_PR_REVIEW_BRIDGE=orchestrator`) runs the `pr-reviewer` inside a
+disposable Apple container, where the parent instruction permits sandbox-local
+read-only Git and trusted package scripts when runners are unavailable. Host
+mutation and publishing remain forbidden on both paths, and unverifiable
 HEAD/base state still fails closed.
 
 **`assertPrReviewerToolPolicy()`**: startup-time safety check — throws if any
@@ -185,7 +195,10 @@ forbidden tool appears in `PR_REVIEW_CONFIG.tools`.
 | Rust | `run_cargo_test` | All |
 | Go | No runner commands, discovery only | — |
 
-**Invariant**: All test execution must happen in the **Apple container sandbox** via `container_safe`, not on the host.
+**Invariant**: A PASS requires executed validation. The default `host` bridge
+runs the safe validation runners (e.g. `run_typecheck`) against the repository
+checkout; the `orchestrator` bridge runs them in the Apple container sandbox
+via `container_safe`.
 
 **Mandatory test execution**: A review report that says PASS but omits `### Test execution` or reports `FAIL`/`NOT_RUN` is overridden to `CANNOT_REVIEW` and blocked (enforced in `pr-review-dispatch.ts`).
 
@@ -244,7 +257,7 @@ Registered in `src/pr-gate/index.ts`:
 | `/pr-gate-status` | Show push gate state (enabled, gated actions, tokens) |
 | `/pr-gate-toggle [on\|off]` | Enable or disable push gate |
 | `/pr-gate-test-block` | Simulate hook decision without actually pushing |
-| `pr_review` (LLM tool) | Agent-callable custom tool that requests the same sandboxed review as `/pr-review` over the shared coordinator. Asynchronous kickoff; returns compact structured state. |
+| `pr_review` (LLM tool) | Agent-callable custom tool that requests the same review as `/pr-review` over the shared coordinator (configured reviewer bridge). Asynchronous kickoff; returns compact structured state. |
 
 ## Agent-callable `pr_review` tool
 
@@ -266,11 +279,18 @@ no second review or stamping path.
 
 **Asynchronous by design.** The tool's `execute` runs the synchronous
 eligibility checks and kicks off the background dispatch, then returns compact
-kickoff state. It does NOT await the later `orchestrate` tool result — that
-follow-up tool call cannot run until the current tool batch completes, so
-awaiting would deadlock. The existing matching `tool_result` handler in
-`orchestrator-reviewer-execution.ts` resumes the dispatch, parses the sandbox
-report, and stamps a PASS token only for the exact reviewed HEAD.
+kickoff state. It never blocks on completion — awaiting the follow-up would
+deadlock (a tool result cannot run until the current tool batch completes).
+
+Completion depends on the configured reviewer bridge:
+
+- **host (default):** `src/pr-gate/reviewer.ts` spawns a headless child Pi that
+  runs read-only validation and returns the report; the dispatch resumes and
+  stamps a PASS token only for the exact reviewed HEAD.
+- **orchestrator** (`PI_PR_REVIEW_BRIDGE=orchestrator`): the dispatch does NOT
+  await the later `orchestrate` tool result; the matching `tool_result` handler
+  in `orchestrator-reviewer-execution.ts` resumes the dispatch, parses the
+  sandbox report, and stamps the same exact-HEAD PASS token.
 
 **Kickoff states** (`ReviewKickoffStatus`): `started` | `already-passed` |
 `in-progress` | `blocked` | `disabled`. The result carries only status,
@@ -299,11 +319,12 @@ return even when the HEAD already has a token.
 | PASS token behaviour | `src/pr-gate/pass-token-store.ts` | Only "PASS" stamps; no persistence |
 | Reviewer tool allowlist | `src/pr-gate/pr-review-config.ts` → `PR_REVIEW_CONFIG` | Run `assertPrReviewerToolPolicy()` |
 | Reviewer timeout/diff limits | `src/pr-gate/pr-review-config.ts` | Affects child Pi spawn and cost |
+| Reviewer bridge (host vs container) | `src/pr-gate/index.ts` → `resolveReviewerBridgeMode` / `PI_PR_REVIEW_BRIDGE` | Host default; container needs the sandbox reviewer stable |
 | Child Pi spawn args | `src/pr-gate/reviewer.ts` → `buildReviewerPiArgs` | Tool list must match policy |
 | Report parsing format | `src/pr-gate/reviewer.ts` → `parseReviewReport` | Must match prompt output format in `system.md` |
 | Base ref fallback chain | `src/pr-gate/pr-review-dispatch.ts` → `resolveBaseRef` | Ordered: origin/master → origin/main → master → main → HEAD~1 |
 | Auto-review guards | `src/pr-gate/auto-review-trigger.ts` → `decideAutoReview` | Sticky `lastReviewedSha` prevents loops |
-| Test execution recommendations | `src/pr-gate/test-execution.ts` | All via `container_safe` |
+| Test execution recommendations | `src/pr-gate/test-execution.ts` | All via safe runners (`run_*` host / `container_safe` orchestrator) |
 | Agent review kickoff logic | `src/pr-gate/review-coordinator.ts` → `createReviewCoordinator` | Shared by `/pr-review` and `pr_review`; keep parity |
 | `pr_review` tool contract | `src/pr-gate/pr-review-tool.ts` | Tool stays async; never publishes |
 
@@ -318,7 +339,7 @@ return even when the HEAD already has a token.
 7. Tokens are sha-scoped, not branch-scoped.
 8. No persistence — session reload clears all tokens.
 9. Auto-review sticky guard: once attempted, same HEAD not auto-attempted again.
-10. Legacy/injected reviewer execution has no bash; the default disposable sandbox may use built-in shell only for sandbox-local read-only Git and trusted package scripts. Neither path permits host mutation or publishing.
+10. Legacy/injected reviewer execution has no bash; the orchestrator bridge's disposable sandbox may use built-in shell only for sandbox-local read-only Git and trusted package scripts. Neither path permits host mutation or publishing.
 11. `/pr-review` and `pr_review` share one coordinator, one in-progress guard, one dispatch instance, and one exact-HEAD token store — no duplicate review or stamping path.
 12. `pr_review` is asynchronous: `execute` only kicks off the background dispatch and returns compact state; it never awaits the follow-up `orchestrate` result (no deadlock).
 13. `pr_review` and the coordinator **never publish** — no `git_safe`/`gh_safe` push/pr_create/update/merge. The push gate stays fail-closed until the exact HEAD has a PASS token, so a parallel `pr_review` + publish batch cannot bypass it.

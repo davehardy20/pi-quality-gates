@@ -109,6 +109,7 @@ export function createReviewCoordinator(
 ): ReviewCoordinator {
 	let inProgress = false;
 	let disposed = false;
+	let activeController: AbortController | undefined;
 
 	function setStatus(ctx: ExtensionContext, text: string | undefined): void {
 		if (disposed) return;
@@ -125,6 +126,8 @@ export function createReviewCoordinator(
 	}): void {
 		const { ctx, state, dispatchInput, headSha } = params;
 		const { pi } = deps;
+		const controller = new AbortController();
+		activeController = controller;
 		inProgress = true;
 		setStatus(ctx, `PR review: running ${headSha.slice(0, 8) || "unknown"}`);
 		pi.sendMessage({
@@ -141,8 +144,10 @@ export function createReviewCoordinator(
 		});
 		void (async () => {
 			try {
-				const result: PrReviewDispatchResult =
-					await deps.dispatch.dispatch(dispatchInput);
+				const result: PrReviewDispatchResult = await deps.dispatch.dispatch({
+					...dispatchInput,
+					signal: controller.signal,
+				});
 				if (disposed) return;
 				const statusText = result.stamped
 					? `PR review: PASS ${headSha.slice(0, 8)}`
@@ -189,6 +194,7 @@ export function createReviewCoordinator(
 				});
 			} finally {
 				if (!disposed) inProgress = false;
+				if (activeController === controller) activeController = undefined;
 			}
 		})();
 	}
@@ -196,6 +202,10 @@ export function createReviewCoordinator(
 	return {
 		isInProgress: () => inProgress,
 		dispose(): void {
+			// Abort any in-flight host review first so its dispatch cannot stamp
+			// a PASS token after tokens.clear() runs during session shutdown.
+			activeController?.abort();
+			activeController = undefined;
 			disposed = true;
 			inProgress = false;
 		},
@@ -288,7 +298,7 @@ export function createReviewCoordinator(
 			return {
 				...base,
 				status: "started",
-				message: `PR review started for HEAD ${headSha}${baseRef ? ` against ${baseRef}` : ""} via ${source}. It runs in the background through the sandboxed pr-reviewer. Do NOT publish yet — wait for the pr-review-pass message / re-check before calling git_safe push or gh_safe pr_create.`,
+				message: `PR review started for HEAD ${headSha}${baseRef ? ` against ${baseRef}` : ""} via ${source}. It runs in the background through the configured reviewer bridge (default host; Apple-container when PI_PR_REVIEW_BRIDGE=orchestrator). Do NOT publish yet — wait for the pr-review-pass message / re-check before calling git_safe push or gh_safe pr_create.`,
 				started: true,
 			};
 		},

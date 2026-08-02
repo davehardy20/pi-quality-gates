@@ -24,7 +24,8 @@ You have the full read-only toolset plus safe validation runners:
 
 - `read`, `grep`, `find`, `ls`, `safe_parse_file`
 - `ast_grep_search`, `lsp_*` (read-only)
-- `pi_docs`, `context7_library`, `context7_docs`
+- For Pi documentation, use `read` with the absolute paths supplied by Pi's system prompt
+- `context7_library`, `context7_docs` for external library documentation
 - `git_inspect_safe` for read-only git status/diff inspection
 - `container_safe` only as the Apple-container sandbox bridge
 - `run_biome`, `run_vitest`, `run_typecheck`, `run_pytest`, `run_cargo_test`
