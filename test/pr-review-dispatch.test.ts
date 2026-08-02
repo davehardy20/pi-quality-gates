@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
@@ -6,6 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createPassTokenStore } from "../src/pr-gate/pass-token-store.js";
 import {
 	createPrReviewDispatch,
+	defaultIsWorktreeClean,
 	resolveDefaultBaseRef,
 } from "../src/pr-gate/pr-review-dispatch.js";
 
@@ -224,5 +229,32 @@ describe("createPrReviewDispatch", () => {
 		expect(result.stamped).toBe(false);
 		expect(result.message).toContain("aborted");
 		expect(tokens.size).toBe(0);
+	});
+	it("defaultIsWorktreeClean rejects untracked and modified files", () => {
+		const dir = mkdtempSync(join(tmpdir(), "wt-clean-"));
+		try {
+			const git = (args: string[]) =>
+				execFileSync("git", args, {
+					cwd: dir,
+					stdio: ["ignore", "ignore", "ignore"],
+				});
+			git(["init", "-q"]);
+			git(["config", "user.email", "t@t.test"]);
+			git(["config", "user.name", "test"]);
+			writeFileSync(join(dir, "committed.txt"), "a");
+			git(["add", "."]);
+			git(["commit", "-q", "-m", "init"]);
+			expect(defaultIsWorktreeClean(dir)).toBe(true);
+			// Untracked file (e.g. a generated module) must block.
+			writeFileSync(join(dir, "generated.ts"), "x");
+			expect(defaultIsWorktreeClean(dir)).toBe(false);
+			rmSync(join(dir, "generated.ts"));
+			expect(defaultIsWorktreeClean(dir)).toBe(true);
+			// Tracked modification must block.
+			writeFileSync(join(dir, "committed.txt"), "b");
+			expect(defaultIsWorktreeClean(dir)).toBe(false);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });
