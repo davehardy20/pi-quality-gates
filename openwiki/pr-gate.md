@@ -116,10 +116,16 @@ Tokens are stored in-memory via `PassTokenStore` (`src/pr-gate/pass-token-store.
 
 ## Reviewer engine
 
-`src/pr-gate/orchestrator-reviewer-execution.ts` is the default `/pr-review`
-execution bridge.
+`src/pr-gate/index.ts` selects the reviewer execution bridge at startup
+(`PrReviewerBridgeMode`, env `PI_PR_REVIEW_BRIDGE`). The **default `host`
+bridge** (`src/pr-gate/reviewer.ts`) spawns a read-only headless child Pi that
+runs the safe validation runners against the repository checkout, where
+dependencies already live — the review is read-only, so the Apple-container
+sandbox (reserved for mutating workers) is not required. Opt back into the
+sandboxed orchestrator `pr-reviewer` with `PI_PR_REVIEW_BRIDGE=orchestrator`
+once the container reviewer is stable.
 
-**Sandboxed orchestrator dispatch:**
+**Orchestrator bridge dispatch** (`PI_PR_REVIEW_BRIDGE=orchestrator`):
 - Creates a unique `PR_REVIEW_REQUEST_ID`.
 - Sends a bounded parent follow-up containing request/head/base metadata, a capped task/test-plan summary, and at most 32 capped file paths.
 - Deliberately excludes the full diff; the sandbox reviewer inspects `baseRef..HEAD` directly.
@@ -128,9 +134,11 @@ execution bridge.
 - Bounds result capture at 262,144 characters and fails closed on overflow.
 - Fails closed if `orchestrate` is unavailable, the request times out, or the session shuts down. Shutdown clears pending timers/correlation state.
 
-`src/pr-gate/reviewer.ts` still contains the legacy report parser and injectable
-reviewer execution helpers for tests/compatibility, but the package default no
-longer host-spawns a headless child Pi for `/pr-review`.
+`src/pr-gate/reviewer.ts` is the default host bridge: report parsing,
+injectable reviewer execution, and `spawnReviewer` (the headless child Pi). The
+host bridge materializes a capped diff (`maxDiffLines` = 4000) and passes it to
+the child; the orchestrator bridge sets `inspectRepositoryDirectly` and skips
+parent diff materialization.
 
 Legacy direct child capture is also pre-close bounded: 1,048,576 characters per JSON line, 262,144 characters of assistant output, and 65,536 characters of stderr. Overflow produces a parse-failure sidecar and cannot stamp PASS.
 
@@ -185,7 +193,10 @@ forbidden tool appears in `PR_REVIEW_CONFIG.tools`.
 | Rust | `run_cargo_test` | All |
 | Go | No runner commands, discovery only | — |
 
-**Invariant**: All test execution must happen in the **Apple container sandbox** via `container_safe`, not on the host.
+**Invariant**: A PASS requires executed validation. The default `host` bridge
+runs the safe validation runners (e.g. `run_typecheck`) against the repository
+checkout; the `orchestrator` bridge runs them in the Apple container sandbox
+via `container_safe`.
 
 **Mandatory test execution**: A review report that says PASS but omits `### Test execution` or reports `FAIL`/`NOT_RUN` is overridden to `CANNOT_REVIEW` and blocked (enforced in `pr-review-dispatch.ts`).
 
@@ -299,6 +310,7 @@ return even when the HEAD already has a token.
 | PASS token behaviour | `src/pr-gate/pass-token-store.ts` | Only "PASS" stamps; no persistence |
 | Reviewer tool allowlist | `src/pr-gate/pr-review-config.ts` → `PR_REVIEW_CONFIG` | Run `assertPrReviewerToolPolicy()` |
 | Reviewer timeout/diff limits | `src/pr-gate/pr-review-config.ts` | Affects child Pi spawn and cost |
+| Reviewer bridge (host vs container) | `src/pr-gate/index.ts` → `resolveReviewerBridgeMode` / `PI_PR_REVIEW_BRIDGE` | Host default; container needs the sandbox reviewer stable |
 | Child Pi spawn args | `src/pr-gate/reviewer.ts` → `buildReviewerPiArgs` | Tool list must match policy |
 | Report parsing format | `src/pr-gate/reviewer.ts` → `parseReviewReport` | Must match prompt output format in `system.md` |
 | Base ref fallback chain | `src/pr-gate/pr-review-dispatch.ts` → `resolveBaseRef` | Ordered: origin/master → origin/main → master → main → HEAD~1 |

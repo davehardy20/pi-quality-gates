@@ -284,3 +284,49 @@ describe("pr-gate session shutdown", () => {
 		);
 	});
 });
+
+describe("pr-gate reviewer bridge selection", () => {
+	// The host bridge spawns a headless child Pi directly and returns its report;
+	// it never routes through `orchestrate`, so it registers no tool_result
+	// handler. The orchestrator bridge (container) is opt-in.
+	function withEnv<T>(value: string | undefined, fn: () => T): T {
+		const prev = process.env.PI_PR_REVIEW_BRIDGE;
+		if (value === undefined) delete process.env.PI_PR_REVIEW_BRIDGE;
+		else process.env.PI_PR_REVIEW_BRIDGE = value;
+		try {
+			return fn();
+		} finally {
+			if (prev === undefined) delete process.env.PI_PR_REVIEW_BRIDGE;
+			else process.env.PI_PR_REVIEW_BRIDGE = prev;
+		}
+	}
+
+	it("defaults to the host reviewer bridge (no tool_result handler)", () => {
+		withEnv(undefined, () => {
+			const { pi, handlers, tools } = createMockPi();
+			prGateExtension(pi);
+
+			expect(handlers.has("tool_result")).toBe(false);
+			expect(handlers.has("session_shutdown")).toBe(true);
+			expect(tools.get("pr_review")).toBeDefined();
+		});
+	});
+
+	it("selects the orchestrator bridge when PI_PR_REVIEW_BRIDGE=orchestrator", () => {
+		withEnv("orchestrator", () => {
+			const { pi, handlers } = createMockPi();
+			prGateExtension(pi);
+
+			expect(handlers.has("tool_result")).toBe(true);
+		});
+	});
+
+	it("reviewerBridgeMode dep overrides PI_PR_REVIEW_BRIDGE", () => {
+		withEnv("orchestrator", () => {
+			const { pi, handlers } = createMockPi();
+			prGateExtension(pi, { reviewerBridgeMode: "host" });
+
+			expect(handlers.has("tool_result")).toBe(false);
+		});
+	});
+});
