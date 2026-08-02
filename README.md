@@ -104,17 +104,17 @@ Create `.pi/linter.config.json` in your project root:
 
 This bundle previously shipped an auto-triggering post-turn reviewer. It has
 been retired in favour of explicit `/pr-review` and governed Seeds closeout
-review requests. `/pr-review` prepares a PR diff, asks the sandboxed
-orchestrator `pr-reviewer` category to produce the `## Review Report`, and
-stamps a PASS token before publishing. There is no separate reviewer config
-file; PR review uses built-in diff limits and the active orchestrator category
-policy.
+review requests. `/pr-review` prepares a PR diff and runs the configured
+reviewer bridge to produce the `## Review Report`, stamping a PASS token before
+publishing. The default host bridge spawns a read-only headless child Pi; set
+`PI_PR_REVIEW_BRIDGE=orchestrator` to use the sandboxed `pr-reviewer` category.
+There is no separate reviewer config file; PR review uses built-in diff limits
+and the reviewer tool policy.
 
 ## Notes
 
-- `/pr-review` uses the active `pr-reviewer` orchestrator category; if the
-  `orchestrate` tool is unavailable, the gate fails closed with an explicit
-  status message instead of spawning a host reviewer.
+- `/pr-review` runs the configured reviewer bridge (default host child Pi); the
+  `orchestrate` tool is only required when `PI_PR_REVIEW_BRIDGE=orchestrator`.
 - LSP diagnostics are optional and disabled by default. Enable via linter config.
 - Go files are validated by default with `gofmt -l` for modified files and
   `go vet ./...` once per nearest `go.mod` module. This does not require LSP.
