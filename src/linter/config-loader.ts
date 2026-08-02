@@ -45,8 +45,18 @@ export const DEFAULT_CONFIG: LinterConfig = {
 		".jsx": { type: "cli", command: "biome", args: ["check"], name: "Biome" },
 		".mjs": { type: "cli", command: "biome", args: ["check"], name: "Biome" },
 		".cjs": { type: "cli", command: "biome", args: ["check"], name: "Biome" },
-		".py": { type: "cli", command: "ruff", args: ["check"], name: "Ruff" },
-		".pyi": { type: "cli", command: "ruff", args: ["check"], name: "Ruff" },
+		".py": {
+			type: "cli",
+			command: "ruff",
+			args: ["check", "--output-format=concise"],
+			name: "Ruff",
+		},
+		".pyi": {
+			type: "cli",
+			command: "ruff",
+			args: ["check", "--output-format=concise"],
+			name: "Ruff",
+		},
 		".go": { type: "api", name: "go" },
 		".c": {
 			type: "cli",
