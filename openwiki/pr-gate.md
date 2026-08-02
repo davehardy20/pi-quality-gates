@@ -279,11 +279,18 @@ no second review or stamping path.
 
 **Asynchronous by design.** The tool's `execute` runs the synchronous
 eligibility checks and kicks off the background dispatch, then returns compact
-kickoff state. It does NOT await the later `orchestrate` tool result — that
-follow-up tool call cannot run until the current tool batch completes, so
-awaiting would deadlock. The existing matching `tool_result` handler in
-`orchestrator-reviewer-execution.ts` resumes the dispatch, parses the sandbox
-report, and stamps a PASS token only for the exact reviewed HEAD.
+kickoff state. It never blocks on completion — awaiting the follow-up would
+deadlock (a tool result cannot run until the current tool batch completes).
+
+Completion depends on the configured reviewer bridge:
+
+- **host (default):** `src/pr-gate/reviewer.ts` spawns a headless child Pi that
+  runs read-only validation and returns the report; the dispatch resumes and
+  stamps a PASS token only for the exact reviewed HEAD.
+- **orchestrator** (`PI_PR_REVIEW_BRIDGE=orchestrator`): the dispatch does NOT
+  await the later `orchestrate` tool result; the matching `tool_result` handler
+  in `orchestrator-reviewer-execution.ts` resumes the dispatch, parses the
+  sandbox report, and stamps the same exact-HEAD PASS token.
 
 **Kickoff states** (`ReviewKickoffStatus`): `started` | `already-passed` |
 `in-progress` | `blocked` | `disabled`. The result carries only status,

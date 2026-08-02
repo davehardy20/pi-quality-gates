@@ -54,11 +54,14 @@ Everything else on this page follows from that rule.
    5. Background dispatch starts (NOT awaited by execute)
           │
           ▼
-   6. Sandbox pr-reviewer runs (read-only sandbox tools, no host mutation)
+   6. Configured reviewer bridge runs (read-only; no host mutation):
+      host (default): headless child Pi runs validation against the checkout
+      orchestrator (PI_PR_REVIEW_BRIDGE=orchestrator): sandboxed pr-reviewer
           │
           ▼
-   7. Matching tool_result handler resumes dispatch
-      parse report → exact-HEAD PASS stamp (or block / escalate)
+   7. Bridge completion resumes dispatch → exact-HEAD PASS stamp (or block / escalate)
+      host: child returns the report directly
+      orchestrator: matching tool_result handler parses the sandbox report
           │
           ▼
    8. Completion message emitted

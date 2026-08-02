@@ -32,6 +32,7 @@ import {
 	createPassTokenStore,
 	type PassTokenStore,
 } from "./pass-token-store.js";
+import { assertPrReviewerToolPolicy } from "./pr-review-config.js";
 import { createPrReviewDispatch } from "./pr-review-dispatch.js";
 import { createPrReviewToolDefinition } from "./pr-review-tool.js";
 import {
@@ -235,6 +236,7 @@ export default function prGateExtension(
 	pi: ExtensionAPI,
 	deps: PrGateExtensionDeps = {},
 ): void {
+	assertPrReviewerToolPolicy();
 	const state = createPrGateState();
 	const resolveHead = deps.resolveHeadSha ?? resolveHeadSha;
 
