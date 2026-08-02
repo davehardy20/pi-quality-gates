@@ -169,10 +169,12 @@ tool allowlist and blocklist.
 mutation tools, and all mulch/seeds mutating tools. This allowlist protects
 legacy/dependency-injected reviewer execution.
 
-The default orchestrator `pr-reviewer` runs inside a disposable sandbox. It
-prefers `git_inspect_safe` and custom validation runners; when unavailable, the
-parent instruction permits sandbox-local read-only Git and trusted package
-scripts. Host mutation and publishing remain forbidden, and unverifiable
+The configured reviewer bridge runs the review. The default `host` bridge runs
+`git_inspect_safe` and custom validation runners on the host; the `orchestrator`
+bridge (`PI_PR_REVIEW_BRIDGE=orchestrator`) runs the `pr-reviewer` inside a
+disposable Apple container, where the parent instruction permits sandbox-local
+read-only Git and trusted package scripts when runners are unavailable. Host
+mutation and publishing remain forbidden on both paths, and unverifiable
 HEAD/base state still fails closed.
 
 **`assertPrReviewerToolPolicy()`**: startup-time safety check — throws if any
@@ -255,7 +257,7 @@ Registered in `src/pr-gate/index.ts`:
 | `/pr-gate-status` | Show push gate state (enabled, gated actions, tokens) |
 | `/pr-gate-toggle [on\|off]` | Enable or disable push gate |
 | `/pr-gate-test-block` | Simulate hook decision without actually pushing |
-| `pr_review` (LLM tool) | Agent-callable custom tool that requests the same sandboxed review as `/pr-review` over the shared coordinator. Asynchronous kickoff; returns compact structured state. |
+| `pr_review` (LLM tool) | Agent-callable custom tool that requests the same review as `/pr-review` over the shared coordinator (configured reviewer bridge). Asynchronous kickoff; returns compact structured state. |
 
 ## Agent-callable `pr_review` tool
 
@@ -330,7 +332,7 @@ return even when the HEAD already has a token.
 7. Tokens are sha-scoped, not branch-scoped.
 8. No persistence — session reload clears all tokens.
 9. Auto-review sticky guard: once attempted, same HEAD not auto-attempted again.
-10. Legacy/injected reviewer execution has no bash; the default disposable sandbox may use built-in shell only for sandbox-local read-only Git and trusted package scripts. Neither path permits host mutation or publishing.
+10. Legacy/injected reviewer execution has no bash; the orchestrator bridge's disposable sandbox may use built-in shell only for sandbox-local read-only Git and trusted package scripts. Neither path permits host mutation or publishing.
 11. `/pr-review` and `pr_review` share one coordinator, one in-progress guard, one dispatch instance, and one exact-HEAD token store — no duplicate review or stamping path.
 12. `pr_review` is asynchronous: `execute` only kicks off the background dispatch and returns compact state; it never awaits the follow-up `orchestrate` result (no deadlock).
 13. `pr_review` and the coordinator **never publish** — no `git_safe`/`gh_safe` push/pr_create/update/merge. The push gate stays fail-closed until the exact HEAD has a PASS token, so a parallel `pr_review` + publish batch cannot bypass it.
