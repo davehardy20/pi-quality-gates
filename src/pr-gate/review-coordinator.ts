@@ -109,6 +109,7 @@ export function createReviewCoordinator(
 ): ReviewCoordinator {
 	let inProgress = false;
 	let disposed = false;
+	let activeController: AbortController | undefined;
 
 	function setStatus(ctx: ExtensionContext, text: string | undefined): void {
 		if (disposed) return;
@@ -125,6 +126,8 @@ export function createReviewCoordinator(
 	}): void {
 		const { ctx, state, dispatchInput, headSha } = params;
 		const { pi } = deps;
+		const controller = new AbortController();
+		activeController = controller;
 		inProgress = true;
 		setStatus(ctx, `PR review: running ${headSha.slice(0, 8) || "unknown"}`);
 		pi.sendMessage({
@@ -141,8 +144,10 @@ export function createReviewCoordinator(
 		});
 		void (async () => {
 			try {
-				const result: PrReviewDispatchResult =
-					await deps.dispatch.dispatch(dispatchInput);
+				const result: PrReviewDispatchResult = await deps.dispatch.dispatch({
+					...dispatchInput,
+					signal: controller.signal,
+				});
 				if (disposed) return;
 				const statusText = result.stamped
 					? `PR review: PASS ${headSha.slice(0, 8)}`
@@ -189,6 +194,7 @@ export function createReviewCoordinator(
 				});
 			} finally {
 				if (!disposed) inProgress = false;
+				if (activeController === controller) activeController = undefined;
 			}
 		})();
 	}
@@ -196,6 +202,10 @@ export function createReviewCoordinator(
 	return {
 		isInProgress: () => inProgress,
 		dispose(): void {
+			// Abort any in-flight host review first so its dispatch cannot stamp
+			// a PASS token after tokens.clear() runs during session shutdown.
+			activeController?.abort();
+			activeController = undefined;
 			disposed = true;
 			inProgress = false;
 		},

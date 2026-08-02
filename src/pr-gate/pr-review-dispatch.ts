@@ -30,6 +30,12 @@ import {
 
 export interface PrReviewDispatchDeps {
 	getHeadSha: (cwd: string) => string;
+	/**
+	 * Whether the worktree has no uncommitted tracked changes vs HEAD. The host
+	 * reviewer validates the live checkout, so a dirty worktree would be
+	 * validated while a clean committed HEAD is stamped — block before review.
+	 */
+	isWorktreeClean: (cwd: string) => boolean;
 	getBaseRef: (cwd: string) => string;
 	listChangedFiles: (cwd: string, baseRef: string) => Promise<string[]>;
 	applyDiffFilters: (
@@ -72,6 +78,12 @@ export interface PrReviewDispatchInput {
 	pi: ExtensionAPI;
 	baseRef?: string;
 	isReReview?: boolean;
+	/**
+	 * Abort signal owned by the coordinator. When aborted (e.g. session
+	 * shutdown) the in-flight host child is killed and the result is never
+	 * stamped, even if a report slipped through before the process exited.
+	 */
+	signal?: AbortSignal;
 }
 
 export interface PrReviewDispatchResult {
@@ -232,6 +244,24 @@ export function resolveDefaultBaseRef(
 	}
 	return "HEAD~1";
 }
+/**
+ * Default worktree-clean check: `git diff --quiet HEAD` exits 0 only when
+ * there are no tracked (staged or unstaged) changes vs HEAD. Exit 1 means the
+ * worktree is dirty; any other status means we could not verify (e.g. not a
+ * git worktree), treated leniently as clean so the gate does not hard-block
+ * where the check is inapplicable.
+ */
+export function defaultIsWorktreeClean(cwd: string): boolean {
+	try {
+		execFileSync("git", ["diff", "--quiet", "HEAD"], {
+			cwd,
+			stdio: ["ignore", "ignore", "ignore"],
+		});
+		return true;
+	} catch (error) {
+		return (error as { status?: number }).status !== 1;
+	}
+}
 
 export function createPrReviewDispatch(
 	partialDeps: Partial<PrReviewDispatchDeps> = {},
@@ -251,6 +281,7 @@ export function createPrReviewDispatch(
 			}
 		},
 		getBaseRef: resolveDefaultBaseRef,
+		isWorktreeClean: defaultIsWorktreeClean,
 		listChangedFiles: defaultListChangedFiles,
 		applyDiffFilters,
 		countDiffLines: countDiffLinesFast,
@@ -343,6 +374,7 @@ export function createPrReviewDispatch(
 			baseRef,
 			testPlan,
 			headSha: reviewedHeadSha,
+			signal: input.signal,
 		});
 	}
 
@@ -384,6 +416,20 @@ export function createPrReviewDispatch(
 			};
 		}
 
+		// Stamp integrity: the host reviewer validates the live checkout, so a
+		// dirty worktree would be validated while a clean committed HEAD is
+		// stamped. Require a clean worktree before running the review.
+		if (!deps.isWorktreeClean(ctx.cwd)) {
+			return {
+				report: null,
+				stamped: false,
+				escalated: false,
+				blocked: true,
+				message:
+					"PR review gate: worktree has uncommitted changes. The host reviewer validates the live checkout, so commit or stash before requesting a review.",
+			};
+		}
+
 		try {
 			const childOutput = await runPrReview(input, headSha);
 			const currentHeadSha = deps.getHeadSha(ctx.cwd);
@@ -394,6 +440,29 @@ export function createPrReviewDispatch(
 					escalated: false,
 					blocked: true,
 					message: `PR review gate: HEAD changed during review (${headSha} → ${currentHeadSha || "unknown"}). The result was not applied; re-run /pr-review for the current HEAD.`,
+				};
+			}
+			// Abort fail-closed: if the coordinator aborted (session shutdown)
+			// before we stamped, never apply the result even if a report slipped
+			// through as the child was being killed.
+			if (input.signal?.aborted) {
+				return {
+					report: childOutput.report,
+					stamped: false,
+					escalated: false,
+					blocked: true,
+					message: `PR review gate: review was aborted (session shutdown) before stamping HEAD ${headSha}. Not stamped; re-run /pr-review.`,
+				};
+			}
+			// Re-verify worktree cleanliness: edits made while the async review ran
+			// would mean the validated content no longer matches the stamped HEAD.
+			if (!deps.isWorktreeClean(ctx.cwd)) {
+				return {
+					report: childOutput.report,
+					stamped: false,
+					escalated: false,
+					blocked: true,
+					message: `PR review gate: worktree changed during review of HEAD ${headSha}. The result was not applied; re-run /pr-review with a clean worktree.`,
 				};
 			}
 			const report = childOutput.report;

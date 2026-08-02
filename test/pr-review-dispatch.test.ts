@@ -100,4 +100,129 @@ describe("createPrReviewDispatch", () => {
 		expect(result.message).toContain("HEAD changed during review");
 		expect(tokens.size).toBe(0);
 	});
+	it("blocks before review when the worktree has uncommitted changes", async () => {
+		const runAttempt = vi.fn(async () => ({
+			report: {
+				status: "PASS" as const,
+				confidence: "HIGH" as const,
+				findings: [],
+				verified: [],
+				unverifiable: [],
+				testExecution: { status: "PASS" as const, summary: "ok" },
+				summary: "",
+			},
+			rawOutput: "## Review Report",
+			exitCode: 0,
+			timedOut: false,
+			stderr: "",
+			command: "pi ...",
+		}));
+		const dispatch = createPrReviewDispatch({
+			getHeadSha: () => "abc123",
+			isWorktreeClean: () => false,
+			getBaseRef: () => "master",
+			listChangedFiles: async () => ["src/foo.ts"],
+			applyDiffFilters: async (files) => files,
+			countDiffLines: async () => 10,
+			gatherDiff: async () => "diff",
+			extractTask: () => "review",
+			reviewerExecution: { runAttempt },
+		});
+		const result = await dispatch.dispatch({
+			ctx: { cwd: "/repo" } as ExtensionContext,
+			state: { tokens: createPassTokenStore(), config: { enabled: true } },
+			pi: {} as ExtensionAPI,
+		});
+		expect(runAttempt).not.toHaveBeenCalled();
+		expect(result.blocked).toBe(true);
+		expect(result.stamped).toBe(false);
+		expect(result.message).toContain("uncommitted changes");
+	});
+
+	it("fails closed when the worktree becomes dirty during review", async () => {
+		const cleanValues = [true, false];
+		const isWorktreeClean = vi.fn(() => cleanValues.shift() ?? false);
+		const runAttempt = vi.fn(async () => ({
+			report: {
+				status: "PASS" as const,
+				confidence: "HIGH" as const,
+				findings: [],
+				verified: [],
+				unverifiable: [],
+				testExecution: { status: "PASS" as const, summary: "passed" },
+				summary: "",
+			},
+			rawOutput: "## Review Report",
+			exitCode: 0,
+			timedOut: false,
+			stderr: "",
+			command: "pi ...",
+		}));
+		const tokens = createPassTokenStore();
+		const dispatch = createPrReviewDispatch({
+			getHeadSha: () => "abc123",
+			isWorktreeClean,
+			getBaseRef: () => "master",
+			listChangedFiles: async () => ["src/foo.ts"],
+			applyDiffFilters: async (files) => files,
+			countDiffLines: async () => 10,
+			gatherDiff: async () => "diff",
+			extractTask: () => "review",
+			reviewerExecution: { runAttempt },
+		});
+		const result = await dispatch.dispatch({
+			ctx: { cwd: "/repo" } as ExtensionContext,
+			state: { tokens, config: { enabled: true } },
+			pi: {} as ExtensionAPI,
+		});
+		expect(runAttempt).toHaveBeenCalled();
+		expect(result.blocked).toBe(true);
+		expect(result.stamped).toBe(false);
+		expect(result.message).toContain("worktree changed during review");
+		expect(tokens.size).toBe(0);
+	});
+
+	it("does not stamp when the review is aborted before stamping", async () => {
+		const controller = new AbortController();
+		controller.abort();
+		const runAttempt = vi.fn(async () => ({
+			report: {
+				status: "PASS" as const,
+				confidence: "HIGH" as const,
+				findings: [],
+				verified: [],
+				unverifiable: [],
+				testExecution: { status: "PASS" as const, summary: "passed" },
+				summary: "",
+			},
+			rawOutput: "## Review Report",
+			exitCode: 0,
+			timedOut: false,
+			stderr: "",
+			command: "pi ...",
+		}));
+		const tokens = createPassTokenStore();
+		const dispatch = createPrReviewDispatch({
+			getHeadSha: () => "abc123",
+			isWorktreeClean: () => true,
+			getBaseRef: () => "master",
+			listChangedFiles: async () => ["src/foo.ts"],
+			applyDiffFilters: async (files) => files,
+			countDiffLines: async () => 10,
+			gatherDiff: async () => "diff",
+			extractTask: () => "review",
+			reviewerExecution: { runAttempt },
+		});
+		const result = await dispatch.dispatch({
+			ctx: { cwd: "/repo" } as ExtensionContext,
+			state: { tokens, config: { enabled: true } },
+			pi: {} as ExtensionAPI,
+			signal: controller.signal,
+		});
+		expect(runAttempt).toHaveBeenCalled();
+		expect(result.blocked).toBe(true);
+		expect(result.stamped).toBe(false);
+		expect(result.message).toContain("aborted");
+		expect(tokens.size).toBe(0);
+	});
 });
