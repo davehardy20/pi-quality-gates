@@ -53,7 +53,7 @@ pi -e /Users/dave/tools/pi-quality-gates
 | `/pr-gate-toggle [on\|off]` | PR Gate | Enable or disable the push gate |
 | `/quality-gates-status` | Both | Show package identity and debug info |
 
-> In addition to slash commands, the package registers an **agent-callable `pr_review` custom tool** (LLM-callable) that requests the same sandboxed review as `/pr-review` over the shared coordinator. It is asynchronous (kickoff + background completion) and never publishes. See [PR Gate](pr-gate.md) and the [Agent-Driven Review Workflow](agent-review-workflow.md).
+> In addition to slash commands, the package registers an **agent-callable `pr_review` custom tool** (LLM-callable) that requests the same review as `/pr-review` over the shared coordinator (configured reviewer bridge). It is asynchronous (kickoff + background completion) and never publishes. See [PR Gate](pr-gate.md) and the [Agent-Driven Review Workflow](agent-review-workflow.md).
 >
 > Source: command registration in `src/index.ts`, `src/linter/orchestrator.ts` (`registerCommands`), and `src/pr-gate/index.ts`.
 
@@ -98,7 +98,7 @@ No separate config file. The PR gate uses built-in defaults defined in `src/pr-g
 
 The reviewer bridge defaults to **host** (a read-only headless child Pi runs validation against the repo checkout, where deps live). Set `PI_PR_REVIEW_BRIDGE=orchestrator` to route review through the Apple-container `pr-reviewer` sandbox instead.
 
-PR reviewer config (`src/pr-gate/pr-review-config.ts`): model, `timeoutMs: 45 * 60_000` (45 minutes), `maxDiffLines: 4000`, `maxChangedLines: 5000`, and a read-only legacy/injected tool policy. The default disposable sandbox prefers custom safe Git/validation tools but permits sandbox-local read-only Git and trusted package-script fallbacks when those tools are unavailable.
+PR reviewer config (`src/pr-gate/pr-review-config.ts`): model, `timeoutMs: 45 * 60_000` (45 minutes), `maxDiffLines: 4000`, `maxChangedLines: 5000`, and a read-only legacy/injected tool policy. The orchestrator bridge's disposable sandbox prefers custom safe Git/validation tools but permits sandbox-local read-only Git and trusted package-script fallbacks when those tools are unavailable.
 
 ### LSP server config
 

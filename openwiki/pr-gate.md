@@ -98,7 +98,7 @@ Tokens are stored in-memory via `PassTokenStore` (`src/pr-gate/pass-token-store.
    - List changed files via `git diff --name-only`.
    - Load and apply `.gitignore` plus `.pi/reviewer.skip` filters to the review file scope; block if every changed file is excluded.
    - Count changed lines in the filtered scope → reject if it exceeds `maxChangedLines` (5000).
-   - Pass the filtered file list to repository-direct sandbox review. For legacy/injected execution, gather a capped diff (`maxDiffLines` = 4000). The default orchestrator bridge skips parent diff materialization.
+   - Pass the filtered file list to repository-direct sandbox review. For legacy/injected execution, gather a capped diff (`maxDiffLines` = 4000). The orchestrator bridge (`PI_PR_REVIEW_BRIDGE=orchestrator`) skips parent diff materialization.
    - Extract original task from session entries.
    - Generate test execution plan.
    - Call `reviewerExecution.runAttempt()`.
