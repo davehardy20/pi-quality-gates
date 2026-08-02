@@ -32,9 +32,12 @@ export interface TestExecutionPlan {
 	/** Structured command mapping for unit/policy tests and future dispatch. */
 	runnerCommands: RecommendedTestCommand[];
 	discoveryCommand?: string;
-	/** Validation must happen in the Apple container sandbox, not on the host. */
-	executionSandbox: "apple-container";
-	/** Tool/bridge responsible for containerized execution. */
+	/**
+	 * Where the plan executes. Defaults to the repository checkout (host bridge);
+	 * "apple-container" applies only for PI_PR_REVIEW_BRIDGE=orchestrator.
+	 */
+	executionSandbox: "repository-checkout" | "apple-container";
+	/** Container bridge used when PI_PR_REVIEW_BRIDGE=orchestrator. */
 	containerTool: "container_safe";
 	/** Reviewer-facing instruction for bounded logs and sidecar references. */
 	resultContract: string;
@@ -85,7 +88,7 @@ function makePlan(
 		recommendedCommands: runnerCommands.map((c) => c.command),
 		runnerCommands,
 		discoveryCommand,
-		executionSandbox: "apple-container",
+		executionSandbox: "repository-checkout",
 		containerTool: "container_safe",
 		resultContract: RESULT_CONTRACT,
 	};
@@ -183,7 +186,7 @@ export function recommendTestCommands(
 export function formatTestExecutionPlan(plan: TestExecutionPlan): string {
 	const lines = [
 		`**Ecosystem:** ${plan.ecosystem}`,
-		`**Execution sandbox:** Apple container via ${plan.containerTool}`,
+		`**Execution:** safe validation runners (run_*) against the repository checkout (Apple container via ${plan.containerTool} only when PI_PR_REVIEW_BRIDGE=orchestrator)`,
 		`**Result contract:** ${plan.resultContract}`,
 	];
 

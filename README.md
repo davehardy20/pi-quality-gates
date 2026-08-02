@@ -55,7 +55,7 @@ PR gate (per publish):
   Agent calls gh_safe push / pr_create
     → tool_call hook vetoes (no PASS token) with a steer
     → agent runs /pr-review OR calls pr_review
-      → review runs via sandboxed orchestrator pr-reviewer
+      → review runs via the configured reviewer bridge (host default)
       → on PASS, token stamped; agent retries the push; hook allows
       → on ISSUES, agent fixes → lint-clean → re-review
       → on CRITICAL security, escalate for human ack

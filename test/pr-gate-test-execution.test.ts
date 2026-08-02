@@ -30,7 +30,7 @@ describe("recommendTestCommands", () => {
 			"/Users/dave/tools/pi-quality-gates",
 		);
 		expect(plan.ecosystem).toBe("typescript");
-		expect(plan.executionSandbox).toBe("apple-container");
+		expect(plan.executionSandbox).toBe("repository-checkout");
 		expect(plan.containerTool).toBe("container_safe");
 		expect(plan.recommendedCommands).toContain("run_vitest src/a.test.ts");
 		expect(plan.recommendedCommands).toContain("run_typecheck");
@@ -57,7 +57,7 @@ describe("recommendTestCommands", () => {
 		const plan = recommendTestCommands(["src/a.unknown"], "/tmp/not-a-repo");
 		expect(plan.ecosystem).toBe("unknown");
 		expect(plan.recommendedCommands).toEqual([]);
-		expect(plan.executionSandbox).toBe("apple-container");
+		expect(plan.executionSandbox).toBe("repository-checkout");
 	});
 });
 
@@ -68,12 +68,13 @@ describe("formatTestExecutionPlan", () => {
 			recommendedCommands: ["run_vitest src/a.test.ts", "run_typecheck"],
 			runnerCommands: [],
 			discoveryCommand: "npx vitest run --reporter=dot",
-			executionSandbox: "apple-container",
+			executionSandbox: "repository-checkout",
 			containerTool: "container_safe",
 			resultContract: "bounded summary only",
 		};
 		const formatted = formatTestExecutionPlan(plan);
 		expect(formatted).toContain("typescript");
+		expect(formatted).toContain("repository checkout");
 		expect(formatted).toContain("Apple container via container_safe");
 		expect(formatted).toContain("run_vitest src/a.test.ts");
 		expect(formatted).toContain("run_typecheck");
@@ -86,7 +87,7 @@ describe("formatTestExecutionPlan", () => {
 			ecosystem: "unknown",
 			recommendedCommands: [],
 			runnerCommands: [],
-			executionSandbox: "apple-container",
+			executionSandbox: "repository-checkout",
 			containerTool: "container_safe",
 			resultContract: "bounded summary only",
 		};
