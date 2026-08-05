@@ -116,15 +116,17 @@ export function detectTypeScriptTestFramework(
 	return "vitest";
 }
 
-/** Matches a `--import <spec>` flag in an npm test script (e.g. `--import tsx`). */
-const IMPORT_SPEC_PATTERN = /--import\s+([^\s]+)/;
+/** Matches `--import <spec>` (space or `=` form) in an npm test script. */
+const IMPORT_SPEC_PATTERN = /--import[=\s]+([^\s]+)/;
 
 /**
  * Detect the TypeScript loader to pass to `run_node_test` for `.test.ts` files
  * Node cannot run natively. Returns the loader spec (e.g. "tsx") when the test
- * script uses `--import <spec>`, or infers `"tsx"` when `tsx` (or `ts-node`) is
- * a devDependency. Returns `undefined` for plain JS/MJS test files or when no
- * loader is configured (e.g. build-then-test projects that emit `.test.js`).
+ * script uses `--import <spec>` (space or `=` form), or infers `"tsx"` when
+ * `tsx` is a devDependency. Returns `undefined` for plain JS/MJS test files,
+ * for `ts-node` projects (which register via `--loader ts-node/esm`, not
+ * `--import`), or when no loader is configured (e.g. build-then-test projects
+ * that emit `.test.js`).
  */
 export function detectNodeTestLoader(cwd: string): string | undefined {
 	const pkg = readPackageJson(cwd);
@@ -133,7 +135,9 @@ export function detectNodeTestLoader(cwd: string): string | undefined {
 	const scriptMatch = testScript.match(IMPORT_SPEC_PATTERN);
 	if (scriptMatch) return scriptMatch[1];
 	const dev = pkg.devDependencies ?? {};
-	if (dev.tsx || dev["ts-node"]) return "tsx";
+	// Only tsx can be confidently surfaced for `--import`; ts-node registers via
+	// `--loader ts-node/esm` (a different mechanism), so it is not inferred here.
+	if (dev.tsx) return "tsx";
 	return undefined;
 }
 

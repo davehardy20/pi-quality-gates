@@ -91,7 +91,7 @@ describe("detectNodeTestLoader", () => {
 		expect(detectNodeTestLoader(cwd)).toBe("tsx");
 	});
 
-	it("infers tsx when ts-node is a devDependency", () => {
+	it("does not infer from ts-node alone (it registers via --loader, not --import)", () => {
 		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-qg-loader-tsnode-"));
 		fs.writeFileSync(
 			path.join(cwd, "package.json"),
@@ -99,6 +99,15 @@ describe("detectNodeTestLoader", () => {
 				devDependencies: { "ts-node": "^10.0.0" },
 				scripts: { test: "node --test" },
 			}),
+		);
+		expect(detectNodeTestLoader(cwd)).toBeUndefined();
+	});
+
+	it("detects the loader from a --import=spec (equals form) in the test script", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-qg-loader-equals-"));
+		fs.writeFileSync(
+			path.join(cwd, "package.json"),
+			JSON.stringify({ scripts: { test: "node --test --import=tsx" } }),
 		);
 		expect(detectNodeTestLoader(cwd)).toBe("tsx");
 	});
