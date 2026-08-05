@@ -24,6 +24,11 @@ export interface RecommendedTestCommand {
 	args: string[];
 	command: string;
 	scope: "targeted" | "broad" | "format-lint" | "typecheck";
+	/**
+	 * For run_node_test: the `--import` loader spec (e.g. "tsx") to pass for
+	 * `.test.ts` files Node cannot run natively. Omitted for `.test.js`/`.mjs`.
+	 */
+	import?: string;
 }
 
 export interface TestExecutionPlan {
@@ -111,6 +116,31 @@ export function detectTypeScriptTestFramework(
 	return "vitest";
 }
 
+/** Matches `--import <spec>` (space or `=` form) in an npm test script. */
+const IMPORT_SPEC_PATTERN = /--import[=\s]+([^\s]+)/;
+
+/**
+ * Detect the TypeScript loader to pass to `run_node_test` for `.test.ts` files
+ * Node cannot run natively. Returns the loader spec (e.g. "tsx") when the test
+ * script uses `--import <spec>` (space or `=` form), or infers `"tsx"` when
+ * `tsx` is a devDependency. Returns `undefined` for plain JS/MJS test files,
+ * for `ts-node` projects (which register via `--loader ts-node/esm`, not
+ * `--import`), or when no loader is configured (e.g. build-then-test projects
+ * that emit `.test.js`).
+ */
+export function detectNodeTestLoader(cwd: string): string | undefined {
+	const pkg = readPackageJson(cwd);
+	if (!pkg) return undefined;
+	const testScript = pkg.scripts?.test ?? "";
+	const scriptMatch = testScript.match(IMPORT_SPEC_PATTERN);
+	if (scriptMatch) return scriptMatch[1];
+	const dev = pkg.devDependencies ?? {};
+	// Only tsx can be confidently surfaced for `--import`; ts-node registers via
+	// `--loader ts-node/esm` (a different mechanism), so it is not inferred here.
+	if (dev.tsx) return "tsx";
+	return undefined;
+}
+
 function isTestFile(file: string): boolean {
 	return (
 		file.includes(".test.") ||
@@ -161,13 +191,23 @@ export function recommendTestCommands(
 			const framework = detectTypeScriptTestFramework(cwd);
 			const testRunner: SafeRunnerTool =
 				framework === "node-test" ? "run_node_test" : "run_vitest";
+			// Node cannot run .test.ts natively: surface a TS loader (e.g. tsx) for
+			// changed TS test files. Build-then-test projects emit .test.js and get
+			// no loader (detectNodeTestLoader returns undefined).
+			const hasTsTests = testFiles.some((f) => /\.(ts|tsx)$/.test(f));
+			const loader =
+				framework === "node-test" && hasTsTests
+					? detectNodeTestLoader(cwd)
+					: undefined;
 			const runnerCommands: RecommendedTestCommand[] = [];
 			if (testFiles.length > 0) {
+				const cmdArgs = loader ? ["--import", loader, ...testFiles] : testFiles;
 				runnerCommands.push({
 					tool: testRunner,
 					args: testFiles,
-					command: command(testRunner, testFiles),
+					command: command(testRunner, cmdArgs),
 					scope: "targeted",
+					...(loader ? { import: loader } : {}),
 				});
 			}
 			runnerCommands.push(
@@ -184,13 +224,13 @@ export function recommendTestCommands(
 					scope: "format-lint",
 				},
 			);
-			return makePlan(
-				"typescript",
-				runnerCommands,
+			const discovery =
 				framework === "node-test"
-					? "node --test -- discovers *.test.* / node:test files"
-					: "run_vitest -- test discovery handled by Vitest project config",
-			);
+					? loader
+						? `node --test --import ${loader} -- runs .test.ts via the ${loader} loader`
+						: "node --test -- discovers *.test.* / node:test files"
+					: "run_vitest -- test discovery handled by Vitest project config";
+			return makePlan("typescript", runnerCommands, discovery);
 		}
 		case "python": {
 			const runnerCommands: RecommendedTestCommand[] = [];
