@@ -16,7 +16,8 @@ export type SafeRunnerTool =
 	| "run_biome"
 	| "run_typecheck"
 	| "run_pytest"
-	| "run_cargo_test";
+	| "run_cargo_test"
+	| "run_node_test";
 
 export interface RecommendedTestCommand {
 	tool: SafeRunnerTool;
@@ -62,6 +63,52 @@ export function detectProjectEcosystem(cwd: string): ProjectEcosystem {
 		if (fs.existsSync(path.join(cwd, file))) return ecosystem;
 	}
 	return "unknown";
+}
+
+/**
+ * TypeScript/JavaScript test framework selected for review-time validation.
+ * Defaults to Vitest to preserve existing behaviour; switches to Node's
+ * built-in runner only when the project clearly signals `node --test`.
+ */
+export type TypeScriptTestFramework = "vitest" | "node-test";
+
+interface PackageJsonScripts {
+	scripts?: Record<string, string>;
+	dependencies?: Record<string, string>;
+	devDependencies?: Record<string, string>;
+}
+
+/** Matches a `node --test` flag in an npm script (--test at end or space-separated; ignores --test-name-pattern). */
+const NODE_TEST_SCRIPT_PATTERN = /--test(?:$|\s)/;
+
+function readPackageJson(cwd: string): PackageJsonScripts | undefined {
+	const pkgPath = path.join(cwd, "package.json");
+	if (!fs.existsSync(pkgPath)) return undefined;
+	try {
+		return JSON.parse(fs.readFileSync(pkgPath, "utf8")) as PackageJsonScripts;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * Detect whether a TypeScript/JavaScript project runs tests with Vitest or
+ * Node's built-in runner. Vitest wins when declared as a dependency; otherwise
+ * a `node --test` script selects the built-in runner. Anything ambiguous falls
+ * back to Vitest so existing reviews are unchanged.
+ */
+export function detectTypeScriptTestFramework(
+	cwd: string,
+): TypeScriptTestFramework {
+	const pkg = readPackageJson(cwd);
+	if (!pkg) return "vitest";
+	const vitestDep = pkg.dependencies?.vitest || pkg.devDependencies?.vitest;
+	if (vitestDep) return "vitest";
+	const testScript = pkg.scripts?.test;
+	if (testScript && NODE_TEST_SCRIPT_PATTERN.test(testScript)) {
+		return "node-test";
+	}
+	return "vitest";
 }
 
 function isTestFile(file: string): boolean {
@@ -111,12 +158,15 @@ export function recommendTestCommands(
 
 	switch (ecosystem) {
 		case "typescript": {
+			const framework = detectTypeScriptTestFramework(cwd);
+			const testRunner: SafeRunnerTool =
+				framework === "node-test" ? "run_node_test" : "run_vitest";
 			const runnerCommands: RecommendedTestCommand[] = [];
 			if (testFiles.length > 0) {
 				runnerCommands.push({
-					tool: "run_vitest",
+					tool: testRunner,
 					args: testFiles,
-					command: command("run_vitest", testFiles),
+					command: command(testRunner, testFiles),
 					scope: "targeted",
 				});
 			}
@@ -135,9 +185,11 @@ export function recommendTestCommands(
 				},
 			);
 			return makePlan(
-				ecosystem,
+				"typescript",
 				runnerCommands,
-				"run_vitest -- test discovery handled by Vitest project config",
+				framework === "node-test"
+					? "node --test -- discovers *.test.* / node:test files"
+					: "run_vitest -- test discovery handled by Vitest project config",
 			);
 		}
 		case "python": {

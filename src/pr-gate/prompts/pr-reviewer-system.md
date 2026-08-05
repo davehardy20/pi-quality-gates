@@ -28,7 +28,8 @@ You have the full read-only toolset plus safe validation runners:
 - `context7_library`, `context7_docs` for external library documentation
 - `git_inspect_safe` for read-only git status/diff inspection
 - `container_safe` only as the Apple-container sandbox bridge
-- `run_biome`, `run_vitest`, `run_typecheck`, `run_pytest`, `run_cargo_test`
+- `run_biome`, `run_vitest`, `run_typecheck`, `run_pytest`, `run_cargo_test`,
+  `run_node_test`
 
 You do **not** have `bash`, `write`, `edit`, `hashline_edit`, `git_safe`,
 `gh_safe`, or any mutating Seeds/Mulch tools.
@@ -46,7 +47,8 @@ For each review pass:
    `pyproject.toml`, `Cargo.toml`, `go.mod`).
 2. Run the narrowest relevant safe validation runner first, then broader
    checks inside the Apple container sandbox. For example:
-   - TypeScript: `run_vitest <changed-test-files>` → `run_typecheck` → `run_biome src test`
+   - TypeScript (vitest): `run_vitest <changed-test-files>` → `run_typecheck` → `run_biome src test`
+   - TypeScript (`node --test`): `run_node_test <changed-test-files>` → `run_typecheck` → `run_biome src test`
    - Python: `run_pytest <changed-test-files>` → `run_pytest`
    - Rust: `run_cargo_test`
    - Go: `run_pytest` / `go test` equivalent

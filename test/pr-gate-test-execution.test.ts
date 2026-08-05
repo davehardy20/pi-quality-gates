@@ -2,8 +2,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
+import { PR_REVIEWER_TOOLS } from "../src/pr-gate/pr-review-config.js";
 import {
 	detectProjectEcosystem,
+	detectTypeScriptTestFramework,
 	formatTestExecutionPlan,
 	recommendTestCommands,
 	type TestExecutionPlan,
@@ -20,6 +22,49 @@ describe("detectProjectEcosystem", () => {
 		expect(detectProjectEcosystem(`/tmp/not-a-repo-${Date.now()}`)).toBe(
 			"unknown",
 		);
+	});
+});
+
+describe("detectTypeScriptTestFramework", () => {
+	it("detects Vitest when vitest is a devDependency", () => {
+		expect(
+			detectTypeScriptTestFramework("/Users/dave/tools/pi-quality-gates"),
+		).toBe("vitest");
+	});
+
+	it("detects node --test from a test script with no vitest", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-qg-fw-node-"));
+		fs.writeFileSync(
+			path.join(cwd, "package.json"),
+			JSON.stringify({ scripts: { test: "node --test" } }),
+		);
+		expect(detectTypeScriptTestFramework(cwd)).toBe("node-test");
+	});
+
+	it("prefers Vitest when both vitest and a node --test script exist", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-qg-fw-mixed-"));
+		fs.writeFileSync(
+			path.join(cwd, "package.json"),
+			JSON.stringify({
+				devDependencies: { vitest: "^3.0.0" },
+				scripts: { test: "node --test" },
+			}),
+		);
+		expect(detectTypeScriptTestFramework(cwd)).toBe("vitest");
+	});
+
+	it("does not treat --test-name-pattern as a node --test signal", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-qg-fw-pattern-"));
+		fs.writeFileSync(
+			path.join(cwd, "package.json"),
+			JSON.stringify({ scripts: { test: "node --test-name-pattern foo" } }),
+		);
+		expect(detectTypeScriptTestFramework(cwd)).toBe("vitest");
+	});
+
+	it("falls back to Vitest when no package.json is present", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-qg-fw-none-"));
+		expect(detectTypeScriptTestFramework(cwd)).toBe("vitest");
 	});
 });
 
@@ -40,6 +85,52 @@ describe("recommendTestCommands", () => {
 			"run_typecheck",
 			"run_biome",
 		]);
+	});
+
+	it("recommends run_node_test for a node --test project", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-qg-node-test-"));
+		fs.writeFileSync(
+			path.join(cwd, "package.json"),
+			JSON.stringify({
+				name: "node-test-project",
+				scripts: { test: "node --test" },
+			}),
+		);
+
+		const plan = recommendTestCommands(["src/a.test.ts"], cwd);
+
+		expect(plan.ecosystem).toBe("typescript");
+		expect(plan.recommendedCommands).toContain("run_node_test src/a.test.ts");
+		expect(plan.recommendedCommands).toContain("run_typecheck");
+		expect(plan.recommendedCommands).toContain("run_biome src test");
+		expect(plan.runnerCommands.map((cmd) => cmd.tool)).toEqual([
+			"run_node_test",
+			"run_typecheck",
+			"run_biome",
+		]);
+		expect(plan.discoveryCommand).toContain("node --test");
+	});
+
+	it("only emits tools granted to the reviewer (node-test path)", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-qg-grant-node-"));
+		fs.writeFileSync(
+			path.join(cwd, "package.json"),
+			JSON.stringify({ scripts: { test: "node --test" } }),
+		);
+		const plan = recommendTestCommands(["src/a.test.ts"], cwd);
+		for (const cmd of plan.runnerCommands) {
+			expect(PR_REVIEWER_TOOLS.has(cmd.tool)).toBe(true);
+		}
+	});
+
+	it("only emits tools granted to the reviewer (vitest path)", () => {
+		const plan = recommendTestCommands(
+			["src/a.test.ts"],
+			"/Users/dave/tools/pi-quality-gates",
+		);
+		for (const cmd of plan.runnerCommands) {
+			expect(PR_REVIEWER_TOOLS.has(cmd.tool)).toBe(true);
+		}
 	});
 
 	it("does not map Go to an unsupported safe runner", () => {

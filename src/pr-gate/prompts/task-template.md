@@ -34,7 +34,8 @@
 - Use `container_safe` only as the Apple-container sandbox bridge for review-time
   validation. Do not build/publish arbitrary images or mutate the host repo.
 - Use only the safe validation runners (`run_biome`, `run_vitest`,
-  `run_typecheck`, `run_pytest`, `run_cargo_test`) to execute project tests.
+  `run_typecheck`, `run_pytest`, `run_cargo_test`, `run_node_test`) to execute
+  project tests.
 - Include bounded test results in `### Test execution`; cite any sidecar ref
   instead of pasting raw logs.
 - Focus on the **diff between the base ref and HEAD**.

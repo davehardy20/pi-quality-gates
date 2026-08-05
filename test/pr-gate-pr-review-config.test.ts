@@ -29,6 +29,7 @@ describe("PR reviewer config", () => {
 		expect(PR_REVIEWER_TOOLS.has("run_biome")).toBe(true);
 		expect(PR_REVIEWER_TOOLS.has("run_pytest")).toBe(true);
 		expect(PR_REVIEWER_TOOLS.has("run_cargo_test")).toBe(true);
+		expect(PR_REVIEWER_TOOLS.has("run_node_test")).toBe(true);
 	});
 
 	it("binds the reviewer to the deep cross-vendor model", () => {
