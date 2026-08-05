@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
+import { PR_REVIEWER_TOOLS } from "../src/pr-gate/pr-review-config.js";
 import {
 	detectProjectEcosystem,
 	detectTypeScriptTestFramework,
@@ -108,6 +109,28 @@ describe("recommendTestCommands", () => {
 			"run_biome",
 		]);
 		expect(plan.discoveryCommand).toContain("node --test");
+	});
+
+	it("only emits tools granted to the reviewer (node-test path)", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-qg-grant-node-"));
+		fs.writeFileSync(
+			path.join(cwd, "package.json"),
+			JSON.stringify({ scripts: { test: "node --test" } }),
+		);
+		const plan = recommendTestCommands(["src/a.test.ts"], cwd);
+		for (const cmd of plan.runnerCommands) {
+			expect(PR_REVIEWER_TOOLS.has(cmd.tool)).toBe(true);
+		}
+	});
+
+	it("only emits tools granted to the reviewer (vitest path)", () => {
+		const plan = recommendTestCommands(
+			["src/a.test.ts"],
+			"/Users/dave/tools/pi-quality-gates",
+		);
+		for (const cmd of plan.runnerCommands) {
+			expect(PR_REVIEWER_TOOLS.has(cmd.tool)).toBe(true);
+		}
 	});
 
 	it("does not map Go to an unsupported safe runner", () => {

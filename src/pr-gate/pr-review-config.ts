@@ -51,6 +51,7 @@ export const PR_REVIEW_CONFIG: ReviewConfig = {
 		"run_typecheck",
 		"run_pytest",
 		"run_cargo_test",
+		"run_node_test",
 		"compact_plus_query_tool_output",
 	],
 	allowedBashPatterns: [],
