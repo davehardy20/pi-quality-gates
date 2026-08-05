@@ -108,11 +108,12 @@ LSP server mappings live in `~/.pi/lsp-config.yaml`. See `src/shared/lsp-server-
 
 ```bash
 npm run typecheck   # tsc --noEmit
+npm run lint        # biome check src test — lint/format gate
 npm run test        # vitest run
 npm run build       # tsc -p tsconfig.build.json → dist/
 ```
 
-There is no `lint` script in `package.json`. Formatting/linting is via Biome (config in `/biome.json`).
+Formatting/linting is via Biome (config in `/biome.json`); the `npm run lint` script runs `biome check src test` — the same gate CI and `/pr-review` use.
 
 ## Documentation map
 

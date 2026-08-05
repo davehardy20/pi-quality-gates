@@ -6,12 +6,13 @@
 
 ```bash
 npm run typecheck   # tsc --noEmit — type-check only
+npm run lint        # biome check src test — lint/format gate (same as CI & /pr-review)
 npm run test        # vitest run — run all tests once (CI mode)
 npm run test:watch  # vitest — watch mode
 npm run build       # tsc -p tsconfig.build.json → dist/
 ```
 
-There is **no `lint` script** in `package.json`. Formatting/linting is via Biome (config in `/biome.json`).
+Formatting/linting is via Biome (config in `/biome.json`); the `npm run lint` script runs `biome check src test` — the same gate CI and `/pr-review` use.
 
 ## Framework
 
@@ -165,10 +166,10 @@ When locking behaviour before refactoring, add a file-level comment documenting 
 ```bash
 # Always:
 npm run typecheck
+npm run lint
 npm run test
 
-# If you changed Biome-formatted files:
-# Run Biome to verify formatting (no lint script in package.json — use biome CLI directly)
+# `npm run lint` runs `biome check src test` — the same gate CI and /pr-review use.
 ```
 
 If you change gate decision logic: add cases to `test/pr-gate-gate-decision.test.ts`.

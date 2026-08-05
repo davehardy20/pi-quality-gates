@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { PR_REVIEWER_TOOLS } from "../src/pr-gate/pr-review-config.js";
 import {
@@ -12,11 +13,11 @@ import {
 	type TestExecutionPlan,
 } from "../src/pr-gate/test-execution.js";
 
+const REPO_ROOT = path.resolve(fileURLToPath(import.meta.url), "..", "..");
+
 describe("detectProjectEcosystem", () => {
 	it("detects TypeScript from package.json", () => {
-		expect(detectProjectEcosystem("/Users/dave/tools/pi-quality-gates")).toBe(
-			"typescript",
-		);
+		expect(detectProjectEcosystem(REPO_ROOT)).toBe("typescript");
 	});
 
 	it("returns unknown when no manifest is present", () => {
@@ -28,9 +29,7 @@ describe("detectProjectEcosystem", () => {
 
 describe("detectTypeScriptTestFramework", () => {
 	it("detects Vitest when vitest is a devDependency", () => {
-		expect(
-			detectTypeScriptTestFramework("/Users/dave/tools/pi-quality-gates"),
-		).toBe("vitest");
+		expect(detectTypeScriptTestFramework(REPO_ROOT)).toBe("vitest");
 	});
 
 	it("detects node --test from a test script with no vitest", () => {
@@ -133,7 +132,7 @@ describe("recommendTestCommands", () => {
 	it("recommends container-safe vitest/typecheck/biome for TypeScript", () => {
 		const plan = recommendTestCommands(
 			["src/a.ts", "src/a.test.ts"],
-			"/Users/dave/tools/pi-quality-gates",
+			REPO_ROOT,
 		);
 		expect(plan.ecosystem).toBe("typescript");
 		expect(plan.executionSandbox).toBe("repository-checkout");
@@ -219,10 +218,7 @@ describe("recommendTestCommands", () => {
 	});
 
 	it("only emits tools granted to the reviewer (vitest path)", () => {
-		const plan = recommendTestCommands(
-			["src/a.test.ts"],
-			"/Users/dave/tools/pi-quality-gates",
-		);
+		const plan = recommendTestCommands(["src/a.test.ts"], REPO_ROOT);
 		for (const cmd of plan.runnerCommands) {
 			expect(PR_REVIEWER_TOOLS.has(cmd.tool)).toBe(true);
 		}
