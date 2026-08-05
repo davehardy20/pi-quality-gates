@@ -649,8 +649,10 @@ describe("shared: path-utils", () => {
 		expect(normalizePath("foo\\bar")).toBe("foo/bar");
 	});
 
-	it("pathsEqual compares case-insensitively on macOS", () => {
-		expect(pathsEqual("Foo/Bar", "foo/bar")).toBe(true);
+	it("pathsEqual case sensitivity is platform-dependent", () => {
+		const caseInsensitive =
+			process.platform === "win32" || process.platform === "darwin";
+		expect(pathsEqual("Foo/Bar", "foo/bar")).toBe(caseInsensitive);
 	});
 
 	it("normalizeAndSortPaths deduplicates and sorts", () => {
