@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import { PR_REVIEWER_TOOLS } from "../src/pr-gate/pr-review-config.js";
 import {
+	detectNodeTestLoader,
 	detectProjectEcosystem,
 	detectTypeScriptTestFramework,
 	formatTestExecutionPlan,
@@ -68,6 +69,57 @@ describe("detectTypeScriptTestFramework", () => {
 	});
 });
 
+describe("detectNodeTestLoader", () => {
+	it("detects the loader from a --import spec in the test script", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-qg-loader-script-"));
+		fs.writeFileSync(
+			path.join(cwd, "package.json"),
+			JSON.stringify({ scripts: { test: "node --test --import tsx" } }),
+		);
+		expect(detectNodeTestLoader(cwd)).toBe("tsx");
+	});
+
+	it("infers tsx when tsx is a devDependency", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-qg-loader-devdep-"));
+		fs.writeFileSync(
+			path.join(cwd, "package.json"),
+			JSON.stringify({
+				devDependencies: { tsx: "^4.0.0" },
+				scripts: { test: "node --test" },
+			}),
+		);
+		expect(detectNodeTestLoader(cwd)).toBe("tsx");
+	});
+
+	it("infers tsx when ts-node is a devDependency", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-qg-loader-tsnode-"));
+		fs.writeFileSync(
+			path.join(cwd, "package.json"),
+			JSON.stringify({
+				devDependencies: { "ts-node": "^10.0.0" },
+				scripts: { test: "node --test" },
+			}),
+		);
+		expect(detectNodeTestLoader(cwd)).toBe("tsx");
+	});
+
+	it("returns undefined for build-then-test projects", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-qg-loader-none-"));
+		fs.writeFileSync(
+			path.join(cwd, "package.json"),
+			JSON.stringify({
+				scripts: { test: "tsc && node --test build/**/*.test.js" },
+			}),
+		);
+		expect(detectNodeTestLoader(cwd)).toBeUndefined();
+	});
+
+	it("returns undefined when no package.json is present", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-qg-loader-nopkg-"));
+		expect(detectNodeTestLoader(cwd)).toBeUndefined();
+	});
+});
+
 describe("recommendTestCommands", () => {
 	it("recommends container-safe vitest/typecheck/biome for TypeScript", () => {
 		const plan = recommendTestCommands(
@@ -109,6 +161,40 @@ describe("recommendTestCommands", () => {
 			"run_biome",
 		]);
 		expect(plan.discoveryCommand).toContain("node --test");
+	});
+
+	it("surfaces the tsx loader for .test.ts files in a node --test project", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-qg-loader-rec-"));
+		fs.writeFileSync(
+			path.join(cwd, "package.json"),
+			JSON.stringify({
+				devDependencies: { tsx: "^4.0.0" },
+				scripts: { test: "node --test" },
+			}),
+		);
+		const plan = recommendTestCommands(["src/a.test.ts"], cwd);
+		expect(plan.recommendedCommands).toContain(
+			"run_node_test --import tsx src/a.test.ts",
+		);
+		const nodeCmd = plan.runnerCommands.find((c) => c.tool === "run_node_test");
+		expect(nodeCmd?.import).toBe("tsx");
+		expect(nodeCmd?.args).toEqual(["src/a.test.ts"]);
+		expect(plan.discoveryCommand).toContain("--import tsx");
+	});
+
+	it("omits the loader for .test.js files (build-then-test)", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-qg-loader-js-"));
+		fs.writeFileSync(
+			path.join(cwd, "package.json"),
+			JSON.stringify({
+				devDependencies: { tsx: "^4.0.0" },
+				scripts: { test: "node --test" },
+			}),
+		);
+		const plan = recommendTestCommands(["build/a.test.js"], cwd);
+		expect(plan.recommendedCommands).toContain("run_node_test build/a.test.js");
+		const nodeCmd = plan.runnerCommands.find((c) => c.tool === "run_node_test");
+		expect(nodeCmd?.import).toBeUndefined();
 	});
 
 	it("only emits tools granted to the reviewer (node-test path)", () => {
