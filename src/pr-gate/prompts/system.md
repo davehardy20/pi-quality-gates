@@ -125,7 +125,8 @@ For each review pass:
    `pyproject.toml`, `Cargo.toml`, `go.mod`).
 2. Run the narrowest relevant safe validation runner first, then broader
    checks against the repository checkout. For example:
-   - TypeScript: `run_vitest <changed-test-files>` → `run_typecheck` → `run_biome src test`
+   - TypeScript (vitest): `run_vitest <changed-test-files>` → `run_typecheck` → `run_biome src test`
+   - TypeScript (`node --test`): `run_node_test <changed-test-files>` → `run_typecheck` → `run_biome src test`
    - Python: `run_pytest <changed-test-files>` → `run_pytest`
    - Rust: `run_cargo_test`
    - Go: `run_pytest` / `go test` equivalent

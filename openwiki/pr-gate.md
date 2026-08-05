@@ -186,11 +186,14 @@ forbidden tool appears in `PR_REVIEW_CONFIG.tools`.
 
 **Ecosystem detection** (`detectProjectEcosystem`): checks for `package.json`, `Cargo.toml`, `pyproject.toml`/`setup.py`, `go.mod`.
 
+**TypeScript framework detection** (`detectTypeScriptTestFramework`): picks `run_vitest` when Vitest is a declared dep/devDep, else `run_node_test` when `scripts.test` runs `node --test`; defaults to Vitest (no regression for Vitest projects).
+
 **Recommended commands per ecosystem:**
 
 | Ecosystem | Commands | Scope |
 |---|---|---|
-| TypeScript | `run_vitest <test-files>` → `run_typecheck` → `run_biome src test` | Targeted first |
+| TypeScript (vitest) | `run_vitest <test-files>` → `run_typecheck` → `run_biome src test` | Targeted first |
+| TypeScript (`node --test`) | `run_node_test <test-files>` → `run_typecheck` → `run_biome src test` | Targeted first |
 | Python | `run_pytest <test-files>` → broad `run_pytest` | Targeted first |
 | Rust | `run_cargo_test` | All |
 | Go | No runner commands, discovery only | — |
