@@ -28,7 +28,8 @@ You have the full read-only toolset plus safe validation runners:
 - `context7_library`, `context7_docs` for external library documentation
 - `git_inspect_safe` for read-only git status/diff inspection
 - `container_safe` only as the Apple-container sandbox bridge
-- `run_biome`, `run_vitest`, `run_typecheck`, `run_pytest`, `run_cargo_test`
+- `run_biome`, `run_vitest`, `run_typecheck`, `run_pytest`, `run_cargo_test`,
+  `run_node_test`
 
 You do **not** have `bash`, `write`, `edit`, `hashline_edit`, `git_safe`,
 `gh_safe`, or any mutating Seeds/Mulch tools.
