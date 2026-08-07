@@ -502,6 +502,7 @@ describe("C5 incremental review (lastPassSha..HEAD scoping)", () => {
 			gatherDiff,
 			log,
 			verifyRef: () => true,
+			verifyAncestry: () => true,
 			reviewConfig: { ...PR_REVIEW_CONFIG, incrementalReview: true },
 		};
 		return { deps, listChangedFiles, countDiffLines, gatherDiff, log };
@@ -623,6 +624,30 @@ describe("C5 incremental review (lastPassSha..HEAD scoping)", () => {
 		expect(listChangedFiles).toHaveBeenCalledWith("/repo", BASE_REF);
 		expect(log).toHaveBeenCalledWith(
 			expect.stringContaining("no longer resolves"),
+		);
+	});
+
+	it("falls back to the default base when the last-PASS sha is not an ancestor of HEAD", async () => {
+		const pi = createMockPi();
+		const { deps, listChangedFiles, log } = createIncrementalDeps(
+			makePassReport(),
+		);
+		const dispatch = createPrReviewDispatch({
+			...deps,
+			verifyAncestry: () => false,
+		});
+		const input = createInput(pi);
+		input.state.tokens.stampPass({
+			sha: OLD_PASS_SHA,
+			passedAt: 1000,
+			reportStatus: "PASS",
+		});
+
+		await dispatch.dispatch(input);
+
+		expect(listChangedFiles).toHaveBeenCalledWith("/repo", BASE_REF);
+		expect(log).toHaveBeenCalledWith(
+			expect.stringContaining("not an ancestor of HEAD"),
 		);
 	});
 

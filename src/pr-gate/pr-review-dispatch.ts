@@ -182,6 +182,16 @@ export interface PrReviewDispatchDeps {
 	 * --verify`.
 	 */
 	verifyRef?: (cwd: string, ref: string) => boolean;
+	/**
+	 * Ancestry verifier used by incremental review to confirm the last-PASS
+	 * sha is an ancestor of HEAD before scoping to it. Defaults to
+	 * `git merge-base --is-ancestor`.
+	 */
+	verifyAncestry?: (
+		cwd: string,
+		ancestor: string,
+		descendant: string,
+	) => boolean;
 	reviewerExecution: ReviewerExecution;
 }
 
@@ -354,6 +364,28 @@ function verifyGitRef(cwd: string, ref: string): boolean {
 	}
 }
 
+type GitAncestryVerifier = (
+	cwd: string,
+	ancestor: string,
+	descendant: string,
+) => boolean;
+
+function verifyGitAncestry(
+	cwd: string,
+	ancestor: string,
+	descendant: string,
+): boolean {
+	try {
+		execFileSync("git", ["merge-base", "--is-ancestor", ancestor, descendant], {
+			cwd,
+			stdio: ["ignore", "ignore", "ignore"],
+		});
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 export interface IncrementalBaseRefInput {
 	/** Explicit base ref from the `/pr-review [baseRef]` argument, if any. */
 	explicitBaseRef?: string;
@@ -369,6 +401,12 @@ export interface IncrementalBaseRefInput {
 	cwd: string;
 	/** Git ref verifier (injectable for tests). */
 	verifyRef: GitRefVerifier;
+	/**
+	 * Ancestry verifier confirming the last-PASS sha is an ancestor of HEAD
+	 * before scoping to it (guards against a divergent or pre-rebase sha).
+	 * Defaults to `git merge-base --is-ancestor`.
+	 */
+	isAncestor?: GitAncestryVerifier;
 	/** Diagnostic logger for fallback notes. */
 	log: (msg: string) => void;
 }
@@ -386,7 +424,9 @@ export interface IncrementalBaseRefInput {
  *  - no PASS token has been stamped yet (first review);
  *  - the last-PASS sha IS the current HEAD (the range would be empty);
  *  - the last-PASS sha no longer resolves (e.g. history rewrite) — a stale
- *    sha must never produce an empty or misleading diff.
+ *    sha must never produce an empty or misleading diff;
+ *  - the last-PASS sha is not an ancestor of HEAD (divergent branch or a
+ *    pre-rebase sha) — a non-ancestor must never narrow the review scope.
  */
 export function resolveIncrementalBaseRef(
 	input: IncrementalBaseRefInput,
@@ -399,6 +439,7 @@ export function resolveIncrementalBaseRef(
 		config,
 		cwd,
 		verifyRef,
+		isAncestor = verifyGitAncestry,
 		log,
 	} = input;
 	if (config.incrementalReview !== true) return defaultBaseRef;
@@ -408,6 +449,12 @@ export function resolveIncrementalBaseRef(
 	if (!verifyRef(cwd, lastPass)) {
 		log(
 			`[pr-review-dispatch] incremental review: last PASS sha ${lastPass} no longer resolves in this repo; falling back to full-range base ${defaultBaseRef}.`,
+		);
+		return defaultBaseRef;
+	}
+	if (!isAncestor(cwd, lastPass, headSha)) {
+		log(
+			`[pr-review-dispatch] incremental review: last PASS sha ${lastPass} is not an ancestor of HEAD ${headSha} (divergent history or rebase); falling back to full-range base ${defaultBaseRef}.`,
 		);
 		return defaultBaseRef;
 	}
@@ -523,6 +570,7 @@ export function createPrReviewDispatch(
 			config,
 			cwd,
 			verifyRef: deps.verifyRef ?? verifyGitRef,
+			isAncestor: deps.verifyAncestry ?? verifyGitAncestry,
 			log,
 		});
 

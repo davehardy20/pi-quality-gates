@@ -488,6 +488,24 @@ describe("C6 opt-in below-threshold auto-PASS (autoPassOnNitOnly)", () => {
     expect(tokens.hasPass("head123")).toBe(false);
   });
 
+  it("does NOT auto-pass a CANNOT_REVIEW report (incomplete review must always block)", () => {
+    const tokens = createPassTokenStore();
+    const decision = decidePushGate({
+      action: "push",
+      headSha: "head123",
+      tokens,
+      baseSha: "base000",
+      autoPassOnNitOnly: true,
+      reviewReport: makeReport({
+        status: "CANNOT_REVIEW",
+        findings: [],
+        testExecution: { status: "PASS", summary: "tests pass" },
+      }),
+    });
+    expect(decision.verdict).toBe("block");
+    expect(tokens.hasPass("head123")).toBe(false);
+  });
+
   it("still ESCALATES on a CRITICAL security finding even with the flag ON", () => {
     const tokens = createPassTokenStore();
     const decision = decidePushGate({
