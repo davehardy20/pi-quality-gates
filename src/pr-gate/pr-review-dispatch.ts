@@ -1,4 +1,6 @@
 import { execFileSync } from "node:child_process";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
@@ -51,6 +53,11 @@ import {
  *    Inspecting the unfiltered set closes a bypass where a PR also edits
  *    `.pi/reviewer.skip` to hide the file from the filtered list. They take
  *    effect from the next review after the file merges to the protected base.
+ * 3. Symlink-target guard: a pre-existing symlink at the instructions path can
+ *    resolve to a tracked file the PR edits. Since loadExtraInstructions
+ *    follows symlinks, the resolved (realpath) instructions file is compared
+ *    against the resolved changed files and refused on collision — otherwise
+ *    the PR could author the very content injected into its own review.
  *
  * `log` and `state` are injected so diagnostics are testable and the one-time
  * orchestrator note is resettable per dispatch instance (instead of a
@@ -88,7 +95,34 @@ function resolveExtraInstructions(
 		);
 		return undefined;
 	}
+	// Symlink-target guard: a pre-existing symlink at the instructions path can
+	// resolve to a tracked file the PR edits. loadExtraInstructions follows the
+	// symlink, so compare the resolved (realpath) instructions file against the
+	// resolved changed files and refuse on collision. Closes a bypass where the
+	// PR edits the symlink TARGET (not the literal instructions path).
+	const instructionsReal = realpathOrUndefined(
+		path.join(cwd, DEFAULT_EXTRA_INSTRUCTIONS_PATH),
+	);
+	if (instructionsReal) {
+		for (const file of unfilteredChangedFiles) {
+			if (realpathOrUndefined(path.join(cwd, file)) === instructionsReal) {
+				log(
+					"[pr-review-dispatch] .pi/review-instructions.md resolves (via symlink) to a file in this PR's changed set; refusing to load it to prevent self-injection into the review.",
+				);
+				return undefined;
+			}
+		}
+	}
 	return loadExtraInstructions(cwd, undefined, { log });
+}
+
+/** Resolve a real (symlink-followed) absolute path, or `undefined` if it can't. */
+function realpathOrUndefined(filePath: string): string | undefined {
+	try {
+		return fs.realpathSync(filePath);
+	} catch {
+		return undefined;
+	}
 }
 
 export interface PrReviewDispatchDeps {
