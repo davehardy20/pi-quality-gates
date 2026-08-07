@@ -22,7 +22,11 @@ import {
 	type ReviewerExecution,
 	type ReviewerResult,
 } from "./reviewer.js";
-import { loadSkipFilter, type SkipFilter } from "./reviewer-skip.js";
+import {
+	loadExtraInstructions,
+	loadSkipFilter,
+	type SkipFilter,
+} from "./reviewer-skip.js";
 import {
 	formatTestExecutionPlan,
 	recommendTestCommands,
@@ -376,11 +380,16 @@ export function createPrReviewDispatch(
 			);
 		}
 
+		const extraInstructions = loadExtraInstructions(cwd);
+		const reviewConfig: ReviewConfig = extraInstructions
+			? { ...PR_REVIEW_CONFIG, extraInstructions }
+			: PR_REVIEW_CONFIG;
+
 		return deps.reviewerExecution.runAttempt({
 			task,
 			files: changedFiles,
 			cwd,
-			config: PR_REVIEW_CONFIG,
+			config: reviewConfig,
 			filterOptions,
 			diff,
 			baseRef,

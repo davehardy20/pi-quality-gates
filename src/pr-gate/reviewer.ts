@@ -115,6 +115,7 @@ export function renderTaskTemplate(
   files: string[],
   diff: string,
   testPlan?: string,
+  extraInstructions?: string,
 ): string {
   const templatePath = path.join(promptsDir, "task-template.md");
   let template: string;
@@ -136,6 +137,12 @@ export function renderTaskTemplate(
     .replace(
       /\{\{TEST_PLAN\}\}/g,
       testPlan ?? "(no test execution plan available)",
+    )
+    .replace(
+      /\{\{EXTRA_INSTRUCTIONS\}\}/g,
+      extraInstructions?.trim()
+        ? `\n## Extra Instructions\n\n${extraInstructions.trim()}\n`
+        : "",
     );
 }
 
@@ -163,6 +170,7 @@ export function createReviewerExecution(
         input.files,
         diff,
         input.testPlan,
+        input.config.extraInstructions,
       );
       const spawn = deps.spawnReviewer ?? spawnReviewer;
       const primaryResult = await spawn(

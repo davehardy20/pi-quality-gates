@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
 	createBoundedLineProcessor,
@@ -5,6 +8,7 @@ import {
 	createReviewerExecution,
 	parseReviewReport,
 	type ReviewerResult,
+	renderTaskTemplate,
 } from "../src/pr-gate/reviewer.js";
 import type { ReviewConfig } from "../src/shared/review-config.js";
 import type { ReviewReport } from "../src/shared/review-types.js";
@@ -341,5 +345,85 @@ describe("createReviewerExecution model fallback", () => {
 		});
 		expect(calls).toEqual(["openai-codex/gpt-5.5"]);
 		expect(result.report).toBeNull();
+	});
+});
+
+describe("renderTaskTemplate extraInstructions", () => {
+	function writeTemplate(dir: string): void {
+		writeFileSync(
+			join(dir, "task-template.md"),
+			[
+				"# PR Review — Task",
+				"",
+				"## Original Task",
+				"",
+				"{{TASK}}",
+				"",
+				"## Test Execution Plan",
+				"",
+				"{{TEST_PLAN}}",
+				"",
+				"{{EXTRA_INSTRUCTIONS}}",
+				"",
+				"---",
+				"",
+			].join("\n"),
+		);
+	}
+
+	it("omits the Extra Instructions section when none is provided", () => {
+		const dir = mkdtempSync(join(tmpdir(), "tmpl-none-"));
+		try {
+			writeTemplate(dir);
+			const out = renderTaskTemplate(
+				dir,
+				"do the thing",
+				["src/a.ts"],
+				"DIFF",
+				"PLAN",
+			);
+			expect(out).not.toContain("Extra Instructions");
+			expect(out).toContain("do the thing");
+			expect(out).toContain("PLAN");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("injects an Extra Instructions section when extraInstructions is set", () => {
+		const dir = mkdtempSync(join(tmpdir(), "tmpl-extra-"));
+		try {
+			writeTemplate(dir);
+			const out = renderTaskTemplate(
+				dir,
+				"do the thing",
+				["src/a.ts"],
+				"DIFF",
+				"PLAN",
+				"Focus on error-handling and log redaction.",
+			);
+			expect(out).toContain("## Extra Instructions");
+			expect(out).toContain("Focus on error-handling and log redaction.");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("ignores a whitespace-only extraInstructions", () => {
+		const dir = mkdtempSync(join(tmpdir(), "tmpl-ws-"));
+		try {
+			writeTemplate(dir);
+			const out = renderTaskTemplate(
+				dir,
+				"do the thing",
+				["src/a.ts"],
+				"DIFF",
+				"PLAN",
+				"  \n\t ",
+			);
+			expect(out).not.toContain("Extra Instructions");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });

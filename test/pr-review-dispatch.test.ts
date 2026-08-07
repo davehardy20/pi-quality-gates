@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -266,6 +266,100 @@ describe("createPrReviewDispatch", () => {
 		const dir = mkdtempSync(join(tmpdir(), "wt-nogit-"));
 		try {
 			expect(defaultIsWorktreeClean(dir)).toBe(false);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	function makePassRunAttempt() {
+		return vi.fn(
+			async (_input: { config?: { extraInstructions?: string } }) => ({
+				report: {
+					status: "PASS" as const,
+					confidence: "HIGH" as const,
+					findings: [],
+					verified: [],
+					unverifiable: [],
+					summary: "ok",
+				},
+				rawOutput: "## Review Report",
+				exitCode: 0,
+				timedOut: false,
+				stderr: "",
+				command: "pi ...",
+			}),
+		);
+	}
+
+	it("injects per-repo .pi/review-instructions.md into the reviewer config", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "review-instr-"));
+		try {
+			mkdirSync(join(dir, ".pi"), { recursive: true });
+			writeFileSync(
+				join(dir, ".pi", "review-instructions.md"),
+				"Prefer failing fast over silent fallbacks.\n",
+			);
+			const runAttempt = makePassRunAttempt();
+			const dispatch = createPrReviewDispatch({
+				getHeadSha: () => "abc123",
+				getBaseRef: () => "master",
+				isWorktreeClean: () => true,
+				listChangedFiles: async () => ["src/foo.ts"],
+				applyDiffFilters: async (files) => files,
+				countDiffLines: async () => 10,
+				gatherDiff: async () => "diff",
+				extractTask: () => "review",
+				reviewerExecution: { runAttempt },
+			});
+
+			await dispatch.dispatch({
+				ctx: { cwd: dir } as ExtensionContext,
+				state: {
+					tokens: createPassTokenStore(),
+					config: { enabled: true },
+				},
+				pi: {} as ExtensionAPI,
+			});
+
+			expect(runAttempt).toHaveBeenCalledWith(
+				expect.objectContaining({
+					config: expect.objectContaining({
+						extraInstructions: "Prefer failing fast over silent fallbacks.",
+					}),
+				}),
+			);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("omits extraInstructions when .pi/review-instructions.md is absent", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "review-noinstr-"));
+		try {
+			const runAttempt = makePassRunAttempt();
+			const dispatch = createPrReviewDispatch({
+				getHeadSha: () => "abc123",
+				getBaseRef: () => "master",
+				isWorktreeClean: () => true,
+				listChangedFiles: async () => ["src/foo.ts"],
+				applyDiffFilters: async (files) => files,
+				countDiffLines: async () => 10,
+				gatherDiff: async () => "diff",
+				extractTask: () => "review",
+				reviewerExecution: { runAttempt },
+			});
+
+			await dispatch.dispatch({
+				ctx: { cwd: dir } as ExtensionContext,
+				state: {
+					tokens: createPassTokenStore(),
+					config: { enabled: true },
+				},
+				pi: {} as ExtensionAPI,
+			});
+
+			const firstCall = runAttempt.mock.calls[0]?.[0];
+			expect(firstCall?.config?.extraInstructions).toBeUndefined();
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}

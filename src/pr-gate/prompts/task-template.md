@@ -16,6 +16,8 @@
 
 {{TEST_PLAN}}
 
+{{EXTRA_INSTRUCTIONS}}
+
 ---
 
 ## Instructions
