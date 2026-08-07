@@ -449,6 +449,53 @@ describe("createPrReviewDispatch", () => {
 		}
 	});
 
+	it("does NOT suppress root instructions when only a nested package instructions file changed", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "review-instr-nested-"));
+		try {
+			mkdirSync(join(dir, ".pi"), { recursive: true });
+			writeFileSync(
+				join(dir, ".pi", "review-instructions.md"),
+				"Prefer failing fast over silent fallbacks.\n",
+			);
+			const runAttempt = makePassRunAttempt();
+			const dispatch = createPrReviewDispatch({
+				getHeadSha: () => "abc123",
+				getBaseRef: () => "master",
+				isWorktreeClean: () => true,
+				// A nested package's instructions file is distinct from the root one
+				// and must not suppress loading the trusted root configuration.
+				listChangedFiles: async () => [
+					"src/foo.ts",
+					"packages/widget/.pi/review-instructions.md",
+				],
+				applyDiffFilters: async (files) => files,
+				countDiffLines: async () => 10,
+				gatherDiff: async () => "diff",
+				extractTask: () => "review",
+				reviewerExecution: { runAttempt },
+			});
+
+			await dispatch.dispatch({
+				ctx: { cwd: dir } as ExtensionContext,
+				state: {
+					tokens: createPassTokenStore(),
+					config: { enabled: true },
+				},
+				pi: {} as ExtensionAPI,
+			});
+
+			expect(runAttempt).toHaveBeenCalledWith(
+				expect.objectContaining({
+					config: expect.objectContaining({
+						extraInstructions: "Prefer failing fast over silent fallbacks.",
+					}),
+				}),
+			);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("skips extraInstructions on the orchestrator (inspectRepositoryDirectly) bridge", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "review-instr-orch-"));
 		try {
