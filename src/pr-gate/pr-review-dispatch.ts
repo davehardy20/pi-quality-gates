@@ -23,6 +23,7 @@ import {
 	type ReviewerResult,
 } from "./reviewer.js";
 import {
+	DEFAULT_EXTRA_INSTRUCTIONS_PATH,
 	loadExtraInstructions,
 	loadSkipFilter,
 	type SkipFilter,
@@ -31,6 +32,57 @@ import {
 	formatTestExecutionPlan,
 	recommendTestCommands,
 } from "./test-execution.js";
+
+/**
+ * Tracks whether the orchestrator-bridge skip note for per-repo extra
+ * instructions has been logged this session (see resolveExtraInstructions).
+ */
+let orchestratorBridgeExtraInstructionsSkipLogged = false;
+
+/**
+ * Resolve per-repo extra instructions for the host reviewer bridge, applying
+ * two safety guards:
+ *
+ * 1. Host-bridge guard: extra instructions are rendered only by the host
+ *    bridge (`renderTaskTemplate`). The orchestrator
+ *    (`inspectRepositoryDirectly`) bridge renders its own instruction and
+ *    cannot forward them, so they are skipped there with a one-time note.
+ * 2. Self-injection guard: if `.pi/review-instructions.md` is itself in the
+ *    PR's changed-files set, the instructions are NOT loaded — a PR must not
+ *    inject instructions into its own review. They take effect from the next
+ *    review after the file merges to the protected base.
+ *
+ * Returns the trimmed instructions, or `undefined` when absent or guarded.
+ */
+function resolveExtraInstructions(
+	cwd: string,
+	changedFiles: string[],
+	inspectRepositoryDirectly: boolean | undefined,
+): string | undefined {
+	if (inspectRepositoryDirectly) {
+		const present = loadExtraInstructions(cwd);
+		if (present && !orchestratorBridgeExtraInstructionsSkipLogged) {
+			orchestratorBridgeExtraInstructionsSkipLogged = true;
+			console.error(
+				"[pr-review-dispatch] .pi/review-instructions.md is host-bridge-only; ignored by the orchestrator (inspectRepositoryDirectly) reviewer bridge.",
+			);
+		}
+		return undefined;
+	}
+	if (
+		changedFiles.some(
+			(f) =>
+				f === DEFAULT_EXTRA_INSTRUCTIONS_PATH ||
+				f.endsWith(`/${DEFAULT_EXTRA_INSTRUCTIONS_PATH}`),
+		)
+	) {
+		console.error(
+			"[pr-review-dispatch] .pi/review-instructions.md is in this PR's changed files; refusing to load it to prevent self-injection into the review.",
+		);
+		return undefined;
+	}
+	return loadExtraInstructions(cwd);
+}
 
 export interface PrReviewDispatchDeps {
 	getHeadSha: (cwd: string) => string;
@@ -380,7 +432,11 @@ export function createPrReviewDispatch(
 			);
 		}
 
-		const extraInstructions = loadExtraInstructions(cwd);
+		const extraInstructions = resolveExtraInstructions(
+			cwd,
+			changedFiles,
+			deps.reviewerExecution.inspectRepositoryDirectly,
+		);
 		const reviewConfig: ReviewConfig = extraInstructions
 			? { ...PR_REVIEW_CONFIG, extraInstructions }
 			: PR_REVIEW_CONFIG;

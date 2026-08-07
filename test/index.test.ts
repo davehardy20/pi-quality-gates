@@ -27,6 +27,7 @@ import {
 } from "../src/pr-gate/reviewer.js";
 import {
 	filterSkipped,
+	loadExtraInstructions,
 	parseSkipContent,
 	shouldSkip,
 } from "../src/pr-gate/reviewer-skip.js";
@@ -682,6 +683,70 @@ describe("post-turn-reviewer: skip filter", () => {
 		const filter = parseSkipContent("*.log");
 		const result = filterSkipped(filter, ["a.ts", "debug.log", "b.ts"]);
 		expect(result).toEqual(["a.ts", "b.ts"]);
+	});
+});
+
+describe("loadExtraInstructions", () => {
+	it("returns undefined for an absent file", () => {
+		const dir = fs.mkdtempSync(`${tmpdir()}/extra-instr-`);
+		try {
+			expect(loadExtraInstructions(dir)).toBeUndefined();
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("returns undefined for an empty file", () => {
+		const dir = fs.mkdtempSync(`${tmpdir()}/extra-instr-`);
+		try {
+			fs.mkdirSync(`${dir}/.pi`, { recursive: true });
+			fs.writeFileSync(`${dir}/.pi/review-instructions.md`, "");
+			expect(loadExtraInstructions(dir)).toBeUndefined();
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("returns undefined for a whitespace-only file", () => {
+		const dir = fs.mkdtempSync(`${tmpdir()}/extra-instr-`);
+		try {
+			fs.mkdirSync(`${dir}/.pi`, { recursive: true });
+			fs.writeFileSync(`${dir}/.pi/review-instructions.md`, "  \n\t \n");
+			expect(loadExtraInstructions(dir)).toBeUndefined();
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("returns trimmed contents for a non-empty file", () => {
+		const dir = fs.mkdtempSync(`${tmpdir()}/extra-instr-`);
+		try {
+			fs.mkdirSync(`${dir}/.pi`, { recursive: true });
+			fs.writeFileSync(
+				`${dir}/.pi/review-instructions.md`,
+				"  Prefer failing fast.  \n",
+			);
+			expect(loadExtraInstructions(dir)).toBe("Prefer failing fast.");
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("returns undefined and logs on a non-ENOENT read error", () => {
+		const dir = fs.mkdtempSync(`${tmpdir()}/extra-instr-`);
+		try {
+			let logCalls = 0;
+			// Reading the directory itself throws EISDIR (a non-ENOENT error).
+			const result = loadExtraInstructions(dir, ".", {
+				log: () => {
+					logCalls++;
+				},
+			});
+			expect(result).toBeUndefined();
+			expect(logCalls).toBe(1);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });
 

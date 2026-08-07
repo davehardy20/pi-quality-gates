@@ -218,6 +218,15 @@ and the push/pr_create gate remains fail-closed until the exact HEAD has a PASS 
 
 `src/pr-gate/reviewer-skip.ts` — parses `.pi/reviewer.skip` files (gitignore format) to exclude files from review diff scope. Uses the `ignore` npm package. Returns a NOOP filter on ENOENT.
 
+## Per-repo extra instructions
+
+`src/pr-gate/reviewer-skip.ts` → `loadExtraInstructions` reads a plain text/markdown file (default `.pi/review-instructions.md`) and appends it to the reviewer task prompt via the `{{EXTRA_INSTRUCTIONS}}` placeholder in `task-template.md`. Absent/empty/whitespace-only files are silent (no section emitted), mirroring `loadSkipFilter`. Loaded and merged into the review config by `src/pr-gate/pr-review-dispatch.ts` → `resolveExtraInstructions`.
+
+**Trust boundary & guards** (trusted repo config, same tier as `.pi/reviewer.skip`):
+
+- **Host-bridge only**: rendered by the host reviewer bridge (`renderTaskTemplate`). The orchestrator (`inspectRepositoryDirectly`) bridge renders its own instruction and cannot forward extra instructions, so they are skipped there with a one-time note.
+- **Self-injection guard**: if `.pi/review-instructions.md` is itself in the PR's changed-files set, it is **not** loaded — a PR must not inject instructions into its own review. The instructions take effect from the next review after the file merges to the protected base.
+
 ## Review scope and diff
 
 `src/shared/review-scope.ts` — shared diff gathering and file filtering:
@@ -237,7 +246,7 @@ Located in `src/pr-gate/prompts/`:
 |---|---|
 | `system.md` | Full system prompt — all 7 review domains inline, test execution instructions, output format |
 | `pr-reviewer-system.md` | PR-specific variant — references shared checklist, mentions Apple container sandbox |
-| `task-template.md` | Task prompt template with `{{TASK}}`, `{{FILES}}`, `{{DIFF}}`, `{{TEST_PLAN}}` placeholders |
+| `task-template.md` | Task prompt template with `{{TASK}}`, `{{FILES}}`, `{{DIFF}}`, `{{TEST_PLAN}}`, `{{EXTRA_INSTRUCTIONS}}` placeholders |
 | `pr-reviewer-task.md` | Identical content to `task-template.md` |
 
 The 7 review domains (source: `src/shared/review-checklist.md`):
