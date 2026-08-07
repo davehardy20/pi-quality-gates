@@ -125,6 +125,8 @@ export function renderTaskTemplate(
     throw new Error(`Reviewer: cannot read task template at ${templatePath}`);
   }
 
+  const trimmedExtraInstructions = extraInstructions?.trim();
+
   return template
     .replace(/\{\{TASK\}\}/g, task || "(no task description available)")
     .replace(
@@ -140,8 +142,8 @@ export function renderTaskTemplate(
     )
     .replace(
       /\{\{EXTRA_INSTRUCTIONS\}\}/g,
-      extraInstructions?.trim()
-        ? `\n## Extra Instructions\n\n${extraInstructions.trim()}\n`
+      trimmedExtraInstructions
+        ? `\n## Extra Instructions\n\n${trimmedExtraInstructions}\n`
         : "",
     );
 }

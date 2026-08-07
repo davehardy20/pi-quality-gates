@@ -34,12 +34,6 @@ import {
 } from "./test-execution.js";
 
 /**
- * Tracks whether the orchestrator-bridge skip note for per-repo extra
- * instructions has been logged this session (see resolveExtraInstructions).
- */
-let orchestratorBridgeExtraInstructionsSkipLogged = false;
-
-/**
  * Resolve per-repo extra instructions for the host reviewer bridge, applying
  * two safety guards:
  *
@@ -58,18 +52,24 @@ let orchestratorBridgeExtraInstructionsSkipLogged = false;
  *    `.pi/reviewer.skip` to hide the file from the filtered list. They take
  *    effect from the next review after the file merges to the protected base.
  *
+ * `log` and `state` are injected so diagnostics are testable and the one-time
+ * orchestrator note is resettable per dispatch instance (instead of a
+ * module-level flag shared across every dispatch in the process).
+ *
  * Returns the trimmed instructions, or `undefined` when absent or guarded.
  */
 function resolveExtraInstructions(
 	cwd: string,
 	unfilteredChangedFiles: string[],
 	inspectRepositoryDirectly: boolean | undefined,
+	log: (msg: string) => void,
+	state: { orchestratorSkipLogged: boolean },
 ): string | undefined {
 	if (inspectRepositoryDirectly) {
-		const present = loadExtraInstructions(cwd);
-		if (present && !orchestratorBridgeExtraInstructionsSkipLogged) {
-			orchestratorBridgeExtraInstructionsSkipLogged = true;
-			console.error(
+		const present = loadExtraInstructions(cwd, undefined, { log });
+		if (present && !state.orchestratorSkipLogged) {
+			state.orchestratorSkipLogged = true;
+			log(
 				"[pr-review-dispatch] .pi/review-instructions.md is host-bridge-only; ignored by the orchestrator (inspectRepositoryDirectly) reviewer bridge.",
 			);
 		}
@@ -83,12 +83,12 @@ function resolveExtraInstructions(
 			(f) => f.toLowerCase() === DEFAULT_EXTRA_INSTRUCTIONS_PATH.toLowerCase(),
 		)
 	) {
-		console.error(
+		log(
 			"[pr-review-dispatch] .pi/review-instructions.md is in this PR's changed files; refusing to load it to prevent self-injection into the review.",
 		);
 		return undefined;
 	}
-	return loadExtraInstructions(cwd);
+	return loadExtraInstructions(cwd, undefined, { log });
 }
 
 export interface PrReviewDispatchDeps {
@@ -127,6 +127,12 @@ export interface PrReviewDispatchDeps {
 			};
 		}>,
 	) => string;
+	/**
+	 * Optional logger for diagnostic notes (e.g. the self-injection refusal
+	 * and the host-bridge-only orchestrator skip note). Defaults to
+	 * `console.error`.
+	 */
+	log?: (msg: string) => void;
 	reviewerExecution: ReviewerExecution;
 }
 
@@ -362,9 +368,16 @@ export function createPrReviewDispatch(
 		countDiffLines: countDiffLinesFast,
 		gatherDiff,
 		extractTask: extractOriginalTask,
+		log: console.error,
 		reviewerExecution: missingReviewerExecution(),
 		...partialDeps,
 	};
+
+	// Per-dispatch logger and once-flag: each dispatch instance logs the
+	// orchestrator skip note at most once, independent of other instances
+	// (resettable per dispatch instead of shared across the whole module).
+	const log = deps.log ?? console.error;
+	const extraInstructionsState = { orchestratorSkipLogged: false };
 
 	async function loadSkipFilterForConfig(
 		cwd: string,
@@ -443,6 +456,8 @@ export function createPrReviewDispatch(
 			cwd,
 			unfilteredChangedFiles,
 			deps.reviewerExecution.inspectRepositoryDirectly,
+			log,
+			extraInstructionsState,
 		);
 		const reviewConfig: ReviewConfig = extraInstructions
 			? { ...PR_REVIEW_CONFIG, extraInstructions }
