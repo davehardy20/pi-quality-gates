@@ -410,6 +410,11 @@ export function toStructuredHunks(diff: string): string {
 
 	for (const raw of lines) {
 		// File-level metadata / headers — copy verbatim, flush any open hunk.
+		// `---`/`+++` are only file headers when no hunk is open: inside a hunk a
+		// body line whose original content starts with `--`/`++` (e.g. a removed
+		// `-- comment` or an added `++i`) would otherwise be mistaken for a
+		// header. Real file headers always precede the first `@@` of a file.
+		const noHunkOpen = newLines === null && oldLines === null;
 		if (
 			raw.startsWith("diff --git") ||
 			raw.startsWith("index ") ||
@@ -423,8 +428,8 @@ export function toStructuredHunks(diff: string): string {
 			raw.startsWith("copy from") ||
 			raw.startsWith("copy to") ||
 			raw.startsWith("Binary files") ||
-			raw.startsWith("---") ||
-			raw.startsWith("+++")
+			(noHunkOpen && raw.startsWith("---")) ||
+			(noHunkOpen && raw.startsWith("+++"))
 		) {
 			flush();
 			out.push(raw);

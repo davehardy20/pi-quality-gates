@@ -345,7 +345,7 @@ describe("C6 opt-in below-threshold auto-PASS (autoPassOnNitOnly)", () => {
     expect(tokens.hasPass("head123")).toBe(false);
   });
 
-  it("ALLOWs and stamps on a NIT-only ISSUES report when the flag is ON", () => {
+  it("ALLOWs and stamps on a NIT-only ISSUES report with passing tests when the flag is ON", () => {
     const tokens = createPassTokenStore();
     const decision = decidePushGate({
       action: "push",
@@ -353,13 +353,17 @@ describe("C6 opt-in below-threshold auto-PASS (autoPassOnNitOnly)", () => {
       tokens,
       baseSha: "base000",
       autoPassOnNitOnly: true,
-      reviewReport: makeReport({ status: "ISSUES", findings: [nitFinding()] }),
+      reviewReport: makeReport({
+        status: "ISSUES",
+        findings: [nitFinding()],
+        testExecution: { status: "PASS", summary: "tests pass" },
+      }),
     });
     expect(decision.verdict).toBe("allow");
     expect(tokens.hasPass("head123")).toBe(true);
   });
 
-  it("ALLOWs and stamps on an ISSUES report with NO findings when the flag is ON", () => {
+  it("ALLOWs and stamps on an ISSUES report with NO findings and passing tests when the flag is ON", () => {
     const tokens = createPassTokenStore();
     const decision = decidePushGate({
       action: "push",
@@ -367,7 +371,11 @@ describe("C6 opt-in below-threshold auto-PASS (autoPassOnNitOnly)", () => {
       tokens,
       baseSha: "base000",
       autoPassOnNitOnly: true,
-      reviewReport: makeReport({ status: "ISSUES", findings: [] }),
+      reviewReport: makeReport({
+        status: "ISSUES",
+        findings: [],
+        testExecution: { status: "PASS", summary: "tests pass" },
+      }),
     });
     expect(decision.verdict).toBe("allow");
     expect(tokens.hasPass("head123")).toBe(true);
@@ -443,6 +451,38 @@ describe("C6 opt-in below-threshold auto-PASS (autoPassOnNitOnly)", () => {
         findings: [nitFinding()],
         testExecution: { status: "FAIL", summary: "tests failed" },
       }),
+    });
+    expect(decision.verdict).toBe("block");
+    expect(tokens.hasPass("head123")).toBe(false);
+  });
+
+  it("does NOT auto-pass when test execution is NOT_RUN (requires positive PASS)", () => {
+    const tokens = createPassTokenStore();
+    const decision = decidePushGate({
+      action: "push",
+      headSha: "head123",
+      tokens,
+      baseSha: "base000",
+      autoPassOnNitOnly: true,
+      reviewReport: makeReport({
+        status: "ISSUES",
+        findings: [nitFinding()],
+        testExecution: { status: "NOT_RUN", summary: "no tests run" },
+      }),
+    });
+    expect(decision.verdict).toBe("block");
+    expect(tokens.hasPass("head123")).toBe(false);
+  });
+
+  it("does NOT auto-pass when test execution is absent (requires positive PASS)", () => {
+    const tokens = createPassTokenStore();
+    const decision = decidePushGate({
+      action: "push",
+      headSha: "head123",
+      tokens,
+      baseSha: "base000",
+      autoPassOnNitOnly: true,
+      reviewReport: makeReport({ status: "ISSUES", findings: [nitFinding()] }),
     });
     expect(decision.verdict).toBe("block");
     expect(tokens.hasPass("head123")).toBe(false);

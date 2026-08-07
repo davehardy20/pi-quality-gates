@@ -113,10 +113,11 @@ export function decidePushGate(input: PushGateInput): GateDecision {
       return { verdict: "allow" };
     }
     // C6: opt-in below-threshold auto-PASS. When the flag is ON and the report
-    // carries only NIT-level findings with no test-execution FAIL, stamp a PASS
-    // token and allow. CRITICAL security already escalated above; any
-    // CRITICAL/WARNING finding or a test FAIL keeps blocking (see
-    // isNitOnlyAutoPassable) so the fail-closed invariant is preserved.
+    // carries only NIT-level findings with an explicit test-execution PASS,
+    // stamp a PASS token and allow. CRITICAL security already escalated
+    // above; any CRITICAL/WARNING finding or a non-PASS test result keeps
+    // blocking (see isNitOnlyAutoPassable) so the fail-closed invariant is
+    // preserved. Auto-PASS is a relaxation, so it demands a positive signal.
     if (
       input.autoPassOnNitOnly === true &&
       isNitOnlyAutoPassable(reviewReport)
@@ -160,14 +161,15 @@ export function decidePushGate(input: PushGateInput): GateDecision {
 
 /**
  * Whether a report qualifies for the opt-in below-threshold auto-PASS: no
- * CRITICAL or WARNING findings (NIT-only, or none) AND no test-execution
- * FAIL. CRITICAL security escalation is handled earlier in decidePushGate; a
- * non-security CRITICAL or any WARNING fails this check and keeps blocking,
- * so the only thing auto-PASS ever relaxes is an ISSUES verdict raised solely
- * by NIT findings.
+ * CRITICAL or WARNING findings (NIT-only, or none) AND an explicit
+ * test-execution PASS. CRITICAL security escalation is handled earlier in
+ * decidePushGate; a non-security CRITICAL or any WARNING fails this check and
+ * keeps blocking. Because auto-PASS relaxes a fail-closed invariant, it
+ * demands a positive test signal: NOT_RUN / absent / FAIL all fall through to
+ * the normal ISSUES block (no auto-stamp).
  */
 function isNitOnlyAutoPassable(report: ReviewReport): boolean {
   if (hasFindingsAboveThreshold(report, "warning")) return false;
-  if (report.testExecution?.status === "FAIL") return false;
+  if (report.testExecution?.status !== "PASS") return false;
   return true;
 }

@@ -360,7 +360,7 @@ return even when the HEAD already has a token.
 13. `pr_review` and the coordinator **never publish** — no `git_safe`/`gh_safe` push/pr_create/update/merge. The push gate stays fail-closed until the exact HEAD has a PASS token, so a parallel `pr_review` + publish batch cannot bypass it.
 14. An explicit `baseRef` is an intentional re-review in both wrappers (bypasses the `already-passed` early return).
 15. Incremental review is opt-in (`incrementalReview`, default OFF) and fail-safe: an explicit base ref, a missing/stale last-PASS sha, or a last-PASS sha equal to HEAD all fall back to the default full-range review — a narrower scope is never silently assumed.
-16. Below-threshold auto-PASS is opt-in (`PrGateConfig.autoPassOnNitOnly` / `decidePushGate.autoPassOnNitOnly`, default OFF). When ON it auto-stamps a PASS only for an ISSUES report whose findings are all NIT (no CRITICAL/WARNING) and whose test execution did not FAIL. It never relaxes CRITICAL security escalation or the test-execution FAIL gate.
+16. Below-threshold auto-PASS is opt-in (`PrGateConfig.autoPassOnNitOnly` / `decidePushGate.autoPassOnNitOnly`, default OFF). When ON it auto-stamps a PASS only for an ISSUES report whose findings are all NIT (no CRITICAL/WARNING) **and** whose test execution status is an explicit `PASS` (NOT_RUN/absent/FAIL do not qualify — auto-PASS is a relaxation, so it demands a positive test signal). It never relaxes CRITICAL security escalation.
 
 ## Common failure modes
 

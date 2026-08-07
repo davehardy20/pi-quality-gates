@@ -66,6 +66,45 @@ describe("toStructuredHunks", () => {
 		);
 	});
 
+	it("classifies removed `--` and added `++` body lines as hunk content, not file headers", () => {
+		// Within a hunk, a removed line whose content starts with `--` (diff line
+		// `---foo`) and an added line whose content starts with `++` (diff line
+		// `+++i`) must be treated as body content, not mistaken for `---`/`+++`
+		// file headers (which only appear before the first `@@`).
+		const doubleSignDiff = [
+			"diff --git a/src/x.ts b/src/x.ts",
+			"index 1111111..2222222 100644",
+			"--- a/src/x.ts",
+			"+++ b/src/x.ts",
+			"@@ -1,3 +1,3 @@ context",
+			" keep",
+			"---foo",
+			"+++i",
+		].join("\n");
+		const out = toStructuredHunks(doubleSignDiff);
+
+		// File header preserved verbatim; the body line is NOT echoed as a header.
+		expect(out).toContain("--- a/src/x.ts");
+		expect(out).not.toContain("---foo");
+		expect(out).not.toContain("+++i");
+
+		const newIdx = out.indexOf(STRUCTURED_HUNK_NEW);
+		const oldIdx = out.indexOf(STRUCTURED_HUNK_OLD);
+		expect(newIdx).toBeGreaterThan(-1);
+		expect(oldIdx).toBeGreaterThan(newIdx);
+		const newBlock = out
+			.slice(newIdx + STRUCTURED_HUNK_NEW.length, oldIdx)
+			.trim();
+		const oldBlock = out.slice(oldIdx + STRUCTURED_HUNK_OLD.length).trim();
+
+		// Added `++i` (content) lands in the new block; removed `--foo` (content)
+		// lands in the old block — both without their diff sign prefix.
+		expect(newBlock).toContain("++i");
+		expect(oldBlock).toContain("--foo");
+		expect(newBlock).not.toContain("--foo");
+		expect(oldBlock).not.toContain("++i");
+	});
+
 	it("never leaks raw '+' or '-' diff signs into the labelled bodies", () => {
 		const out = toStructuredHunks(SAMPLE_DIFF);
 		const newStart = out.indexOf(STRUCTURED_HUNK_NEW);
