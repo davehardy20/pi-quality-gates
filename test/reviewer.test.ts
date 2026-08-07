@@ -151,6 +151,86 @@ describe("parseReviewReport", () => {
 	});
 });
 
+describe("parseReviewReport finding effort", () => {
+	const baseReport = (findingsBlock: string) =>
+		[
+			"## Review Report",
+			"STATUS: ISSUES",
+			"CONFIDENCE: HIGH",
+			"",
+			"### Findings",
+			findingsBlock,
+			"",
+			"### Summary",
+			"Has a finding.",
+		].join("\n");
+
+	it("parses an integer effort estimate in minutes", () => {
+		const output = baseReport(
+			[
+				"#### [WARNING] Off-by-one loop",
+				"- **File:** src/loop.ts:12",
+				"- **Category:** correctness",
+				"- **Rule:** loop boundaries",
+				"- **Issue:** exclusive end",
+				"- **Evidence:** for i in range(0, n)",
+				"- **Suggestion:** use range(0, n + 1)",
+				"- **Effort:** 5",
+			].join("\n"),
+		);
+		const report = parseReviewReport(output);
+		expect(report?.findings).toHaveLength(1);
+		expect(report?.findings[0].effort).toBe(5);
+	});
+
+	it("parses effort with a `min` suffix", () => {
+		const output = baseReport(
+			[
+				"#### [NIT] Naming",
+				"- **File:** src/x.ts:1",
+				"- **Category:** quality",
+				"- **Effort:** 10 min",
+			].join("\n"),
+		);
+		expect(parseReviewReport(output)?.findings[0].effort).toBe(10);
+	});
+
+	it("parses a leading `~` estimate", () => {
+		const output = baseReport(
+			[
+				"#### [WARNING] Missing test",
+				"- **File:** src/x.test.ts",
+				"- **Effort:** ~15",
+			].join("\n"),
+		);
+		expect(parseReviewReport(output)?.findings[0].effort).toBe(15);
+	});
+
+	it("coerces an explicit N/A to null", () => {
+		const output = baseReport(
+			[
+				"#### [CRITICAL] Something",
+				"- **File:** src/x.ts:5",
+				"- **Effort:** N/A",
+			].join("\n"),
+		);
+		expect(parseReviewReport(output)?.findings[0].effort).toBeNull();
+	});
+
+	it("omits effort when the field is absent", () => {
+		const output = baseReport(
+			[
+				"#### [WARNING] Something",
+				"- **File:** src/x.ts:5",
+				"- **Category:** quality",
+			].join("\n"),
+		);
+		const finding = parseReviewReport(output)?.findings[0];
+		expect(finding).toBeDefined();
+		expect(finding?.effort).toBeUndefined();
+	});
+});
+
 describe("bounded reviewer output capture", () => {
 	it("retains a bounded tail and reports oversized multi-chunk output", () => {
 		const capture = createBoundedTextCapture(10);

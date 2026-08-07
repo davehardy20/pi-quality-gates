@@ -4,6 +4,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 import { createPrGateState, resolveHeadSha } from "../src/pr-gate/index.js";
+import { PR_REVIEW_CONFIG } from "../src/pr-gate/pr-review-config.js";
 import {
 	createPrReviewDispatch,
 	type PrReviewDispatchDeps,
@@ -486,9 +487,231 @@ describe("pr-review dispatch", () => {
 	});
 });
 
+describe("C5 incremental review (lastPassSha..HEAD scoping)", () => {
+	const OLD_PASS_SHA = "0ldpass5ha0000";
+
+	function createIncrementalDeps(report: ReviewReport) {
+		const listChangedFiles = vi.fn().mockResolvedValue(["src/a.ts"]);
+		const countDiffLines = vi.fn(async () => 42);
+		const gatherDiff = vi.fn(async () => "mock diff");
+		const log = vi.fn();
+		const deps: Partial<PrReviewDispatchDeps> = {
+			...createTestDeps(report),
+			listChangedFiles,
+			countDiffLines,
+			gatherDiff,
+			log,
+			verifyRef: () => true,
+			reviewConfig: { ...PR_REVIEW_CONFIG, incrementalReview: true },
+		};
+		return { deps, listChangedFiles, countDiffLines, gatherDiff, log };
+	}
+
+	it("scopes the review to lastPassSha..HEAD when incremental review is enabled", async () => {
+		const pi = createMockPi();
+		const reviewer = createMockReviewerExecution(makePassReport());
+		const { deps, listChangedFiles, countDiffLines, gatherDiff, log } =
+			createIncrementalDeps(makePassReport());
+		const dispatch = createPrReviewDispatch({
+			...deps,
+			reviewerExecution: reviewer,
+		});
+		const input = createInput(pi);
+		input.state.tokens.stampPass({
+			sha: OLD_PASS_SHA,
+			passedAt: 1000,
+			reportStatus: "PASS",
+		});
+
+		const result = await dispatch.dispatch(input);
+
+		expect(result.stamped).toBe(true);
+		expect(listChangedFiles).toHaveBeenCalledWith("/repo", OLD_PASS_SHA);
+		expect(countDiffLines).toHaveBeenCalledWith(
+			["src/a.ts"],
+			"/repo",
+			OLD_PASS_SHA,
+		);
+		expect(gatherDiff).toHaveBeenCalledWith(
+			["src/a.ts"],
+			"/repo",
+			PR_REVIEW_CONFIG.maxDiffLines,
+			OLD_PASS_SHA,
+			expect.objectContaining({ respectGitignore: true }),
+			false,
+		);
+		expect(reviewer.runAttempt).toHaveBeenCalledWith(
+			expect.objectContaining({ baseRef: OLD_PASS_SHA }),
+		);
+		expect(log).toHaveBeenCalledWith(
+			expect.stringContaining("incremental review: scoping review"),
+		);
+		// The fresh PASS for HEAD becomes the new last-PASS sha.
+		expect(input.state.tokens.lastPassSha()).toBe(HEAD_SHA);
+	});
+
+	it("ignores the last-PASS sha when incremental review is disabled (default)", async () => {
+		const pi = createMockPi();
+		const listChangedFiles = vi.fn().mockResolvedValue(["src/a.ts"]);
+		const dispatch = createPrReviewDispatch({
+			...createTestDeps(makePassReport()),
+			listChangedFiles,
+		});
+		const input = createInput(pi);
+		input.state.tokens.stampPass({
+			sha: OLD_PASS_SHA,
+			passedAt: 1000,
+			reportStatus: "PASS",
+		});
+
+		await dispatch.dispatch(input);
+
+		expect(listChangedFiles).toHaveBeenCalledWith("/repo", BASE_REF);
+	});
+
+	it("prefers an explicit base ref over incremental scoping", async () => {
+		const pi = createMockPi();
+		const { deps, listChangedFiles } = createIncrementalDeps(makePassReport());
+		const dispatch = createPrReviewDispatch(deps);
+		const input = createInput(pi, { baseRef: "feature/base" });
+		input.state.tokens.stampPass({
+			sha: OLD_PASS_SHA,
+			passedAt: 1000,
+			reportStatus: "PASS",
+		});
+
+		await dispatch.dispatch(input);
+
+		expect(listChangedFiles).toHaveBeenCalledWith("/repo", "feature/base");
+	});
+
+	it("falls back to the default base when the last-PASS sha IS the current HEAD (re-review)", async () => {
+		const pi = createMockPi();
+		const { deps, listChangedFiles } = createIncrementalDeps(makePassReport());
+		const dispatch = createPrReviewDispatch(deps);
+		const input = createInput(pi, { isReReview: true });
+		input.state.tokens.stampPass({
+			sha: HEAD_SHA,
+			passedAt: 1000,
+			reportStatus: "PASS",
+		});
+
+		const result = await dispatch.dispatch(input);
+
+		expect(result.stamped).toBe(true);
+		expect(listChangedFiles).toHaveBeenCalledWith("/repo", BASE_REF);
+	});
+
+	it("falls back to the default base when the last-PASS sha no longer resolves", async () => {
+		const pi = createMockPi();
+		const { deps, listChangedFiles, log } = createIncrementalDeps(
+			makePassReport(),
+		);
+		const dispatch = createPrReviewDispatch({
+			...deps,
+			verifyRef: () => false,
+		});
+		const input = createInput(pi);
+		input.state.tokens.stampPass({
+			sha: OLD_PASS_SHA,
+			passedAt: 1000,
+			reportStatus: "PASS",
+		});
+
+		await dispatch.dispatch(input);
+
+		expect(listChangedFiles).toHaveBeenCalledWith("/repo", BASE_REF);
+		expect(log).toHaveBeenCalledWith(
+			expect.stringContaining("no longer resolves"),
+		);
+	});
+
+	it("uses the default base for the first review (no PASS token yet)", async () => {
+		const pi = createMockPi();
+		const { deps, listChangedFiles } = createIncrementalDeps(makePassReport());
+		const dispatch = createPrReviewDispatch(deps);
+
+		await dispatch.dispatch(createInput(pi));
+
+		expect(listChangedFiles).toHaveBeenCalledWith("/repo", BASE_REF);
+	});
+});
+
 describe("resolveHeadSha", () => {
 	it("returns empty string outside a git repo", () => {
 		const sha = resolveHeadSha(`/tmp/not-a-repo-${Date.now()}`);
 		expect(sha).toBe("");
+	});
+});
+
+describe("C6 opt-in below-threshold auto-PASS (dispatch wiring)", () => {
+	function makeNitOnlyIssuesReport(): ReviewReport {
+		return {
+			status: "ISSUES",
+			confidence: "MEDIUM",
+			findings: [
+				{
+					severity: "NIT",
+					domain: "quality",
+					title: "naming",
+					file: "src/x.ts",
+					rule: "naming",
+					issue: "x",
+					evidence: "x",
+					suggestion: "x",
+				},
+			],
+			verified: [],
+			unverifiable: [],
+			testExecution: {
+				status: "PASS",
+				summary: "container-safe validation passed",
+			},
+			summary: "nits only",
+		};
+	}
+
+	it("auto-stamps and does NOT block a NIT-only ISSUES report when autoPassOnNitOnly is ON", async () => {
+		const pi = createMockPi();
+		const dispatch = createPrReviewDispatch(
+			createTestDeps(makeNitOnlyIssuesReport()),
+		);
+		const input = createInput(pi, {
+			state: createPrGateState({ autoPassOnNitOnly: true }),
+		});
+
+		const result = await dispatch.dispatch(input);
+
+		expect(result.stamped).toBe(true);
+		expect(result.blocked).toBe(false);
+		expect(input.state.tokens.hasPass(HEAD_SHA)).toBe(true);
+	});
+
+	it("blocks a NIT-only ISSUES report when autoPassOnNitOnly is OFF (default)", async () => {
+		const pi = createMockPi();
+		const dispatch = createPrReviewDispatch(
+			createTestDeps(makeNitOnlyIssuesReport()),
+		);
+		const input = createInput(pi);
+
+		const result = await dispatch.dispatch(input);
+
+		expect(result.stamped).toBe(false);
+		expect(result.blocked).toBe(true);
+		expect(input.state.tokens.hasPass(HEAD_SHA)).toBe(false);
+	});
+
+	it("does NOT auto-pass a WARNING ISSUES report even when autoPassOnNitOnly is ON", async () => {
+		const pi = createMockPi();
+		const dispatch = createPrReviewDispatch(createTestDeps(makeIssuesReport()));
+		const input = createInput(pi, {
+			state: createPrGateState({ autoPassOnNitOnly: true }),
+		});
+
+		const result = await dispatch.dispatch(input);
+
+		expect(result.stamped).toBe(false);
+		expect(result.blocked).toBe(true);
+		expect(input.state.tokens.hasPass(HEAD_SHA)).toBe(false);
 	});
 });

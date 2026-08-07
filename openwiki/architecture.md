@@ -103,7 +103,7 @@ Shared types and logic for the PR gate's review system:
 
 - **`review-types.ts`**: canonical `ReviewReport` schema with `Severity` (`CRITICAL`/`WARNING`/`NIT`), `ReviewStatus` (`PASS`/`ISSUES`/`CANNOT_REVIEW`), `ReviewConfidence`, 7 `ReviewDomain` values, and `Finding`/`TestExecutionSummary` interfaces.
 - **`review-severity.ts`**: threshold helpers including `hasCriticalSecurityFinding` — the gate's escalation trigger (CRITICAL + security domain).
-- **`review-scope.ts`**: `gatherDiff`, `countDiffLinesFast`, `extractOriginalTask`, `filterGitignoredFiles`, `capDiff`.
+- **`review-scope.ts`**: `gatherDiff`, `toStructuredHunks`, `countDiffLinesFast`, `extractOriginalTask`, `filterGitignoredFiles`, `capDiff`.
 - **`review-checklist.md`**: 7-domain checklist (task-completion, correctness, error-handling, security, quality, testing, documentation) referenced by reviewer prompts.
 
 ## How the subsystems interact

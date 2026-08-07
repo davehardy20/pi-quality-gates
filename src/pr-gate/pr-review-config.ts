@@ -71,6 +71,13 @@ export const PR_REVIEW_CONFIG: ReviewConfig = {
 	maxDiffLines: 4000,
 	maxChangedLines: 5000,
 	reviewDelayMs: 0,
+	// C2 structured diff hunks — off by default; flip to true to adopt the
+	// PR-Agent labelled-hunk (__new hunk__ / __old hunk__) diff format.
+	useStructuredHunks: false,
+	// C5 incremental review — off by default; flip to true to scope each
+	// review to lastPassSha..HEAD (PR-Agent incremental review) instead of
+	// the full base..HEAD range.
+	incrementalReview: false,
 };
 
 /**

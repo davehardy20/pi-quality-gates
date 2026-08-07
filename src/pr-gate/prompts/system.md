@@ -116,6 +116,7 @@ applicable" with a reason if it does not apply to the change.
 - Are README/docs updated if usage/configuration changed?
 - Are non-obvious business logic or algorithms commented?
 - Are error codes or status codes documented?
+{{REVIEW_OPTIONAL_DOMAINS}}
 
 ## Test Execution
 
@@ -160,6 +161,7 @@ CONFIDENCE: HIGH | MEDIUM | LOW
 - **Issue:** What's wrong, specifically
 - **Evidence:** The relevant code excerpt
 - **Suggestion:** Concrete fix with code if helpful
+{{EFFORT_FIELD}}
 
 ### What was verified
 - <claim>: <file:line — evidence or test result>

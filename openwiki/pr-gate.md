@@ -37,6 +37,7 @@ Tokens are stored in-memory via `PassTokenStore` (`src/pr-gate/pass-token-store.
 | `hasPass(sha)` | Check if token exists for sha |
 | `stampPass(token)` | Store token — **only `reportStatus: "PASS"` stamps**; empty/whitespace shas rejected; silently no-ops otherwise |
 | `get(sha)` | Retrieve token |
+| `lastPassSha()` | Sha of the most recently stamped PASS token (falls back to the newest remaining token on `invalidate`); `null` when empty. Used by **incremental review** (`incrementalReview` toggle) to scope the next review to `lastPassSha..HEAD` |
 | `invalidate(sha)` | Remove token for sha (exists but unused in current codebase) |
 | `clear()` | Remove all tokens |
 | `size` | Count |
@@ -94,7 +95,7 @@ Tokens are stored in-memory via `PassTokenStore` (`src/pr-gate/pass-token-store.
 2. If already has PASS token (and not re-review) → early return "already has PASS".
 3. Check `isLinterClean(ctx)` → block if linter reported findings.
 4. Run `runPrReview()`:
-   - Resolve base ref (defaults: `origin/master` → `origin/main` → `master` → `main` → `HEAD~1`).
+   - Resolve base ref (defaults: `origin/master` → `origin/main` → `master` → `main` → `HEAD~1`). When the opt-in `incrementalReview` toggle is on and no explicit base ref was given, `resolveIncrementalBaseRef` scopes the review to `lastPassSha..HEAD` (PR-Agent incremental review); it falls back to the default full-range base when there is no PASS token yet, the last-PASS sha is the current HEAD, or the sha no longer resolves in the repo.
    - List changed files via `git diff --name-only`.
    - Load and apply `.gitignore` plus `.pi/reviewer.skip` filters to the review file scope; block if every changed file is excluded.
    - Count changed lines in the filtered scope → reject if it exceeds `maxChangedLines` (5000).
@@ -145,7 +146,7 @@ Legacy direct child capture is also pre-close bounded: 1,048,576 characters per 
 **Report parsing** (`parseReviewReport`):
 - Finds `## Review Report` marker (regex, case-insensitive).
 - Extracts `STATUS:`, `CONFIDENCE:` fields.
-- Parses `#### [SEVERITY] title` finding blocks → extracts File, Category, Rule, Issue, Evidence, Suggestion.
+- Parses `#### [SEVERITY] title` finding blocks → extracts File, Category, Rule, Issue, Evidence, Suggestion, and the optional Effort estimate (minutes; `Finding.effort` is `number | null | undefined`).
 - Parses bullet-list sections: "What was verified", "What could not be verified".
 - Parses "Test execution" subsection (Status, Summary, Sidecar).
 - Parses "Summary" free text.
@@ -153,6 +154,7 @@ Legacy direct child capture is also pre-close bounded: 1,048,576 characters per 
 **Prompt rendering:**
 - `readSystemPrompt(promptsDir)` → reads `system.md`.
 - `renderTaskTemplate(promptsDir, task, files, diff, testPlan?, extraInstructions?)` → renders `task-template.md` with `{{TASK}}`, `{{FILES}}`, `{{DIFF}}`, `{{TEST_PLAN}}`, `{{EXTRA_INSTRUCTIONS}}` placeholders.
+- `renderSystemPrompt(rawSystemPrompt, config)` → applies the optional `ReviewConfig.reviewOptions` toggles (C4: `todoScan`, `canSplit`, `effortEstimate`, mirroring PR-Agent's `require_*` flags) by substituting `{{REVIEW_OPTIONAL_DOMAINS}}` and `{{EFFORT_FIELD}}` placeholders in `system.md`. Deterministic; all toggles default OFF (baseline prompt unchanged).
 
 ## Reviewer tool policy
 
@@ -231,7 +233,8 @@ and the push/pr_create gate remains fail-closed until the exact HEAD has a PASS 
 
 `src/shared/review-scope.ts` — shared diff gathering and file filtering:
 
-- `gatherDiff(files, cwd, maxLines, baseRef?, filterOptions?)` — generates `git diff`, handles untracked files via `git diff --no-index /dev/null`, caps at `maxLines`.
+- `gatherDiff(files, cwd, maxLines, baseRef?, filterOptions?, structured?)` — generates `git diff`, handles untracked files via `git diff --no-index /dev/null`, caps at `maxLines`. When `structured` is true, rewrites the diff into deterministic `__new hunk__` / `__old hunk__` blocks (PR-Agent labelled-hunk format) via `toStructuredHunks`.
+- `toStructuredHunks(diff)` — pure, deterministic transform: per hunk it emits a `__new hunk__` block (added + context lines) and an `__old hunk__` block (removed + context lines), file headers verbatim. Improves reviewer grounding; off by default, enabled via `ReviewConfig.useStructuredHunks`.
 - `countDiffLinesFast(files, cwd, baseRef?)` — uses `git diff --numstat` for cheap counting.
 - `filterGitignoredFiles(files, cwd)` — uses `git check-ignore --stdin -z`.
 - `extractOriginalTask(entries)` — scans session entries in reverse for last user message text.
@@ -334,6 +337,7 @@ return even when the HEAD already has a token.
 | Child Pi spawn args | `src/pr-gate/reviewer.ts` → `buildReviewerPiArgs` | Tool list must match policy |
 | Report parsing format | `src/pr-gate/reviewer.ts` → `parseReviewReport` | Must match prompt output format in `system.md` |
 | Base ref fallback chain | `src/pr-gate/pr-review-dispatch.ts` → `resolveBaseRef` | Ordered: origin/master → origin/main → master → main → HEAD~1 |
+| Incremental review scoping | `src/pr-gate/pr-review-dispatch.ts` → `resolveIncrementalBaseRef` + `PassTokenStore.lastPassSha` | Opt-in via `incrementalReview`; always falls back to full-range base on any doubt |
 | Auto-review guards | `src/pr-gate/auto-review-trigger.ts` → `decideAutoReview` | Sticky `lastReviewedSha` prevents loops |
 | Test execution recommendations | `src/pr-gate/test-execution.ts` | All via safe runners (`run_*` host / `container_safe` orchestrator) |
 | Agent review kickoff logic | `src/pr-gate/review-coordinator.ts` → `createReviewCoordinator` | Shared by `/pr-review` and `pr_review`; keep parity |
@@ -355,6 +359,8 @@ return even when the HEAD already has a token.
 12. `pr_review` is asynchronous: `execute` only kicks off the background dispatch and returns compact state; it never awaits the follow-up `orchestrate` result (no deadlock).
 13. `pr_review` and the coordinator **never publish** — no `git_safe`/`gh_safe` push/pr_create/update/merge. The push gate stays fail-closed until the exact HEAD has a PASS token, so a parallel `pr_review` + publish batch cannot bypass it.
 14. An explicit `baseRef` is an intentional re-review in both wrappers (bypasses the `already-passed` early return).
+15. Incremental review is opt-in (`incrementalReview`, default OFF) and fail-safe: an explicit base ref, a missing/stale last-PASS sha, or a last-PASS sha equal to HEAD all fall back to the default full-range review — a narrower scope is never silently assumed.
+16. Below-threshold auto-PASS is opt-in (`PrGateConfig.autoPassOnNitOnly` / `decidePushGate.autoPassOnNitOnly`, default OFF). When ON it auto-stamps a PASS only for an ISSUES report whose findings are all NIT (no CRITICAL/WARNING) and whose test execution did not FAIL. It never relaxes CRITICAL security escalation or the test-execution FAIL gate.
 
 ## Common failure modes
 

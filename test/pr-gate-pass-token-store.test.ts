@@ -91,3 +91,70 @@ describe("PassTokenStore", () => {
 		expect(store.size).toBe(0);
 	});
 });
+
+describe("PassTokenStore.lastPassSha (C5 incremental review)", () => {
+	it("returns null when no token has been stamped", () => {
+		const store = createPassTokenStore();
+		expect(store.lastPassSha()).toBeNull();
+	});
+
+	it("returns the only stamped sha", () => {
+		const store = createPassTokenStore();
+		store.stampPass({ sha: "abc123", passedAt: 1000, reportStatus: "PASS" });
+		expect(store.lastPassSha()).toBe("abc123");
+	});
+
+	it("tracks the most recently stamped sha across multiple stamps", () => {
+		const store = createPassTokenStore();
+		store.stampPass({ sha: "abc123", passedAt: 1000, reportStatus: "PASS" });
+		store.stampPass({ sha: "def456", passedAt: 2000, reportStatus: "PASS" });
+		expect(store.lastPassSha()).toBe("def456");
+	});
+
+	it("re-stamping the same sha keeps it as last pass", () => {
+		const store = createPassTokenStore();
+		store.stampPass({ sha: "abc123", passedAt: 1000, reportStatus: "PASS" });
+		store.stampPass({ sha: "abc123", passedAt: 2000, reportStatus: "PASS" });
+		expect(store.lastPassSha()).toBe("abc123");
+		expect(store.size).toBe(1);
+	});
+
+	it("a rejected stamp (non-PASS / empty sha) does not move lastPassSha", () => {
+		const store = createPassTokenStore();
+		store.stampPass({ sha: "abc123", passedAt: 1000, reportStatus: "PASS" });
+		// @ts-expect-error — intentionally wrong shape at the call site
+		store.stampPass({ sha: "def456", passedAt: 2000, reportStatus: "ISSUES" });
+		store.stampPass({ sha: "  ", passedAt: 3000, reportStatus: "PASS" });
+		expect(store.lastPassSha()).toBe("abc123");
+	});
+
+	it("invalidate of the last-pass sha falls back to the newest remaining token", () => {
+		const store = createPassTokenStore();
+		store.stampPass({ sha: "abc123", passedAt: 1000, reportStatus: "PASS" });
+		store.stampPass({ sha: "def456", passedAt: 2000, reportStatus: "PASS" });
+		store.invalidate("def456");
+		expect(store.lastPassSha()).toBe("abc123");
+	});
+
+	it("invalidate of the last remaining token resets lastPassSha to null", () => {
+		const store = createPassTokenStore();
+		store.stampPass({ sha: "abc123", passedAt: 1000, reportStatus: "PASS" });
+		store.invalidate("abc123");
+		expect(store.lastPassSha()).toBeNull();
+	});
+
+	it("invalidate of a non-last sha keeps lastPassSha unchanged", () => {
+		const store = createPassTokenStore();
+		store.stampPass({ sha: "abc123", passedAt: 1000, reportStatus: "PASS" });
+		store.stampPass({ sha: "def456", passedAt: 2000, reportStatus: "PASS" });
+		store.invalidate("abc123");
+		expect(store.lastPassSha()).toBe("def456");
+	});
+
+	it("clear resets lastPassSha to null", () => {
+		const store = createPassTokenStore();
+		store.stampPass({ sha: "abc123", passedAt: 1000, reportStatus: "PASS" });
+		store.clear();
+		expect(store.lastPassSha()).toBeNull();
+	});
+});

@@ -153,6 +153,7 @@ export interface PrReviewDispatchDeps {
 		maxLines: number,
 		baseRef?: string,
 		filterOptions?: DiffFilterOptions,
+		structured?: boolean,
 	) => Promise<string>;
 	extractTask: (
 		entries: Array<{
@@ -169,6 +170,18 @@ export interface PrReviewDispatchDeps {
 	 * `console.error`.
 	 */
 	log?: (msg: string) => void;
+	/**
+	 * Review config overrides (limits, filters, and review-quality toggles
+	 * such as `useStructuredHunks` / `incrementalReview`). Defaults to
+	 * `PR_REVIEW_CONFIG`.
+	 */
+	reviewConfig?: ReviewConfig;
+	/**
+	 * Git ref verifier used by incremental review to confirm the last-PASS
+	 * sha still resolves before scoping to it. Defaults to `git rev-parse
+	 * --verify`.
+	 */
+	verifyRef?: (cwd: string, ref: string) => boolean;
 	reviewerExecution: ReviewerExecution;
 }
 
@@ -178,6 +191,8 @@ export interface PrReviewDispatchInput {
 		tokens: PassTokenStore;
 		config: {
 			enabled: boolean;
+			/** Opt-in C6 below-threshold auto-PASS (mirrors PrGateConfig). */
+			autoPassOnNitOnly?: boolean;
 		};
 	};
 	pi: ExtensionAPI;
@@ -339,6 +354,69 @@ function verifyGitRef(cwd: string, ref: string): boolean {
 	}
 }
 
+export interface IncrementalBaseRefInput {
+	/** Explicit base ref from the `/pr-review [baseRef]` argument, if any. */
+	explicitBaseRef?: string;
+	/** The base ref used whenever incremental review does not apply. */
+	defaultBaseRef: string;
+	/** HEAD sha under review. */
+	headSha: string;
+	/** PASS token store holding the last-PASS sha. */
+	tokens: PassTokenStore;
+	/** Review config carrying the `incrementalReview` toggle. */
+	config: ReviewConfig;
+	/** Repo cwd used to verify the last-PASS sha still resolves. */
+	cwd: string;
+	/** Git ref verifier (injectable for tests). */
+	verifyRef: GitRefVerifier;
+	/** Diagnostic logger for fallback notes. */
+	log: (msg: string) => void;
+}
+
+/**
+ * Resolve the effective base ref for a PR review, applying C5 incremental
+ * review (PR-Agent style): when enabled and no explicit base ref was given,
+ * scope the review to the changes since the most recent PASS token
+ * (`lastPassSha..HEAD`) — commits at or before that sha were already covered
+ * by the review that stamped the PASS.
+ *
+ * Fail-safe fallbacks to `defaultBaseRef` (full-range review) when:
+ *  - the toggle is off, or an explicit base ref was provided (an explicit
+ *    base ref is an intentional full/custom-scope re-review);
+ *  - no PASS token has been stamped yet (first review);
+ *  - the last-PASS sha IS the current HEAD (the range would be empty);
+ *  - the last-PASS sha no longer resolves (e.g. history rewrite) — a stale
+ *    sha must never produce an empty or misleading diff.
+ */
+export function resolveIncrementalBaseRef(
+	input: IncrementalBaseRefInput,
+): string {
+	const {
+		explicitBaseRef,
+		defaultBaseRef,
+		headSha,
+		tokens,
+		config,
+		cwd,
+		verifyRef,
+		log,
+	} = input;
+	if (config.incrementalReview !== true) return defaultBaseRef;
+	if (explicitBaseRef) return defaultBaseRef;
+	const lastPass = tokens.lastPassSha();
+	if (!lastPass || lastPass === headSha) return defaultBaseRef;
+	if (!verifyRef(cwd, lastPass)) {
+		log(
+			`[pr-review-dispatch] incremental review: last PASS sha ${lastPass} no longer resolves in this repo; falling back to full-range base ${defaultBaseRef}.`,
+		);
+		return defaultBaseRef;
+	}
+	log(
+		`[pr-review-dispatch] incremental review: scoping review to changes since last PASS (${lastPass}..HEAD).`,
+	);
+	return lastPass;
+}
+
 export function resolveDefaultBaseRef(
 	cwd: string,
 	verifyRef: GitRefVerifier = verifyGitRef,
@@ -405,6 +483,8 @@ export function createPrReviewDispatch(
 		gatherDiff,
 		extractTask: extractOriginalTask,
 		log: console.error,
+		reviewConfig: PR_REVIEW_CONFIG,
+		verifyRef: verifyGitRef,
 		reviewerExecution: missingReviewerExecution(),
 		...partialDeps,
 	};
@@ -429,8 +509,22 @@ export function createPrReviewDispatch(
 	): Promise<ReviewerResult> {
 		const { ctx, baseRef: explicitBaseRef } = input;
 		const cwd = ctx.cwd;
+		const config = deps.reviewConfig ?? PR_REVIEW_CONFIG;
 
-		const baseRef = explicitBaseRef ?? deps.getBaseRef(cwd);
+		// C5 incremental review: with no explicit base ref, an enabled
+		// `incrementalReview` toggle scopes the review to lastPassSha..HEAD.
+		// Falls back to the default full-range base ref when no usable
+		// last-PASS sha exists (see resolveIncrementalBaseRef).
+		const baseRef = resolveIncrementalBaseRef({
+			explicitBaseRef,
+			defaultBaseRef: explicitBaseRef ?? deps.getBaseRef(cwd),
+			headSha: reviewedHeadSha,
+			tokens: input.state.tokens,
+			config,
+			cwd,
+			verifyRef: deps.verifyRef ?? verifyGitRef,
+			log,
+		});
 
 		const unfilteredChangedFiles = await deps.listChangedFiles(cwd, baseRef);
 		if (unfilteredChangedFiles.length === 0) {
@@ -439,9 +533,9 @@ export function createPrReviewDispatch(
 			);
 		}
 
-		const skipFilter = await loadSkipFilterForConfig(cwd, PR_REVIEW_CONFIG);
+		const skipFilter = await loadSkipFilterForConfig(cwd, config);
 		const filterOptions: DiffFilterOptions = {
-			respectGitignore: PR_REVIEW_CONFIG.respectGitignore,
+			respectGitignore: config.respectGitignore,
 			skipFilter,
 		};
 		const changedFiles = await deps.applyDiffFilters(
@@ -456,9 +550,9 @@ export function createPrReviewDispatch(
 		}
 
 		const diffLines = await deps.countDiffLines(changedFiles, cwd, baseRef);
-		if (diffLines > PR_REVIEW_CONFIG.maxChangedLines) {
+		if (diffLines > config.maxChangedLines) {
 			throw new Error(
-				`Diff too large: ${diffLines} changed lines exceed the PR review limit (${PR_REVIEW_CONFIG.maxChangedLines}).`,
+				`Diff too large: ${diffLines} changed lines exceed the PR review limit (${config.maxChangedLines}).`,
 			);
 		}
 
@@ -467,9 +561,10 @@ export function createPrReviewDispatch(
 			: await deps.gatherDiff(
 					changedFiles,
 					cwd,
-					PR_REVIEW_CONFIG.maxDiffLines,
+					config.maxDiffLines,
 					baseRef,
 					filterOptions,
+					config.useStructuredHunks === true,
 				);
 
 		const extractedTask =
@@ -496,8 +591,8 @@ export function createPrReviewDispatch(
 			extraInstructionsState,
 		);
 		const reviewConfig: ReviewConfig = extraInstructions
-			? { ...PR_REVIEW_CONFIG, extraInstructions }
-			: PR_REVIEW_CONFIG;
+			? { ...config, extraInstructions }
+			: config;
 
 		return deps.reviewerExecution.runAttempt({
 			task,
@@ -669,6 +764,30 @@ export function createPrReviewDispatch(
 			}
 
 			// ISSUES
+			// C6: opt-in below-threshold auto-PASS. CRITICAL security already
+			// escalated and test-execution FAIL already returned above, so here only
+			// a NIT-only ISSUES report can qualify. Let the pure gate core decide
+			// (and stamp) so there is one source of truth for auto-PASS.
+			if (state.config.autoPassOnNitOnly === true) {
+				const autoDecision = decidePushGate({
+					action: "push",
+					headSha,
+					baseSha: input.baseRef ?? "unknown",
+					tokens: state.tokens,
+					reviewReport: report,
+					autoPassOnNitOnly: true,
+				});
+				if (autoDecision.verdict === "allow") {
+					return {
+						report,
+						stamped: true,
+						escalated: false,
+						blocked: false,
+						message: `✅ **PR review auto-PASS** for HEAD ${headSha}: only NIT-level findings (autoPassOnNitOnly enabled). Push is now allowed.\n\n${formatReportForDisplay(report)}`,
+					};
+				}
+			}
+
 			const fixInstruction = buildFixInstruction(report);
 			pi.sendUserMessage(fixInstruction);
 

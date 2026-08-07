@@ -87,6 +87,7 @@ export interface ReviewerExecution {
 export interface ReviewerExecutionDependencies {
   gatherDiff?: typeof gatherDiff;
   readSystemPrompt?: typeof readSystemPrompt;
+  renderSystemPrompt?: typeof renderSystemPrompt;
   renderTaskTemplate?: typeof renderTaskTemplate;
   spawnReviewer?: typeof spawnReviewer;
   getPromptsDir: () => string;
@@ -104,6 +105,59 @@ export function readSystemPrompt(promptsDir: string): string {
   } catch {
     throw new Error(`Reviewer: cannot read system prompt at ${promptPath}`);
   }
+}
+
+// ── C4 review toggles: optional reviewer domains (PR-Agent require_* mirrors) ──
+
+const REVIEW_OPTIONAL_DOMAIN_TODO_SCAN = `### Optional Domain: TODO / FIXME / Placeholder Scan
+
+- Scan changed code for leftover \`TODO\`, \`FIXME\`, \`HACK\`, \`XXX\`, or
+  placeholder/stub implementations that were not resolved before the change.
+- Report each as a WARNING (task-completion domain) with the marker text as
+  evidence and a concrete resolution as the suggestion.`;
+
+const REVIEW_OPTIONAL_DOMAIN_CAN_SPLIT = `### Optional Domain: Change Cohesion (Can-Be-Split)
+
+- Assess whether the change is too large or mixes unrelated concerns to
+  review (and merge) safely as one unit.
+- If it does, suggest concrete split points (commit or PR boundaries). Report
+  as a WARNING (quality domain) only when a split is clearly warranted;
+  otherwise note the change is cohesive.`;
+
+const REVIEW_OPTIONAL_DOMAIN_EFFORT = `### Optional Domain: Effort Estimate
+
+- For each finding, estimate the whole minutes to address it and emit the
+  estimate in the \`Effort:\` output field. Omit it or write \`N/A\` when a
+  reliable estimate is not possible.`;
+
+/**
+ * Render the reviewer system prompt with the optional review-feature toggles
+ * (PR-Agent `require_*` mirrors) applied. Deterministic: each toggle adds (or
+ * omits) a fixed prompt section, so the prompt is reproducible per config.
+ * With every toggle off (the default) the base prompt is emitted unchanged
+ * aside from the empty placeholder substitutions.
+ */
+export function renderSystemPrompt(
+  rawSystemPrompt: string,
+  config: ReviewConfig,
+): string {
+  const opts = config.reviewOptions ?? {};
+  const optionalDomains: string[] = [];
+  if (opts.todoScan === true)
+    optionalDomains.push(REVIEW_OPTIONAL_DOMAIN_TODO_SCAN);
+  if (opts.canSplit === true)
+    optionalDomains.push(REVIEW_OPTIONAL_DOMAIN_CAN_SPLIT);
+  if (opts.effortEstimate === true)
+    optionalDomains.push(REVIEW_OPTIONAL_DOMAIN_EFFORT);
+
+  const effortField =
+    opts.effortEstimate === true
+      ? "- **Effort:** <optional estimated whole minutes to address this finding, e.g. 5; omit or write N/A when not estimable>"
+      : "";
+
+  return rawSystemPrompt
+    .replace("{{REVIEW_OPTIONAL_DOMAINS}}", optionalDomains.join("\n\n"))
+    .replace("{{EFFORT_FIELD}}", effortField);
 }
 
 /**
@@ -154,8 +208,12 @@ export function createReviewerExecution(
   return {
     async runAttempt(input: ReviewerAttemptInput): Promise<ReviewerResult> {
       const promptsDir = deps.getPromptsDir();
-      const systemPrompt = (deps.readSystemPrompt ?? readSystemPrompt)(
+      const rawSystemPrompt = (deps.readSystemPrompt ?? readSystemPrompt)(
         promptsDir,
+      );
+      const systemPrompt = (deps.renderSystemPrompt ?? renderSystemPrompt)(
+        rawSystemPrompt,
+        input.config,
       );
       const diff =
         input.diff ??
@@ -165,6 +223,7 @@ export function createReviewerExecution(
           input.config.maxDiffLines,
           undefined, // baseRef — post-turn reviewer diffs working tree vs HEAD
           input.filterOptions,
+          input.config.useStructuredHunks === true,
         ));
       const taskPrompt = (deps.renderTaskTemplate ?? renderTaskTemplate)(
         promptsDir,
@@ -737,6 +796,7 @@ function parseFindings(reportText: string): Finding[] {
       issue: extractField(blockText, "Issue") || "",
       evidence: extractField(blockText, "Evidence") || "",
       suggestion: extractField(blockText, "Suggestion") || "",
+      ...parseEffortField(extractField(blockText, "Effort")),
     });
   }
 
@@ -747,6 +807,35 @@ function parseFindings(reportText: string): Finding[] {
   }
 
   return findings;
+}
+
+/**
+ * Parse the optional Effort field of a finding.
+ *
+ * Accepts the reviewer's free-form effort estimate and normalizes it to a
+ * whole number of minutes. Tolerates forms like `5`, `5min`, `5 min`,
+ * `~5`, or `N/A`/`unknown`. Returns `{}` (no field) when the estimate is
+ * absent or unparseable, keeping the schema field strictly optional, and
+ * `{ effort: null }` only when the reviewer explicitly writes a blank/
+ * not-applicable value.
+ */
+function parseEffortField(raw: string): { effort?: number | null } {
+  if (!raw) return {};
+  const normalized = raw.trim();
+  const lower = normalized.toLowerCase();
+  if (
+    lower === "n/a" ||
+    lower === "na" ||
+    lower === "none" ||
+    lower === "unknown"
+  ) {
+    return { effort: null };
+  }
+  const match = normalized.match(/(-?\d+)/);
+  if (!match) return { effort: null };
+  const minutes = parseInt(match[1], 10);
+  if (!Number.isFinite(minutes) || minutes < 0) return { effort: null };
+  return { effort: minutes };
 }
 
 /**
@@ -890,6 +979,9 @@ export function formatReportForDisplay(report: ReviewReport): string {
     for (const f of report.findings) {
       const loc = f.line != null ? `${f.file}:${f.line}` : (f.file ?? "");
       lines.push(`- **[${f.severity}]** ${f.title} \`${loc}\``);
+      if (f.effort != null) {
+        lines.push(`  - ⏱ ~${f.effort} min to fix`);
+      }
       if (f.suggestion) {
         lines.push(`  - 💡 ${f.suggestion}`);
       }

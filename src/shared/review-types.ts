@@ -48,6 +48,12 @@ export interface Finding {
 	evidence: string;
 	/** Concrete fix suggestion, may include code */
 	suggestion: string;
+	/**
+	 * Estimated effort to address this finding, in minutes. Optional; when the
+	 * reviewer omits it, this is `undefined` (or `null` if explicitly blank).
+	 * Lets the gate and downstream tooling prioritise findings by fix cost.
+	 */
+	effort?: number | null;
 }
 
 export type TestExecutionStatus = "PASS" | "FAIL" | "NOT_RUN";
