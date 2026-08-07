@@ -98,8 +98,10 @@ function resolveExtraInstructions(
 	// Symlink-target guard: a pre-existing symlink at the instructions path can
 	// resolve to a tracked file the PR edits. loadExtraInstructions follows the
 	// symlink, so compare the resolved (realpath) instructions file against the
-	// resolved changed files and refuse on collision. Closes a bypass where the
-	// PR edits the symlink TARGET (not the literal instructions path).
+	// resolved changed files and refuse on collision. realpath also collapses
+	// multi-hop symlink chains, so an indirect chain to a changed file is
+	// blocked too. Closes a bypass where the PR edits the symlink TARGET (not
+	// the literal instructions path).
 	const instructionsReal = realpathOrUndefined(
 		path.join(cwd, DEFAULT_EXTRA_INSTRUCTIONS_PATH),
 	);
