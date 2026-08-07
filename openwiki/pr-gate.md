@@ -152,7 +152,7 @@ Legacy direct child capture is also pre-close bounded: 1,048,576 characters per 
 
 **Prompt rendering:**
 - `readSystemPrompt(promptsDir)` → reads `system.md`.
-- `renderTaskTemplate(promptsDir, task, files, diff, testPlan?)` → renders `task-template.md` with `{{TASK}}`, `{{FILES}}`, `{{DIFF}}`, `{{TEST_PLAN}}` placeholders.
+- `renderTaskTemplate(promptsDir, task, files, diff, testPlan?, extraInstructions?)` → renders `task-template.md` with `{{TASK}}`, `{{FILES}}`, `{{DIFF}}`, `{{TEST_PLAN}}`, `{{EXTRA_INSTRUCTIONS}}` placeholders.
 
 ## Reviewer tool policy
 
@@ -160,7 +160,7 @@ Legacy direct child capture is also pre-close bounded: 1,048,576 characters per 
 tool allowlist and blocklist.
 
 **`PR_REVIEW_CONFIG`** (source: `src/pr-gate/pr-review-config.ts`):
-- Model: `openai-codex/gpt-5.5` *(verify in source)*
+- Model: `zai/glm-5.2` with fallback chain `["kimi-coding/k3-256k", "opencode/deepseek-v4-flash"]` *(verify in source)*
 - `timeoutMs: 45 * 60_000` (45 minutes)
 - `maxDiffLines: 4000`, `maxChangedLines: 5000`
 - Tool policy intentionally excludes host publishing and durable state mutation

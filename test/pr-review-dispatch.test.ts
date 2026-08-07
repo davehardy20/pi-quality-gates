@@ -280,6 +280,7 @@ describe("createPrReviewDispatch", () => {
 					findings: [],
 					verified: [],
 					unverifiable: [],
+					testExecution: { status: "PASS" as const, summary: "ok" },
 					summary: "ok",
 				},
 				rawOutput: "## Review Report",

@@ -32,8 +32,12 @@ describe("PR reviewer config", () => {
 		expect(PR_REVIEWER_TOOLS.has("run_node_test")).toBe(true);
 	});
 
-	it("binds the reviewer to the deep cross-vendor model", () => {
-		expect(PR_REVIEW_CONFIG.model).toBe("openai-codex/gpt-5.5");
+	it("binds the reviewer to the cross-vendor model with a fallback chain", () => {
+		expect(PR_REVIEW_CONFIG.model).toBe("zai/glm-5.2");
+		expect(PR_REVIEW_CONFIG.fallbackModels).toEqual([
+			"kimi-coding/k3-256k",
+			"opencode/deepseek-v4-flash",
+		]);
 	});
 
 	it("allows enough time for sandbox image startup and deep review", () => {

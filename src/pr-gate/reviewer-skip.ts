@@ -160,13 +160,20 @@ export const DEFAULT_EXTRA_INSTRUCTIONS_PATH = ".pi/review-instructions.md";
  * relative to `projectRoot`. Returns the trimmed contents, or `undefined`
  * when the file is absent or empty — mirroring the silent-absent behavior of
  * `loadSkipFilter`. Never throws on a missing file (ENOENT); other read
- * errors are swallowed and treated as absent so a bad instructions file can
- * never block a review.
+ * errors are logged (via `opts.log`, default `console.error`) and treated as
+ * absent so a bad instructions file can never block a review.
  */
+export interface ExtraInstructionsOptions {
+	/** Optional logger for warnings (file not found is *not* warned). Defaults to `console.error`. */
+	log?: (msg: string) => void;
+}
+
 export function loadExtraInstructions(
 	projectRoot: string,
 	relativePath: string = DEFAULT_EXTRA_INSTRUCTIONS_PATH,
+	opts?: ExtraInstructionsOptions,
 ): string | undefined {
+	const log = opts?.log ?? console.error;
 	const absPath = path.resolve(projectRoot, relativePath);
 	let raw: string;
 	try {
@@ -179,6 +186,9 @@ export function loadExtraInstructions(
 		) {
 			return undefined;
 		}
+		log(
+			`[pi-reviewer-skip] Failed to read extra instructions ${absPath}: ${error}`,
+		);
 		return undefined;
 	}
 	const trimmed = raw.trim();
