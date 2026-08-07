@@ -1,6 +1,7 @@
 /**
  * `.pi/reviewer.skip` file parser — gitignore-format skip rules for the
- * post-turn-reviewer.
+ * post-turn-reviewer — plus `loadExtraInstructions`, which reads per-repo
+ * `.pi/review-instructions.md` guidance appended to the reviewer task prompt.
  *
  * Uses the `ignore` package which implements the full
  * [.gitignore spec 2.22.1](https://git-scm.com/docs/gitignore).
