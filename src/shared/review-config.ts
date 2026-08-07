@@ -43,4 +43,15 @@ export interface ReviewConfig {
 	 *  This debounces reviews so the main agent can finish multi-step work
 	 *  before the reviewer interrupts. 0 = immediate (legacy behavior). */
 	reviewDelayMs: number;
+	/**
+	 * Per-repo extra instructions appended to the reviewer task prompt.
+	 * Populated at dispatch time from `.pi/review-instructions.md` when
+	 * present (see `loadExtraInstructions`), or set directly on the config.
+	 * Empty/undefined emits no section in the rendered task.
+	 *
+	 * Trust boundary: trusted repo config (same tier as
+	 * `.pi/reviewer.skip`) — populated only for the repo under review, never
+	 * from untrusted diffs without a prior trust check.
+	 */
+	extraInstructions?: string;
 }

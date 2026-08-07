@@ -115,6 +115,7 @@ export function renderTaskTemplate(
   files: string[],
   diff: string,
   testPlan?: string,
+  extraInstructions?: string,
 ): string {
   const templatePath = path.join(promptsDir, "task-template.md");
   let template: string;
@@ -123,6 +124,8 @@ export function renderTaskTemplate(
   } catch {
     throw new Error(`Reviewer: cannot read task template at ${templatePath}`);
   }
+
+  const trimmedExtraInstructions = extraInstructions?.trim();
 
   return template
     .replace(/\{\{TASK\}\}/g, task || "(no task description available)")
@@ -136,6 +139,12 @@ export function renderTaskTemplate(
     .replace(
       /\{\{TEST_PLAN\}\}/g,
       testPlan ?? "(no test execution plan available)",
+    )
+    .replace(
+      /\{\{EXTRA_INSTRUCTIONS\}\}/g,
+      trimmedExtraInstructions
+        ? `\n## Extra Instructions\n\n${trimmedExtraInstructions}\n`
+        : "",
     );
 }
 
@@ -163,6 +172,7 @@ export function createReviewerExecution(
         input.files,
         diff,
         input.testPlan,
+        input.config.extraInstructions,
       );
       const spawn = deps.spawnReviewer ?? spawnReviewer;
       const primaryResult = await spawn(

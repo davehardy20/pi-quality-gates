@@ -1,6 +1,7 @@
 /**
  * `.pi/reviewer.skip` file parser — gitignore-format skip rules for the
- * post-turn-reviewer.
+ * post-turn-reviewer — plus `loadExtraInstructions`, which reads per-repo
+ * `.pi/review-instructions.md` guidance appended to the reviewer task prompt.
  *
  * Uses the `ignore` package which implements the full
  * [.gitignore spec 2.22.1](https://git-scm.com/docs/gitignore).
@@ -146,4 +147,51 @@ export function filterSkipped(
 		p.replace(/\\/g, "/").replace(/^\.\//, ""),
 	);
 	return filter.ig.filter(normalized);
+}
+
+// ── Per-repo extra instructions ───────────────────────────────────────
+
+/** Default relative path for per-repo reviewer extra instructions. */
+export const DEFAULT_EXTRA_INSTRUCTIONS_PATH = ".pi/review-instructions.md";
+
+/**
+ * Load per-repo extra instructions appended to the reviewer task.
+ *
+ * Reads a plain text/markdown file (default `.pi/review-instructions.md`)
+ * relative to `projectRoot`. Returns the trimmed contents, or `undefined`
+ * when the file is absent or empty — mirroring the silent-absent behavior of
+ * `loadSkipFilter`. Never throws on a missing file (ENOENT); other read
+ * errors are logged (via `opts.log`, default `console.error`) and treated as
+ * absent so a bad instructions file can never block a review.
+ */
+export interface ExtraInstructionsOptions {
+	/** Optional logger for warnings (file not found is *not* warned). Defaults to `console.error`. */
+	log?: (msg: string) => void;
+}
+
+export function loadExtraInstructions(
+	projectRoot: string,
+	relativePath: string = DEFAULT_EXTRA_INSTRUCTIONS_PATH,
+	opts?: ExtraInstructionsOptions,
+): string | undefined {
+	const log = opts?.log ?? console.error;
+	const absPath = path.resolve(projectRoot, relativePath);
+	let raw: string;
+	try {
+		raw = fs.readFileSync(absPath, "utf8");
+	} catch (error: unknown) {
+		if (
+			error instanceof Error &&
+			"code" in error &&
+			(error as NodeJS.ErrnoException).code === "ENOENT"
+		) {
+			return undefined;
+		}
+		log(
+			`[pi-reviewer-skip] Failed to read extra instructions ${absPath}: ${error}`,
+		);
+		return undefined;
+	}
+	const trimmed = raw.trim();
+	return trimmed.length > 0 ? trimmed : undefined;
 }

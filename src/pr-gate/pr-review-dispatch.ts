@@ -1,4 +1,6 @@
 import { execFileSync } from "node:child_process";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
@@ -22,11 +24,108 @@ import {
 	type ReviewerExecution,
 	type ReviewerResult,
 } from "./reviewer.js";
-import { loadSkipFilter, type SkipFilter } from "./reviewer-skip.js";
+import {
+	DEFAULT_EXTRA_INSTRUCTIONS_PATH,
+	loadExtraInstructions,
+	loadSkipFilter,
+	type SkipFilter,
+} from "./reviewer-skip.js";
 import {
 	formatTestExecutionPlan,
 	recommendTestCommands,
 } from "./test-execution.js";
+
+/**
+ * Resolve per-repo extra instructions for the host reviewer bridge, applying
+ * two safety guards:
+ *
+ * 1. Host-bridge guard: extra instructions are rendered only by the host
+ *    bridge (`renderTaskTemplate`). The orchestrator
+ *    (`inspectRepositoryDirectly`) bridge renders its own instruction and
+ *    cannot forward them, so they are skipped there with a one-time note.
+ * 2. Self-injection guard: if the ROOT `.pi/review-instructions.md` is itself
+ *    in the PR's UNFILTERED changed-files set (matched case-insensitively, so
+ *    a case-variant file can't bypass it on a case-insensitive host FS), the
+ *    instructions are NOT loaded — a PR must not inject instructions into its
+ *    own review. Only the root path matches: nested package files (e.g.
+ *    `packages/widget/.pi/review-instructions.md`) are distinct and never
+ *    loaded here, so they must not suppress the trusted root config.
+ *    Inspecting the unfiltered set closes a bypass where a PR also edits
+ *    `.pi/reviewer.skip` to hide the file from the filtered list. They take
+ *    effect from the next review after the file merges to the protected base.
+ * 3. Symlink-target guard: a pre-existing symlink at the instructions path can
+ *    resolve to a tracked file the PR edits. Since loadExtraInstructions
+ *    follows symlinks, the resolved (realpath) instructions file is compared
+ *    against the resolved changed files and refused on collision — otherwise
+ *    the PR could author the very content injected into its own review.
+ *
+ * `log` and `state` are injected so diagnostics are testable and the one-time
+ * orchestrator note is resettable per dispatch instance (instead of a
+ * module-level flag shared across every dispatch in the process).
+ *
+ * Returns the trimmed instructions, or `undefined` when absent or guarded.
+ */
+function resolveExtraInstructions(
+	cwd: string,
+	unfilteredChangedFiles: string[],
+	inspectRepositoryDirectly: boolean | undefined,
+	log: (msg: string) => void,
+	state: { orchestratorSkipLogged: boolean },
+): string | undefined {
+	if (inspectRepositoryDirectly) {
+		const present = loadExtraInstructions(cwd, undefined, { log });
+		if (present && !state.orchestratorSkipLogged) {
+			state.orchestratorSkipLogged = true;
+			log(
+				"[pr-review-dispatch] .pi/review-instructions.md is host-bridge-only; ignored by the orchestrator (inspectRepositoryDirectly) reviewer bridge.",
+			);
+		}
+		return undefined;
+	}
+	// Case-insensitive: on the default macOS host bridge the filesystem is
+	// case-insensitive, so a case-variant file (e.g. `.pi/Review-Instructions.md`)
+	// is read by the lowercase default path and would bypass an exact match.
+	if (
+		unfilteredChangedFiles.some(
+			(f) => f.toLowerCase() === DEFAULT_EXTRA_INSTRUCTIONS_PATH.toLowerCase(),
+		)
+	) {
+		log(
+			"[pr-review-dispatch] .pi/review-instructions.md is in this PR's changed files; refusing to load it to prevent self-injection into the review.",
+		);
+		return undefined;
+	}
+	// Symlink-target guard: a pre-existing symlink at the instructions path can
+	// resolve to a tracked file the PR edits. loadExtraInstructions follows the
+	// symlink, so compare the resolved (realpath) instructions file against the
+	// resolved changed files and refuse on collision. realpath also collapses
+	// multi-hop symlink chains, so an indirect chain to a changed file is
+	// blocked too. Closes a bypass where the PR edits the symlink TARGET (not
+	// the literal instructions path).
+	const instructionsReal = realpathOrUndefined(
+		path.join(cwd, DEFAULT_EXTRA_INSTRUCTIONS_PATH),
+	);
+	if (instructionsReal) {
+		for (const file of unfilteredChangedFiles) {
+			if (realpathOrUndefined(path.join(cwd, file)) === instructionsReal) {
+				log(
+					"[pr-review-dispatch] .pi/review-instructions.md resolves (via symlink) to a file in this PR's changed set; refusing to load it to prevent self-injection into the review.",
+				);
+				return undefined;
+			}
+		}
+	}
+	return loadExtraInstructions(cwd, undefined, { log });
+}
+
+/** Resolve a real (symlink-followed) absolute path, or `undefined` if it can't. */
+function realpathOrUndefined(filePath: string): string | undefined {
+	try {
+		return fs.realpathSync(filePath);
+	} catch {
+		return undefined;
+	}
+}
 
 export interface PrReviewDispatchDeps {
 	getHeadSha: (cwd: string) => string;
@@ -64,6 +163,12 @@ export interface PrReviewDispatchDeps {
 			};
 		}>,
 	) => string;
+	/**
+	 * Optional logger for diagnostic notes (e.g. the self-injection refusal
+	 * and the host-bridge-only orchestrator skip note). Defaults to
+	 * `console.error`.
+	 */
+	log?: (msg: string) => void;
 	reviewerExecution: ReviewerExecution;
 }
 
@@ -299,9 +404,16 @@ export function createPrReviewDispatch(
 		countDiffLines: countDiffLinesFast,
 		gatherDiff,
 		extractTask: extractOriginalTask,
+		log: console.error,
 		reviewerExecution: missingReviewerExecution(),
 		...partialDeps,
 	};
+
+	// Per-dispatch logger and once-flag: each dispatch instance logs the
+	// orchestrator skip note at most once, independent of other instances
+	// (resettable per dispatch instead of shared across the whole module).
+	const log = deps.log ?? console.error;
+	const extraInstructionsState = { orchestratorSkipLogged: false };
 
 	async function loadSkipFilterForConfig(
 		cwd: string,
@@ -376,11 +488,22 @@ export function createPrReviewDispatch(
 			);
 		}
 
+		const extraInstructions = resolveExtraInstructions(
+			cwd,
+			unfilteredChangedFiles,
+			deps.reviewerExecution.inspectRepositoryDirectly,
+			log,
+			extraInstructionsState,
+		);
+		const reviewConfig: ReviewConfig = extraInstructions
+			? { ...PR_REVIEW_CONFIG, extraInstructions }
+			: PR_REVIEW_CONFIG;
+
 		return deps.reviewerExecution.runAttempt({
 			task,
 			files: changedFiles,
 			cwd,
-			config: PR_REVIEW_CONFIG,
+			config: reviewConfig,
 			filterOptions,
 			diff,
 			baseRef,
