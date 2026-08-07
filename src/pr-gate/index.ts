@@ -50,11 +50,19 @@ export interface PrGateConfig {
 	enabled: boolean;
 	/** Mutating actions to gate. Default: push + pr_create. */
 	gatedActions: ReadonlySet<string>;
+	/**
+	 * Opt-in below-threshold auto-PASS (C6). When true, a review that returns
+	 * only NIT-level findings (no CRITICAL/WARNING) and no test-execution FAIL
+	 * auto-stamps a PASS token instead of blocking. Default OFF — the gate
+	 * fails closed on ISSUES. See `decidePushGate` / `autoPassOnNitOnly`.
+	 */
+	autoPassOnNitOnly?: boolean;
 }
 
 export const DEFAULT_PR_GATE_CONFIG: PrGateConfig = {
 	enabled: true,
 	gatedActions: DEFAULT_GATED_ACTIONS,
+	autoPassOnNitOnly: false,
 };
 
 /**

@@ -181,6 +181,12 @@ export async function applyDiffFilters(
  *
  * When `filterOptions` are provided, files matching .gitignore or reviewer.skip
  * patterns are excluded from the diff before it is generated.
+ *
+ * When `structured` is true, the raw unified diff is rewritten into
+ * deterministic `__new hunk__` / `__old hunk__` blocks via
+ * {@link toStructuredHunks} (mirrors PR-Agent's labelled-hunk format) so the
+ * reviewer can unambiguously tell added lines from removed ones. Defaults to
+ * `false` to preserve the raw-diff behaviour existing callers rely on.
  */
 export async function gatherDiff(
 	files: string[],
@@ -188,6 +194,7 @@ export async function gatherDiff(
 	maxLines: number,
 	baseRef?: string,
 	filterOptions?: DiffFilterOptions,
+	structured?: boolean,
 ): Promise<string> {
 	// Apply filters first
 	const filteredFiles = await applyDiffFilters(files, cwd, filterOptions);
@@ -226,6 +233,11 @@ export async function gatherDiff(
 		if (content.exitCode === 0 || content.exitCode === 1) {
 			diff += `\n${content.stdout}`;
 		}
+	}
+
+	// Optionally rewrite into deterministic __new hunk__ / __old hunk__ blocks
+	if (structured) {
+		diff = toStructuredHunks(diff);
 	}
 
 	// Cap at maxLines
@@ -324,6 +336,139 @@ export function capDiff(diff: string, maxLines: number): string {
 		`--- DIFF TRUNCATED: ${dropped} lines omitted (cap: ${maxLines}) ---`,
 	);
 	return kept.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Structured hunks (PR-Agent labelled-hunk transform)
+// ---------------------------------------------------------------------------
+
+/**
+ * Tokens delimiting the deterministic labelled-hunk format emitted by
+ * {@link toStructuredHunks}. Mirrors the format PR-Agent uses to give the
+ * reviewer two clean, separately labelled views of every hunk.
+ */
+export const STRUCTURED_HUNK_NEW = "__new hunk__";
+export const STRUCTURED_HUNK_OLD = "__old hunk__";
+
+/**
+ * Rewrite a unified git diff into deterministic `__new hunk__` /
+ * `__old hunk__` blocks.
+ *
+ * For each hunk we emit two labelled sections under the file header:
+ *
+ * ```text
+ * __new hunk__
+ * <added lines and unchanged context, leading sign dropped>
+ * __old hunk__
+ * <removed lines and unchanged context, leading sign dropped>
+ * ```
+ *
+ * Rationale (PR-Agent review-quality): feeding the model a raw unified diff
+ * forces it to mentally separate `+`/`-` lines. Labelling the two sides
+ * deterministically removes that ambiguity, improves line-number grounding,
+ * and reduces hallucinated or mis-attributed findings.
+ *
+ * Parsing rules (deterministic — no LLM in the loop):
+ *  - Lines beginning `diff --git`, `index `, `---`, `+++`, `new file mode`,
+ *    `deleted file mode`, `old mode`, `new mode`, `similarity index`,
+ *    `rename from`, `rename to`, `copy from`, `copy to`, and `Binary files`
+ *    are treated as file headers/metadata and copied verbatim.
+ *  - Lines beginning `@@ ... @@` start a new hunk.
+ *  - Body lines whose first char is `+` (and is not part of `+++`) belong to
+ *    the **new** side; `-` (and not `---`) belong to the **old** side; a leading
+ *    space (context) belongs to both; anything else (e.g. `\ No newline at
+ *    end of file`) is attached to whichever side(s) are currently open.
+ *
+ * The transform is pure and total: empty/`undefined`/malformed input yields an
+ * empty string, and unknown line shapes are passed through to the open
+ * section(s) rather than dropped.
+ *
+ * @param diff Raw unified diff text (output of `git diff`).
+ * @returns    Deterministically labelled hunk text, or `""` for empty input.
+ */
+export function toStructuredHunks(diff: string): string {
+	if (!diff) return "";
+
+	const lines = diff.split("\n");
+	const out: string[] = [];
+
+	// The line currently being built for each side. `null` means "no hunk open
+	// yet", so we don't emit leading `__new hunk__` blocks for file metadata.
+	let newLines: string[] | null = null;
+	let oldLines: string[] | null = null;
+
+	const flush = (): void => {
+		if (newLines !== null) {
+			out.push(STRUCTURED_HUNK_NEW, ...newLines);
+			newLines = null;
+		}
+		if (oldLines !== null) {
+			out.push(STRUCTURED_HUNK_OLD, ...oldLines);
+			oldLines = null;
+		}
+	};
+
+	for (const raw of lines) {
+		// File-level metadata / headers — copy verbatim, flush any open hunk.
+		// `---`/`+++` are only file headers when no hunk is open: inside a hunk a
+		// body line whose original content starts with `--`/`++` (e.g. a removed
+		// `-- comment` or an added `++i`) would otherwise be mistaken for a
+		// header. Real file headers always precede the first `@@` of a file.
+		const noHunkOpen = newLines === null && oldLines === null;
+		if (
+			raw.startsWith("diff --git") ||
+			raw.startsWith("index ") ||
+			raw.startsWith("old mode ") ||
+			raw.startsWith("new mode ") ||
+			raw.startsWith("new file mode") ||
+			raw.startsWith("deleted file mode") ||
+			raw.startsWith("similarity index") ||
+			raw.startsWith("rename from") ||
+			raw.startsWith("rename to") ||
+			raw.startsWith("copy from") ||
+			raw.startsWith("copy to") ||
+			raw.startsWith("Binary files") ||
+			(noHunkOpen && raw.startsWith("---")) ||
+			(noHunkOpen && raw.startsWith("+++"))
+		) {
+			flush();
+			out.push(raw);
+			continue;
+		}
+
+		// Hunk header — start a fresh hunk.
+		if (raw.startsWith("@@")) {
+			flush();
+			out.push(raw);
+			newLines = [];
+			oldLines = [];
+			continue;
+		}
+
+		// No hunk open yet (e.g. stray lines before the first @@). Pass through.
+		if (newLines === null || oldLines === null) {
+			out.push(raw);
+			continue;
+		}
+
+		const sign = raw.length > 0 ? raw[0] : " ";
+		if (sign === "+") {
+			newLines.push(raw.slice(1));
+		} else if (sign === "-") {
+			oldLines.push(raw.slice(1));
+		} else if (sign === " ") {
+			const body = raw.slice(1);
+			newLines.push(body);
+			oldLines.push(body);
+		} else {
+			// e.g. "\ No newline at end of file" — attach to both open sides.
+			newLines.push(raw);
+			oldLines.push(raw);
+		}
+	}
+
+	flush();
+	return out.join("\n");
 }
 
 // ---------------------------------------------------------------------------

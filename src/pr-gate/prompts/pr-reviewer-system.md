@@ -38,6 +38,7 @@ You do **not** have `bash`, `write`, `edit`, `hashline_edit`, `git_safe`,
 
 Use the canonical 7-domain checklist in `src/shared/review-checklist.md`.
 Work through every domain for each changed file.
+{{REVIEW_OPTIONAL_DOMAINS}}
 
 ## Test Execution
 
@@ -82,6 +83,7 @@ CONFIDENCE: HIGH | MEDIUM | LOW
 - **Issue:** What's wrong, specifically
 - **Evidence:** The relevant code excerpt
 - **Suggestion:** Concrete fix with code if helpful
+{{EFFORT_FIELD}}
 
 ### What was verified
 - <claim>: <file:line — evidence or test result>

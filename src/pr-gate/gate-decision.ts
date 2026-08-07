@@ -18,7 +18,10 @@
  *  - ISSUES / CANNOT_REVIEW never stamp and always block the gated action.
  */
 
-import { hasCriticalSecurityFinding } from "../shared/review-severity.js";
+import {
+  hasCriticalSecurityFinding,
+  hasFindingsAboveThreshold,
+} from "../shared/review-severity.js";
 import type { ReviewReport } from "../shared/review-types.js";
 import type { PassToken, PassTokenStore } from "./pass-token-store.js";
 
@@ -39,6 +42,14 @@ export interface PushGateInput {
   tokens: PassTokenStore;
   /** An optional review report that just arrived for this HEAD. */
   reviewReport?: ReviewReport;
+  /**
+   * Opt-in below-threshold auto-PASS (C6). When true, a just-arrived report
+   * carrying only NIT-level findings (no CRITICAL/WARNING) and no
+   * test-execution FAIL auto-stamps a PASS token and allows. Default false
+   * (undefined) — the gate fails closed on ISSUES. Does NOT relax CRITICAL
+   * security escalation or the test-execution FAIL gate.
+   */
+  autoPassOnNitOnly?: boolean;
 }
 
 export interface GateDecision {
@@ -101,6 +112,28 @@ export function decidePushGate(input: PushGateInput): GateDecision {
       tokens.stampPass(token);
       return { verdict: "allow" };
     }
+    // C6: opt-in below-threshold auto-PASS. When the flag is ON and the report
+    // carries only NIT-level findings with an explicit test-execution PASS,
+    // stamp a PASS token and allow. CRITICAL security already escalated
+    // above; any CRITICAL/WARNING finding or a non-PASS test result keeps
+    // blocking (see isNitOnlyAutoPassable) so the fail-closed invariant is
+    // preserved. Auto-PASS is a relaxation, so it demands a positive signal.
+    if (
+      input.autoPassOnNitOnly === true &&
+      isNitOnlyAutoPassable(reviewReport)
+    ) {
+      const autoToken: PassToken = {
+        sha: headSha,
+        passedAt: Date.now(),
+        reportStatus: "PASS",
+        summary: reviewReport.summary,
+      };
+      tokens.stampPass(autoToken);
+      return {
+        verdict: "allow",
+        reason: `PR review auto-PASS for HEAD ${headSha}: only NIT-level findings (autoPassOnNitOnly enabled).`,
+      };
+    }
     // ISSUES or CANNOT_REVIEW — block and steer to fix loop.
     return {
       verdict: "block",
@@ -124,4 +157,22 @@ export function decidePushGate(input: PushGateInput): GateDecision {
     reason: `No review PASS for HEAD ${headSha || "(unknown)"}. Run /pr-review before push.`,
     steer: `Run /pr-review for HEAD ${headSha} to obtain a review PASS, then retry the push.`,
   };
+}
+
+/**
+ * Whether a report qualifies for the opt-in below-threshold auto-PASS. The
+ * report must be ISSUES (a PASS report already stamps unconditionally earlier,
+ * and a CANNOT_REVIEW report must always block), with no CRITICAL or WARNING
+ * findings (NIT-only, or none) AND an explicit test-execution PASS. CRITICAL
+ * security escalation is handled earlier in decidePushGate; a non-security
+ * CRITICAL or any WARNING fails this check and keeps blocking. Because
+ * auto-PASS relaxes a fail-closed invariant, it demands a positive test
+ * signal: NOT_RUN / absent / FAIL all fall through to the normal ISSUES block
+ * (no auto-stamp).
+ */
+function isNitOnlyAutoPassable(report: ReviewReport): boolean {
+  if (report.status !== "ISSUES") return false;
+  if (hasFindingsAboveThreshold(report, "warning")) return false;
+  if (report.testExecution?.status !== "PASS") return false;
+  return true;
 }

@@ -32,6 +32,13 @@ export interface PassTokenStore {
   /** The stamped token for this sha, or null. */
   get(sha: string): PassToken | null;
   /**
+   * The sha covered by the most recently stamped PASS token, or null when
+   * the store holds no token. Incremental review uses this to scope the next
+   * review to `lastPassSha..HEAD`. When the most recent token is invalidated,
+   * this falls back to the newest remaining token by `passedAt`.
+   */
+  lastPassSha(): string | null;
+  /**
    * Stamp a PASS token for a sha. NO-OP if reportStatus !== "PASS" or sha is
    * empty/whitespace. Re-stamping the same sha replaces the prior entry.
    */
@@ -50,6 +57,17 @@ function isValidSha(sha: string): boolean {
 
 export function createPassTokenStore(): PassTokenStore {
   const tokens = new Map<string, PassToken>();
+  let lastPass: PassToken | null = null;
+
+  /** Recompute the most recent token after the last-PASS entry is removed. */
+  const recomputeLastPass = (): void => {
+    lastPass = null;
+    for (const token of tokens.values()) {
+      if (!lastPass || token.passedAt >= lastPass.passedAt) {
+        lastPass = token;
+      }
+    }
+  };
 
   return {
     hasPass(sha: string): boolean {
@@ -60,20 +78,34 @@ export function createPassTokenStore(): PassTokenStore {
       return tokens.get(sha) ?? null;
     },
 
+    lastPassSha(): string | null {
+      return lastPass?.sha ?? null;
+    },
+
     stampPass(token: PassToken): void {
       // Defensive: only a genuine PASS stamps. This guards against callers
       // that might pass the raw review report status through unchanged.
       if (token.reportStatus !== "PASS") return;
       if (!isValidSha(token.sha)) return;
-      tokens.set(token.sha, { ...token });
+      const stamped = { ...token };
+      tokens.set(token.sha, stamped);
+      if (
+        !lastPass ||
+        lastPass.sha === stamped.sha ||
+        stamped.passedAt >= lastPass.passedAt
+      ) {
+        lastPass = stamped;
+      }
     },
 
     invalidate(sha: string): void {
-      tokens.delete(sha);
+      if (!tokens.delete(sha)) return;
+      if (lastPass?.sha === sha) recomputeLastPass();
     },
 
     clear(): void {
       tokens.clear();
+      lastPass = null;
     },
 
     get size(): number {

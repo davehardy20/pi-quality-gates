@@ -1,5 +1,35 @@
 import type { AutoFixThreshold } from "./review-types.js";
 
+// ── Review Options (C4 toggles) ───────────────────────────────────────────
+
+/**
+ * Optional per-review feature toggles that enable extra reviewer domains,
+ * mirroring PR-Agent's `require_*` flags. Every toggle defaults OFF so the
+ * baseline reviewer prompt is unchanged. Rendering is deterministic: each
+ * toggle adds (or omits) a fixed prompt section via `renderSystemPrompt`.
+ */
+export interface ReviewOptions {
+	/**
+	 * Scan changed code for leftover `TODO`/`FIXME`/`HACK`/`XXX` markers and
+	 * placeholder/stub implementations (PR-Agent `require_todo_scan`).
+	 * Default off.
+	 */
+	todoScan?: boolean;
+	/**
+	 * Assess whether the change is too large or mixed in concern to review as
+	 * one unit and suggest split points (PR-Agent `require_can_be_split_review`).
+	 * Default off.
+	 */
+	canSplit?: boolean;
+	/**
+	 * Ask the reviewer to estimate per-finding fix effort in whole minutes
+	 * (PR-Agent `require_estimate_effort_to_review`) and emit the `Effort:`
+	 * output field. Default off. The optional `Finding.effort` schema field
+	 * (C3) is parsed-and-tolerated regardless of this toggle.
+	 */
+	effortEstimate?: boolean;
+}
+
 // ── Review Config ────────────────────────────────────────────────────────
 
 /** Reviewer configuration. Used by the pr-gate PR_REVIEW_CONFIG and the
@@ -54,4 +84,30 @@ export interface ReviewConfig {
 	 * from untrusted diffs without a prior trust check.
 	 */
 	extraInstructions?: string;
+	/**
+	 * When true, `gatherDiff` rewrites the unified diff into deterministic
+	 * `__new hunk__` / `__old hunk__` blocks (see `toStructuredHunks`) before
+	 * it is fed to the reviewer prompt. Mirrors PR-Agent's labelled-hunk
+	 * format so the model can unambiguously tell added lines from removed
+	 * ones. Defaults to off (`false`) to preserve raw-diff behaviour; flip to
+	 * `true` to adopt the feature.
+	 */
+	useStructuredHunks?: boolean;
+	/**
+	 * When true, the PR gate scopes each review to the changes since the most
+	 * recent PASS token (`lastPassSha..HEAD`, see `PassTokenStore.lastPassSha`)
+	 * instead of the full `baseRef..HEAD` range — mirrors PR-Agent's
+	 * incremental review, where commits covered by an earlier PASS are not
+	 * re-reviewed. Applies only when no explicit base ref was given and the
+	 * last-PASS sha still resolves in the repo; otherwise the review falls
+	 * back to the default full-range base ref. Defaults to off (`false`) so
+	 * reviews cover the whole PR range; flip to `true` to adopt the feature.
+	 */
+	incrementalReview?: boolean;
+	/**
+	 * Optional per-review feature toggles (TODO scan, can-split, effort
+	 * estimate) that conditionally extend the reviewer system prompt. See
+	 * {@link ReviewOptions}. All default off (baseline prompt unchanged).
+	 */
+	reviewOptions?: ReviewOptions;
 }

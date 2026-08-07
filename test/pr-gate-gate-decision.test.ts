@@ -317,3 +317,220 @@ describe("decidePushGate", () => {
     });
   });
 });
+
+describe("C6 opt-in below-threshold auto-PASS (autoPassOnNitOnly)", () => {
+  function nitFinding() {
+    return {
+      severity: "NIT" as const,
+      domain: "quality" as const,
+      title: "naming",
+      file: "src/y.ts",
+      rule: "naming",
+      issue: "x",
+      evidence: "x",
+      suggestion: "x",
+    };
+  }
+
+  it("BLOCKs (default) on a NIT-only ISSUES report when the flag is OFF", () => {
+    const tokens = createPassTokenStore();
+    const decision = decidePushGate({
+      action: "push",
+      headSha: "head123",
+      tokens,
+      baseSha: "base000",
+      reviewReport: makeReport({ status: "ISSUES", findings: [nitFinding()] }),
+    });
+    expect(decision.verdict).toBe("block");
+    expect(tokens.hasPass("head123")).toBe(false);
+  });
+
+  it("ALLOWs and stamps on a NIT-only ISSUES report with passing tests when the flag is ON", () => {
+    const tokens = createPassTokenStore();
+    const decision = decidePushGate({
+      action: "push",
+      headSha: "head123",
+      tokens,
+      baseSha: "base000",
+      autoPassOnNitOnly: true,
+      reviewReport: makeReport({
+        status: "ISSUES",
+        findings: [nitFinding()],
+        testExecution: { status: "PASS", summary: "tests pass" },
+      }),
+    });
+    expect(decision.verdict).toBe("allow");
+    expect(tokens.hasPass("head123")).toBe(true);
+  });
+
+  it("ALLOWs and stamps on an ISSUES report with NO findings and passing tests when the flag is ON", () => {
+    const tokens = createPassTokenStore();
+    const decision = decidePushGate({
+      action: "push",
+      headSha: "head123",
+      tokens,
+      baseSha: "base000",
+      autoPassOnNitOnly: true,
+      reviewReport: makeReport({
+        status: "ISSUES",
+        findings: [],
+        testExecution: { status: "PASS", summary: "tests pass" },
+      }),
+    });
+    expect(decision.verdict).toBe("allow");
+    expect(tokens.hasPass("head123")).toBe(true);
+  });
+
+  it("BLOCKs even with the flag ON when a WARNING is present", () => {
+    const tokens = createPassTokenStore();
+    const decision = decidePushGate({
+      action: "push",
+      headSha: "head123",
+      tokens,
+      baseSha: "base000",
+      autoPassOnNitOnly: true,
+      reviewReport: makeReport({
+        status: "ISSUES",
+        findings: [
+          nitFinding(),
+          {
+            severity: "WARNING",
+            domain: "correctness",
+            title: "null",
+            file: "src/x.ts",
+            rule: "null",
+            issue: "x",
+            evidence: "x",
+            suggestion: "x",
+          },
+        ],
+      }),
+    });
+    expect(decision.verdict).toBe("block");
+    expect(tokens.hasPass("head123")).toBe(false);
+  });
+
+  it("BLOCKs (does NOT auto-pass) on a non-security CRITICAL even with the flag ON", () => {
+    const tokens = createPassTokenStore();
+    const decision = decidePushGate({
+      action: "push",
+      headSha: "head123",
+      tokens,
+      baseSha: "base000",
+      autoPassOnNitOnly: true,
+      reviewReport: makeReport({
+        status: "ISSUES",
+        findings: [
+          {
+            severity: "CRITICAL",
+            domain: "correctness",
+            title: "off-by-one",
+            file: "src/loop.ts",
+            rule: "bounds",
+            issue: "x",
+            evidence: "x",
+            suggestion: "x",
+          },
+        ],
+      }),
+    });
+    expect(decision.verdict).toBe("block");
+    expect(tokens.hasPass("head123")).toBe(false);
+  });
+
+  it("does NOT auto-pass when test execution FAILED (FAIL gate preserved)", () => {
+    const tokens = createPassTokenStore();
+    const decision = decidePushGate({
+      action: "push",
+      headSha: "head123",
+      tokens,
+      baseSha: "base000",
+      autoPassOnNitOnly: true,
+      reviewReport: makeReport({
+        status: "ISSUES",
+        findings: [nitFinding()],
+        testExecution: { status: "FAIL", summary: "tests failed" },
+      }),
+    });
+    expect(decision.verdict).toBe("block");
+    expect(tokens.hasPass("head123")).toBe(false);
+  });
+
+  it("does NOT auto-pass when test execution is NOT_RUN (requires positive PASS)", () => {
+    const tokens = createPassTokenStore();
+    const decision = decidePushGate({
+      action: "push",
+      headSha: "head123",
+      tokens,
+      baseSha: "base000",
+      autoPassOnNitOnly: true,
+      reviewReport: makeReport({
+        status: "ISSUES",
+        findings: [nitFinding()],
+        testExecution: { status: "NOT_RUN", summary: "no tests run" },
+      }),
+    });
+    expect(decision.verdict).toBe("block");
+    expect(tokens.hasPass("head123")).toBe(false);
+  });
+
+  it("does NOT auto-pass when test execution is absent (requires positive PASS)", () => {
+    const tokens = createPassTokenStore();
+    const decision = decidePushGate({
+      action: "push",
+      headSha: "head123",
+      tokens,
+      baseSha: "base000",
+      autoPassOnNitOnly: true,
+      reviewReport: makeReport({ status: "ISSUES", findings: [nitFinding()] }),
+    });
+    expect(decision.verdict).toBe("block");
+    expect(tokens.hasPass("head123")).toBe(false);
+  });
+
+  it("does NOT auto-pass a CANNOT_REVIEW report (incomplete review must always block)", () => {
+    const tokens = createPassTokenStore();
+    const decision = decidePushGate({
+      action: "push",
+      headSha: "head123",
+      tokens,
+      baseSha: "base000",
+      autoPassOnNitOnly: true,
+      reviewReport: makeReport({
+        status: "CANNOT_REVIEW",
+        findings: [],
+        testExecution: { status: "PASS", summary: "tests pass" },
+      }),
+    });
+    expect(decision.verdict).toBe("block");
+    expect(tokens.hasPass("head123")).toBe(false);
+  });
+
+  it("still ESCALATES on a CRITICAL security finding even with the flag ON", () => {
+    const tokens = createPassTokenStore();
+    const decision = decidePushGate({
+      action: "push",
+      headSha: "head123",
+      tokens,
+      baseSha: "base000",
+      autoPassOnNitOnly: true,
+      reviewReport: makeReport({
+        status: "ISSUES",
+        findings: [
+          {
+            severity: "CRITICAL",
+            domain: "security",
+            title: "RCE",
+            file: "src/x.ts",
+            rule: "no-rce",
+            issue: "eval of user input",
+            evidence: "eval(req.body)",
+            suggestion: "don't",
+          },
+        ],
+      }),
+    });
+    expect(decision.verdict).toBe("escalate");
+    expect(tokens.hasPass("head123")).toBe(false);
+  });
+});
