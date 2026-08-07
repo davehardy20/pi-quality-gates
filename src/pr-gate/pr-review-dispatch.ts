@@ -48,15 +48,17 @@ let orchestratorBridgeExtraInstructionsSkipLogged = false;
  *    (`inspectRepositoryDirectly`) bridge renders its own instruction and
  *    cannot forward them, so they are skipped there with a one-time note.
  * 2. Self-injection guard: if `.pi/review-instructions.md` is itself in the
- *    PR's changed-files set, the instructions are NOT loaded — a PR must not
- *    inject instructions into its own review. They take effect from the next
+ *    PR's UNFILTERED changed-files set, the instructions are NOT loaded — a
+ *    PR must not inject instructions into its own review. Inspecting the
+ *    unfiltered set closes a bypass where a PR also edits `.pi/reviewer.skip`
+ *    to hide the file from the filtered list. They take effect from the next
  *    review after the file merges to the protected base.
  *
  * Returns the trimmed instructions, or `undefined` when absent or guarded.
  */
 function resolveExtraInstructions(
 	cwd: string,
-	changedFiles: string[],
+	unfilteredChangedFiles: string[],
 	inspectRepositoryDirectly: boolean | undefined,
 ): string | undefined {
 	if (inspectRepositoryDirectly) {
@@ -70,7 +72,7 @@ function resolveExtraInstructions(
 		return undefined;
 	}
 	if (
-		changedFiles.some(
+		unfilteredChangedFiles.some(
 			(f) =>
 				f === DEFAULT_EXTRA_INSTRUCTIONS_PATH ||
 				f.endsWith(`/${DEFAULT_EXTRA_INSTRUCTIONS_PATH}`),
@@ -434,7 +436,7 @@ export function createPrReviewDispatch(
 
 		const extraInstructions = resolveExtraInstructions(
 			cwd,
-			changedFiles,
+			unfilteredChangedFiles,
 			deps.reviewerExecution.inspectRepositoryDirectly,
 		);
 		const reviewConfig: ReviewConfig = extraInstructions
