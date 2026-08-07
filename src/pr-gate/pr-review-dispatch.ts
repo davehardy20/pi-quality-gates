@@ -47,12 +47,13 @@ let orchestratorBridgeExtraInstructionsSkipLogged = false;
  *    bridge (`renderTaskTemplate`). The orchestrator
  *    (`inspectRepositoryDirectly`) bridge renders its own instruction and
  *    cannot forward them, so they are skipped there with a one-time note.
- * 2. Self-injection guard: if the ROOT `.pi/review-instructions.md` (the
- *    exact repo-relative path) is itself in the PR's UNFILTERED changed-files
- *    set, the instructions are NOT loaded — a PR must not inject instructions
- *    into its own review. Only the exact root path matches: nested package
- *    files (e.g. `packages/widget/.pi/review-instructions.md`) are distinct
- *    and never loaded here, so they must not suppress the trusted root config.
+ * 2. Self-injection guard: if the ROOT `.pi/review-instructions.md` is itself
+ *    in the PR's UNFILTERED changed-files set (matched case-insensitively, so
+ *    a case-variant file can't bypass it on a case-insensitive host FS), the
+ *    instructions are NOT loaded — a PR must not inject instructions into its
+ *    own review. Only the root path matches: nested package files (e.g.
+ *    `packages/widget/.pi/review-instructions.md`) are distinct and never
+ *    loaded here, so they must not suppress the trusted root config.
  *    Inspecting the unfiltered set closes a bypass where a PR also edits
  *    `.pi/reviewer.skip` to hide the file from the filtered list. They take
  *    effect from the next review after the file merges to the protected base.
@@ -74,8 +75,13 @@ function resolveExtraInstructions(
 		}
 		return undefined;
 	}
+	// Case-insensitive: on the default macOS host bridge the filesystem is
+	// case-insensitive, so a case-variant file (e.g. `.pi/Review-Instructions.md`)
+	// is read by the lowercase default path and would bypass an exact match.
 	if (
-		unfilteredChangedFiles.some((f) => f === DEFAULT_EXTRA_INSTRUCTIONS_PATH)
+		unfilteredChangedFiles.some(
+			(f) => f.toLowerCase() === DEFAULT_EXTRA_INSTRUCTIONS_PATH.toLowerCase(),
+		)
 	) {
 		console.error(
 			"[pr-review-dispatch] .pi/review-instructions.md is in this PR's changed files; refusing to load it to prevent self-injection into the review.",
