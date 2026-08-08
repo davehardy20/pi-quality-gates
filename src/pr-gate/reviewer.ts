@@ -1,9 +1,9 @@
-// ── Post-Turn Reviewer — Context gathering, child Pi spawn, report parsing ──
+// ── Post-Turn Reviewer — Context gathering and child Pi spawn ──
 //
-// This module handles the "review" pipeline:
+// This module handles the reviewer execution pipeline:
 //   1. Gather context (original task, changed files, git diff)
 //   2. Spawn a headless child Pi process with the reviewer system prompt
-//   3. Parse the structured report from the child's output
+//   3. Delegate output parsing to ../shared/review-report.ts (parseReviewReport)
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
