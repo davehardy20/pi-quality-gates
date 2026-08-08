@@ -66,7 +66,9 @@ export interface ReviewConfig {
 	allowTestDiscovery: boolean;
 	/** Per-ecosystem test discovery commands */
 	testDiscoveryCommands: Record<string, string[]>;
-	/** Max diff lines before truncation */
+	/** Max diff lines before truncation. A truncated text-diff downgrades a PASS to
+	 *  PARTIAL (no stamp). The orchestrator/direct path sees the full base..HEAD
+	 *  diff, so it never truncates. */
 	maxDiffLines: number;
 	/** Max changed lines before skipping review entirely (cost guard). -1 = no limit. */
 	maxChangedLines: number;
