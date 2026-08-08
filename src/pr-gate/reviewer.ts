@@ -23,6 +23,7 @@ import type {
   Severity,
   TestExecutionStatus,
 } from "../shared/review-types.js";
+import { diffCoveragePercent } from "../shared/review-types.js";
 
 // Re-export shared primitives for backwards compatibility
 export type { ReviewConfig } from "../shared/review-config.js";
@@ -1031,6 +1032,21 @@ export function formatReportForDisplay(report: ReviewReport): string {
     lines.push(`- **Summary:** ${report.testExecution.summary}`);
     if (report.testExecution.sidecarRef) {
       lines.push(`- **Sidecar:** ${report.testExecution.sidecarRef}`);
+    }
+    lines.push("");
+  }
+
+  if (report.diffCoverage) {
+    lines.push("### Diff coverage");
+    lines.push("");
+    const pct = diffCoveragePercent(report.diffCoverage);
+    lines.push(
+      `- **Coverage:** ${pct}% (${report.diffCoverage.truncated ? "truncated — PARTIAL review" : "complete"})`,
+    );
+    if (report.diffCoverage.truncated) {
+      lines.push(
+        `- **Omitted:** ${report.diffCoverage.omittedLines} lines (cap ${report.diffCoverage.maxLines})`,
+      );
     }
     lines.push("");
   }

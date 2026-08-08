@@ -6,6 +6,7 @@ import {
 	createBoundedLineProcessor,
 	createBoundedTextCapture,
 	createReviewerExecution,
+	formatReportForDisplay,
 	parseReviewReport,
 	type ReviewerResult,
 	renderTaskTemplate,
@@ -556,5 +557,48 @@ describe("renderTaskTemplate extraInstructions", () => {
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
+	});
+});
+
+describe("formatReportForDisplay diff coverage", () => {
+	it("surfaces PARTIAL coverage when the diff was truncated", () => {
+		const out = formatReportForDisplay({
+			status: "PASS",
+			confidence: "HIGH",
+			findings: [],
+			verified: [],
+			unverifiable: [],
+			summary: "",
+			diffCoverage: { truncated: true, omittedLines: 500, maxLines: 4000 },
+		});
+		expect(out).toContain("Diff coverage");
+		expect(out).toContain("PARTIAL review");
+		expect(out).toContain("500 lines");
+	});
+
+	it("surfaces 100% complete coverage when the diff was not truncated", () => {
+		const out = formatReportForDisplay({
+			status: "PASS",
+			confidence: "HIGH",
+			findings: [],
+			verified: [],
+			unverifiable: [],
+			summary: "",
+			diffCoverage: { truncated: false, omittedLines: 0, maxLines: 4000 },
+		});
+		expect(out).toContain("100%");
+		expect(out).toContain("complete");
+	});
+
+	it("omits the coverage section when diffCoverage is absent", () => {
+		const out = formatReportForDisplay({
+			status: "PASS",
+			confidence: "HIGH",
+			findings: [],
+			verified: [],
+			unverifiable: [],
+			summary: "",
+		});
+		expect(out).not.toContain("Diff coverage");
 	});
 });

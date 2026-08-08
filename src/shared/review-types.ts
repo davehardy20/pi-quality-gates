@@ -84,6 +84,19 @@ export interface DiffCoverage {
 	maxLines: number;
 }
 
+/**
+ * Percentage of the raw diff that was actually reviewed (0–100, rounded).
+ *
+ * When not truncated this is 100%; when truncated it reflects `maxLines` as a
+ * share of the full raw line count (`maxLines + omittedLines`). Used to surface
+ * PARTIAL coverage in the review report and the PR-gate message.
+ */
+export function diffCoveragePercent(coverage: DiffCoverage): number {
+	const total = coverage.maxLines + coverage.omittedLines;
+	if (total <= 0) return 100;
+	return Math.round((coverage.maxLines / total) * 100);
+}
+
 /** Structured report parsed from the reviewer child's output. */
 export interface ReviewReport {
 	/** Overall status: PASS | ISSUES | CANNOT_REVIEW */

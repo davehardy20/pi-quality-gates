@@ -16,6 +16,7 @@ import {
 } from "../shared/review-scope.js";
 import { hasCriticalSecurityFinding } from "../shared/review-severity.js";
 import type { ReviewReport } from "../shared/review-types.js";
+import { diffCoveragePercent } from "../shared/review-types.js";
 import { decidePushGate } from "./gate-decision.js";
 import type { PassTokenStore } from "./pass-token-store.js";
 import { PR_REVIEW_CONFIG } from "./pr-review-config.js";
@@ -797,6 +798,15 @@ export function createPrReviewDispatch(
 			}
 
 			if (report.status === "PASS") {
+				if (report.diffCoverage?.truncated) {
+					return {
+						report,
+						stamped: false,
+						escalated: false,
+						blocked: true,
+						message: `🟡 **PR review PARTIAL** for HEAD ${headSha}: the diff was truncated (${report.diffCoverage.omittedLines} lines omitted, ${diffCoveragePercent(report.diffCoverage)}% reviewed, cap ${report.diffCoverage.maxLines}). A full PASS requires the complete diff; push is blocked.\n\n${formatReportForDisplay(report)}`,
+					};
+				}
 				const decision = decidePushGate({
 					action: "push",
 					headSha,
@@ -851,12 +861,16 @@ export function createPrReviewDispatch(
 			const fixInstruction = buildFixInstruction(report);
 			pi.sendUserMessage(fixInstruction);
 
+			const truncationNote = report.diffCoverage?.truncated
+				? `\n\n⚠️ **Partial coverage:** the diff was truncated (${report.diffCoverage.omittedLines} lines omitted, ${diffCoveragePercent(report.diffCoverage)}% reviewed). This is a PARTIAL review.`
+				: "";
+
 			return {
 				report,
 				stamped: false,
 				escalated: false,
 				blocked: true,
-				message: `🚨 **PR review found issues** for HEAD ${headSha}.\n\n${formatReportForDisplay(report)}\n\nFix the findings, wait for lint-clean, then re-run /pr-review.`,
+				message: `🚨 **PR review found issues** for HEAD ${headSha}.\n\n${formatReportForDisplay(report)}\n\nFix the findings, wait for lint-clean, then re-run /pr-review.${truncationNote}`,
 			};
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
