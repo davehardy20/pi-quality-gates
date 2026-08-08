@@ -63,4 +63,16 @@ describe("PR reviewer config", () => {
 			expect(prompt).toMatch(/Pi.*documentation.*read/i);
 		}
 	});
+
+	it("enables the PR-Agent review-quality features by default", () => {
+		// C2 structured diff hunks — labelled-hunk (__new__/__old__) diff format.
+		expect(PR_REVIEW_CONFIG.useStructuredHunks).toBe(true);
+		// C5 incremental review — scope to lastPassSha..HEAD on re-reviews.
+		expect(PR_REVIEW_CONFIG.incrementalReview).toBe(true);
+		// C4 can-split — flag large / mixed-concern changes and suggest splits.
+		expect(PR_REVIEW_CONFIG.reviewOptions?.canSplit).toBe(true);
+		// effortEstimate / todoScan remain opt-in (default off).
+		expect(PR_REVIEW_CONFIG.reviewOptions?.effortEstimate).toBeUndefined();
+		expect(PR_REVIEW_CONFIG.reviewOptions?.todoScan).toBeUndefined();
+	});
 });
