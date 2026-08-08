@@ -217,14 +217,16 @@ export function createReviewerExecution(
       );
       const diff =
         input.diff ??
-        (await (deps.gatherDiff ?? gatherDiff)(
-          input.files,
-          input.cwd,
-          input.config.maxDiffLines,
-          undefined, // baseRef — post-turn reviewer diffs working tree vs HEAD
-          input.filterOptions,
-          input.config.useStructuredHunks === true,
-        ));
+        (
+          await (deps.gatherDiff ?? gatherDiff)(
+            input.files,
+            input.cwd,
+            input.config.maxDiffLines,
+            undefined, // baseRef — post-turn reviewer diffs working tree vs HEAD
+            input.filterOptions,
+            input.config.useStructuredHunks === true,
+          )
+        ).text;
       const taskPrompt = (deps.renderTaskTemplate ?? renderTaskTemplate)(
         promptsDir,
         input.task,

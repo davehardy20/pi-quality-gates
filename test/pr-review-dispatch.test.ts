@@ -29,7 +29,11 @@ describe("createPrReviewDispatch", () => {
 			listChangedFiles: async () => ["src/foo.ts"],
 			applyDiffFilters: async (files) => files,
 			countDiffLines: async () => 10,
-			gatherDiff: async () => "diff",
+			gatherDiff: async () => ({
+				text: "diff",
+				truncated: false,
+				omittedLines: 0,
+			}),
 			extractTask: () => "review",
 			reviewerExecution: {
 				runAttempt: async () => ({
@@ -94,7 +98,11 @@ describe("createPrReviewDispatch", () => {
 			listChangedFiles: async () => ["src/foo.ts"],
 			applyDiffFilters: async (files) => files,
 			countDiffLines: async () => 10,
-			gatherDiff: async () => "diff",
+			gatherDiff: async () => ({
+				text: "diff",
+				truncated: false,
+				omittedLines: 0,
+			}),
 			extractTask: () => "review",
 			reviewerExecution: { runAttempt },
 		});
@@ -137,7 +145,11 @@ describe("createPrReviewDispatch", () => {
 			listChangedFiles: async () => ["src/foo.ts"],
 			applyDiffFilters: async (files) => files,
 			countDiffLines: async () => 10,
-			gatherDiff: async () => "diff",
+			gatherDiff: async () => ({
+				text: "diff",
+				truncated: false,
+				omittedLines: 0,
+			}),
 			extractTask: () => "review",
 			reviewerExecution: { runAttempt },
 		});
@@ -179,7 +191,11 @@ describe("createPrReviewDispatch", () => {
 			listChangedFiles: async () => ["src/foo.ts"],
 			applyDiffFilters: async (files) => files,
 			countDiffLines: async () => 10,
-			gatherDiff: async () => "diff",
+			gatherDiff: async () => ({
+				text: "diff",
+				truncated: false,
+				omittedLines: 0,
+			}),
 			extractTask: () => "review",
 			reviewerExecution: { runAttempt },
 		});
@@ -222,7 +238,11 @@ describe("createPrReviewDispatch", () => {
 			listChangedFiles: async () => ["src/foo.ts"],
 			applyDiffFilters: async (files) => files,
 			countDiffLines: async () => 10,
-			gatherDiff: async () => "diff",
+			gatherDiff: async () => ({
+				text: "diff",
+				truncated: false,
+				omittedLines: 0,
+			}),
 			extractTask: () => "review",
 			reviewerExecution: { runAttempt },
 		});
@@ -314,7 +334,11 @@ describe("createPrReviewDispatch", () => {
 				listChangedFiles: async () => ["src/foo.ts"],
 				applyDiffFilters: async (files) => files,
 				countDiffLines: async () => 10,
-				gatherDiff: async () => "diff",
+				gatherDiff: async () => ({
+					text: "diff",
+					truncated: false,
+					omittedLines: 0,
+				}),
 				extractTask: () => "review",
 				reviewerExecution: { runAttempt },
 			});
@@ -351,7 +375,11 @@ describe("createPrReviewDispatch", () => {
 				listChangedFiles: async () => ["src/foo.ts"],
 				applyDiffFilters: async (files) => files,
 				countDiffLines: async () => 10,
-				gatherDiff: async () => "diff",
+				gatherDiff: async () => ({
+					text: "diff",
+					truncated: false,
+					omittedLines: 0,
+				}),
 				extractTask: () => "review",
 				reviewerExecution: { runAttempt },
 			});
@@ -391,7 +419,11 @@ describe("createPrReviewDispatch", () => {
 				],
 				applyDiffFilters: async (files) => files,
 				countDiffLines: async () => 10,
-				gatherDiff: async () => "diff",
+				gatherDiff: async () => ({
+					text: "diff",
+					truncated: false,
+					omittedLines: 0,
+				}),
 				extractTask: () => "review",
 				reviewerExecution: { runAttempt },
 			});
@@ -434,7 +466,11 @@ describe("createPrReviewDispatch", () => {
 				applyDiffFilters: async (files) =>
 					files.filter((f) => f !== ".pi/review-instructions.md"),
 				countDiffLines: async () => 10,
-				gatherDiff: async () => "diff",
+				gatherDiff: async () => ({
+					text: "diff",
+					truncated: false,
+					omittedLines: 0,
+				}),
 				extractTask: () => "review",
 				reviewerExecution: { runAttempt },
 			});
@@ -476,7 +512,11 @@ describe("createPrReviewDispatch", () => {
 				],
 				applyDiffFilters: async (files) => files,
 				countDiffLines: async () => 10,
-				gatherDiff: async () => "diff",
+				gatherDiff: async () => ({
+					text: "diff",
+					truncated: false,
+					omittedLines: 0,
+				}),
 				extractTask: () => "review",
 				reviewerExecution: { runAttempt },
 			});
@@ -523,7 +563,11 @@ describe("createPrReviewDispatch", () => {
 				],
 				applyDiffFilters: async (files) => files,
 				countDiffLines: async () => 10,
-				gatherDiff: async () => "diff",
+				gatherDiff: async () => ({
+					text: "diff",
+					truncated: false,
+					omittedLines: 0,
+				}),
 				extractTask: () => "review",
 				reviewerExecution: { runAttempt },
 			});
@@ -566,7 +610,11 @@ describe("createPrReviewDispatch", () => {
 				listChangedFiles: async () => ["src/foo.ts", "INSTRUCTIONS_TARGET.md"],
 				applyDiffFilters: async (files) => files,
 				countDiffLines: async () => 10,
-				gatherDiff: async () => "diff",
+				gatherDiff: async () => ({
+					text: "diff",
+					truncated: false,
+					omittedLines: 0,
+				}),
 				extractTask: () => "review",
 				reviewerExecution: { runAttempt },
 			});
@@ -608,7 +656,11 @@ describe("createPrReviewDispatch", () => {
 				listChangedFiles: async () => ["src/foo.ts"],
 				applyDiffFilters: async (files) => files,
 				countDiffLines: async () => 10,
-				gatherDiff: async () => "diff",
+				gatherDiff: async () => ({
+					text: "diff",
+					truncated: false,
+					omittedLines: 0,
+				}),
 				extractTask: () => "review",
 				reviewerExecution: { runAttempt },
 			});
@@ -650,7 +702,11 @@ describe("createPrReviewDispatch", () => {
 				listChangedFiles: async () => ["src/foo.ts"],
 				applyDiffFilters: async (files) => files,
 				countDiffLines: async () => 10,
-				gatherDiff: async () => "diff",
+				gatherDiff: async () => ({
+					text: "diff",
+					truncated: false,
+					omittedLines: 0,
+				}),
 				extractTask: () => "review",
 				reviewerExecution: { runAttempt, inspectRepositoryDirectly: true },
 			});

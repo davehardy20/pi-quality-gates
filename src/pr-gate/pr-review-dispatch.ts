@@ -9,6 +9,7 @@ import type { ReviewConfig } from "../shared/review-config.js";
 import {
 	applyDiffFilters,
 	countDiffLinesFast,
+	type DiffCapResult,
 	type DiffFilterOptions,
 	extractOriginalTask,
 	gatherDiff,
@@ -154,7 +155,7 @@ export interface PrReviewDispatchDeps {
 		baseRef?: string,
 		filterOptions?: DiffFilterOptions,
 		structured?: boolean,
-	) => Promise<string>;
+	) => Promise<DiffCapResult>;
 	extractTask: (
 		entries: Array<{
 			type: string;
@@ -606,14 +607,16 @@ export function createPrReviewDispatch(
 
 		const diff = deps.reviewerExecution.inspectRepositoryDirectly
 			? undefined
-			: await deps.gatherDiff(
-					changedFiles,
-					cwd,
-					config.maxDiffLines,
-					baseRef,
-					filterOptions,
-					config.useStructuredHunks === true,
-				);
+			: (
+					await deps.gatherDiff(
+						changedFiles,
+						cwd,
+						config.maxDiffLines,
+						baseRef,
+						filterOptions,
+						config.useStructuredHunks === true,
+					)
+				).text;
 
 		const extractedTask =
 			deps.extractTask(ctx.sessionManager?.getBranch() ?? []) ||

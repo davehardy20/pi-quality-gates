@@ -205,7 +205,9 @@ describe("gatherDiff structured option", () => {
 		const cwd = mkdtempSync(join(tmpdir(), "rs-raw-"));
 		try {
 			initRepo(cwd);
-			const diff = await gatherDiff(["foo.ts"], cwd, 4000);
+			const result = await gatherDiff(["foo.ts"], cwd, 4000);
+			const diff = result.text;
+			expect(result).toMatchObject({ truncated: false, omittedLines: 0 });
 			expect(diff).toContain("+++");
 			expect(diff).toContain("-const b = 2;");
 			expect(diff).not.toContain(STRUCTURED_HUNK_NEW);
@@ -218,7 +220,7 @@ describe("gatherDiff structured option", () => {
 		const cwd = mkdtempSync(join(tmpdir(), "rs-struct-"));
 		try {
 			initRepo(cwd);
-			const diff = await gatherDiff(
+			const result = await gatherDiff(
 				["foo.ts"],
 				cwd,
 				4000,
@@ -226,6 +228,8 @@ describe("gatherDiff structured option", () => {
 				undefined,
 				true,
 			);
+			const diff = result.text;
+			expect(result).toMatchObject({ truncated: false, omittedLines: 0 });
 			expect(diff).toContain(STRUCTURED_HUNK_NEW);
 			expect(diff).toContain(STRUCTURED_HUNK_OLD);
 			const newIdx = diff.indexOf(STRUCTURED_HUNK_NEW);
@@ -238,9 +242,71 @@ describe("gatherDiff structured option", () => {
 		}
 	});
 
-	it("structured output is still capped by maxLines", () => {
-		const big = SAMPLE_DIFF.repeat(500);
-		const capped = capDiff(toStructuredHunks(big), 50);
-		expect(capped).toContain("DIFF TRUNCATED");
+	it("caps the RAW diff before toStructuredHunks (omittedLines in raw-line terms)", () => {
+		// gatherDiff's ordering: cap the raw diff, THEN run the structured-hunk
+		// transform. Capping after structuring would count structured lines (which
+		// expand context into both __new__/__old__ blocks), pushing effective
+		// coverage below the raw cap and slicing a hunk block in half.
+		const raw = SAMPLE_DIFF.repeat(500);
+		const rawLineCount = raw.split("\n").length;
+
+		const capped = capDiff(raw, 50);
+		const structured = toStructuredHunks(capped.text);
+
+		expect(capped.truncated).toBe(true);
+		// Cap is in RAW-line terms: every line past the cap is dropped.
+		expect(capped.omittedLines).toBe(rawLineCount - 50);
+		// capDiff no longer embeds the notice; gatherDiff appends it post-structure.
+		expect(capped.text).not.toContain("DIFF TRUNCATED");
+		// Structuring the (already-capped) raw diff is total: every emitted hunk
+		// flushes both sides, so no __new hunk__ is left without its __old hunk__.
+		const news = structured.split(STRUCTURED_HUNK_NEW).length - 1;
+		const olds = structured.split(STRUCTURED_HUNK_OLD).length - 1;
+		expect(news).toBe(olds);
+		expect(news).toBeGreaterThan(0);
+	});
+
+	it("gatherDiff appends a clean truncation notice after structuring", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "rs-trunc-"));
+		try {
+			execFileSync("git", ["init", "-q"], { cwd });
+			execFileSync("git", ["config", "user.email", "t@t.test"], { cwd });
+			execFileSync("git", ["config", "user.name", "Test"], { cwd });
+			const before =
+				Array.from({ length: 120 }, (_, i) => `old line ${i}`).join("\n") +
+				"\n";
+			const after =
+				Array.from({ length: 120 }, (_, i) => `new line ${i}`).join("\n") +
+				"\n";
+			writeFileSync(join(cwd, "big.ts"), before);
+			execFileSync("git", ["add", "."], { cwd });
+			execFileSync("git", ["commit", "-q", "-m", "init"], { cwd });
+			writeFileSync(join(cwd, "big.ts"), after);
+
+			// Full raw line count (unstructured, untruncated) for the omittedLines check.
+			const full = await gatherDiff(["big.ts"], cwd, 100_000);
+			const rawLineCount = full.text.split("\n").length;
+
+			const result = await gatherDiff(
+				["big.ts"],
+				cwd,
+				50,
+				undefined,
+				undefined,
+				true,
+			);
+
+			expect(result.truncated).toBe(true);
+			expect(result.omittedLines).toBe(rawLineCount - 50);
+			// Notice is a clean footer appended AFTER structuring.
+			expect(result.text).toContain("DIFF TRUNCATED");
+			// No block sliced off: every __new hunk__ has its __old hunk__.
+			const news = result.text.split(STRUCTURED_HUNK_NEW).length - 1;
+			const olds = result.text.split(STRUCTURED_HUNK_OLD).length - 1;
+			expect(news).toBe(olds);
+			expect(news).toBeGreaterThan(0);
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
 	});
 });
