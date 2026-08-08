@@ -503,7 +503,13 @@ describe("C5 incremental review (lastPassSha..HEAD scoping)", () => {
 			log,
 			verifyRef: () => true,
 			verifyAncestry: () => true,
-			reviewConfig: { ...PR_REVIEW_CONFIG, incrementalReview: true },
+			// Isolate C5 incremental scoping from the C2 structured-hunks default so
+			// this suite asserts incremental behaviour regardless of the C2 toggle.
+			reviewConfig: {
+				...PR_REVIEW_CONFIG,
+				incrementalReview: true,
+				useStructuredHunks: false,
+			},
 		};
 		return { deps, listChangedFiles, countDiffLines, gatherDiff, log };
 	}
@@ -551,12 +557,13 @@ describe("C5 incremental review (lastPassSha..HEAD scoping)", () => {
 		expect(input.state.tokens.lastPassSha()).toBe(HEAD_SHA);
 	});
 
-	it("ignores the last-PASS sha when incremental review is disabled (default)", async () => {
+	it("ignores the last-PASS sha when incremental review is disabled", async () => {
 		const pi = createMockPi();
 		const listChangedFiles = vi.fn().mockResolvedValue(["src/a.ts"]);
 		const dispatch = createPrReviewDispatch({
 			...createTestDeps(makePassReport()),
 			listChangedFiles,
+			reviewConfig: { ...PR_REVIEW_CONFIG, incrementalReview: false },
 		});
 		const input = createInput(pi);
 		input.state.tokens.stampPass({

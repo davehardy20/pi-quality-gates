@@ -4,8 +4,9 @@ import type { AutoFixThreshold } from "./review-types.js";
 
 /**
  * Optional per-review feature toggles that enable extra reviewer domains,
- * mirroring PR-Agent's `require_*` flags. Every toggle defaults OFF so the
- * baseline reviewer prompt is unchanged. Rendering is deterministic: each
+ * mirroring PR-Agent's `require_*` flags. Effective defaults are set in
+ * `PR_REVIEW_CONFIG` — `canSplit` is on; `todoScan`/`effortEstimate` are off.
+ * Rendering is deterministic: each
  * toggle adds (or omits) a fixed prompt section via `renderSystemPrompt`.
  */
 export interface ReviewOptions {
@@ -18,7 +19,7 @@ export interface ReviewOptions {
 	/**
 	 * Assess whether the change is too large or mixed in concern to review as
 	 * one unit and suggest split points (PR-Agent `require_can_be_split_review`).
-	 * Default off.
+	 * Default on (see `PR_REVIEW_CONFIG.reviewOptions`).
 	 */
 	canSplit?: boolean;
 	/**
@@ -89,8 +90,8 @@ export interface ReviewConfig {
 	 * `__new hunk__` / `__old hunk__` blocks (see `toStructuredHunks`) before
 	 * it is fed to the reviewer prompt. Mirrors PR-Agent's labelled-hunk
 	 * format so the model can unambiguously tell added lines from removed
-	 * ones. Defaults to off (`false`) to preserve raw-diff behaviour; flip to
-	 * `true` to adopt the feature.
+	 * ones. Defaults to on (`true`) in `PR_REVIEW_CONFIG`; set `false` to
+	 * preserve the raw unified-diff format.
 	 */
 	useStructuredHunks?: boolean;
 	/**
@@ -100,14 +101,14 @@ export interface ReviewConfig {
 	 * incremental review, where commits covered by an earlier PASS are not
 	 * re-reviewed. Applies only when no explicit base ref was given and the
 	 * last-PASS sha still resolves in the repo; otherwise the review falls
-	 * back to the default full-range base ref. Defaults to off (`false`) so
-	 * reviews cover the whole PR range; flip to `true` to adopt the feature.
+	 * back to the default full-range base ref. Defaults to on (`true`) in
+	 * `PR_REVIEW_CONFIG`; set `false` to always review the full PR range.
 	 */
 	incrementalReview?: boolean;
 	/**
 	 * Optional per-review feature toggles (TODO scan, can-split, effort
 	 * estimate) that conditionally extend the reviewer system prompt. See
-	 * {@link ReviewOptions}. All default off (baseline prompt unchanged).
+	 * {@link ReviewOptions}. `canSplit` is on by default; the others are off.
 	 */
 	reviewOptions?: ReviewOptions;
 }

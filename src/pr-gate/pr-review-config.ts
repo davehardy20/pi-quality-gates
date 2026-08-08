@@ -71,13 +71,21 @@ export const PR_REVIEW_CONFIG: ReviewConfig = {
 	maxDiffLines: 4000,
 	maxChangedLines: 5000,
 	reviewDelayMs: 0,
-	// C2 structured diff hunks — off by default; flip to true to adopt the
-	// PR-Agent labelled-hunk (__new hunk__ / __old hunk__) diff format.
-	useStructuredHunks: false,
-	// C5 incremental review — off by default; flip to true to scope each
-	// review to lastPassSha..HEAD (PR-Agent incremental review) instead of
-	// the full base..HEAD range.
-	incrementalReview: false,
+	// C2 structured diff hunks — ON by default. Adopts the PR-Agent
+	// labelled-hunk (__new hunk__ / __old hunk__) diff format so the reviewer
+	// can unambiguously separate added vs removed lines.
+	useStructuredHunks: true,
+	// C5 incremental review — ON by default. Scopes each review to
+	// lastPassSha..HEAD (PR-Agent incremental review) instead of the full
+	// base..HEAD range, so commits already covered by a prior PASS are not
+	// re-reviewed.
+	incrementalReview: true,
+	// C4 review option toggles. `canSplit` flags changes that are too large
+	// or mixed in concern and suggests split points (PR-Agent
+	// require_can_be_split_review). Effort estimate / TODO scan stay off.
+	reviewOptions: {
+		canSplit: true,
+	},
 };
 
 /**
