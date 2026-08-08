@@ -426,6 +426,57 @@ describe("createReviewerExecution model fallback", () => {
 		expect(calls).toEqual(["openai-codex/gpt-5.5"]);
 		expect(result.report).toBeNull();
 	});
+
+	it("stamps self-gathered diffCoverage onto the report (reviewer-direct path)", async () => {
+		const gatherDiff = vi.fn(async () => ({
+			text: "structured diff",
+			truncated: true,
+			omittedLines: 1234,
+		}));
+		const spawnReviewer = vi.fn(async () => passResult("m"));
+		const exec = createReviewerExecution({
+			getPromptsDir: () => "/prompts",
+			spawnReviewer: spawnReviewer as never,
+			readSystemPrompt: () => "sys",
+			renderTaskTemplate: () => "task",
+			gatherDiff: gatherDiff as never,
+		});
+		const result = await exec.runAttempt({
+			task: "t",
+			files: ["a.ts"],
+			cwd: "/r",
+			config: makeConfig("m"),
+		});
+		expect(gatherDiff).toHaveBeenCalled();
+		expect(result.report?.diffCoverage).toEqual({
+			truncated: true,
+			omittedLines: 1234,
+			maxLines: 4000,
+		});
+	});
+
+	it("stamps caller-supplied diffCoverage onto the report (dispatcher path)", async () => {
+		const spawnReviewer = vi.fn(async () => passResult("m"));
+		const exec = createReviewerExecution({
+			getPromptsDir: () => "/prompts",
+			spawnReviewer: spawnReviewer as never,
+			readSystemPrompt: () => "sys",
+			renderTaskTemplate: () => "task",
+		});
+		const result = await exec.runAttempt({
+			task: "t",
+			files: ["a.ts"],
+			cwd: "/r",
+			diff: "(precomputed)",
+			diffCoverage: { truncated: false, omittedLines: 0, maxLines: 4000 },
+			config: makeConfig("m"),
+		});
+		expect(result.report?.diffCoverage).toEqual({
+			truncated: false,
+			omittedLines: 0,
+			maxLines: 4000,
+		});
+	});
 });
 
 describe("renderTaskTemplate extraInstructions", () => {

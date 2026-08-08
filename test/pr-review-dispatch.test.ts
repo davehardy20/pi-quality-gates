@@ -364,6 +364,48 @@ describe("createPrReviewDispatch", () => {
 		}
 	});
 
+	it("propagates gatherDiff truncation into runAttempt as diffCoverage", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "review-cov-"));
+		try {
+			const runAttempt = makePassRunAttempt();
+			const dispatch = createPrReviewDispatch({
+				getHeadSha: () => "abc123",
+				getBaseRef: () => "master",
+				isWorktreeClean: () => true,
+				listChangedFiles: async () => ["src/foo.ts"],
+				applyDiffFilters: async (files) => files,
+				countDiffLines: async () => 10,
+				gatherDiff: async () => ({
+					text: "diff",
+					truncated: true,
+					omittedLines: 777,
+				}),
+				extractTask: () => "review",
+				reviewerExecution: { runAttempt },
+			});
+
+			await dispatch.dispatch({
+				ctx: { cwd: dir } as ExtensionContext,
+				state: {
+					tokens: createPassTokenStore(),
+					config: { enabled: true },
+				},
+				pi: {} as ExtensionAPI,
+			});
+
+			expect(runAttempt).toHaveBeenCalledWith(
+				expect.objectContaining({
+					diffCoverage: expect.objectContaining({
+						truncated: true,
+						omittedLines: 777,
+					}),
+				}),
+			);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("omits extraInstructions when .pi/review-instructions.md is absent", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "review-noinstr-"));
 		try {

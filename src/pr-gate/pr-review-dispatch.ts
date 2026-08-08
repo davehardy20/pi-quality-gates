@@ -605,18 +605,26 @@ export function createPrReviewDispatch(
 			);
 		}
 
-		const diff = deps.reviewerExecution.inspectRepositoryDirectly
+		const gathered = deps.reviewerExecution.inspectRepositoryDirectly
 			? undefined
-			: (
-					await deps.gatherDiff(
-						changedFiles,
-						cwd,
-						config.maxDiffLines,
-						baseRef,
-						filterOptions,
-						config.useStructuredHunks === true,
-					)
-				).text;
+			: await deps.gatherDiff(
+					changedFiles,
+					cwd,
+					config.maxDiffLines,
+					baseRef,
+					filterOptions,
+					config.useStructuredHunks === true,
+				);
+		const diff = gathered?.text;
+		// Coverage signal for the dispatcher path; the reviewer-direct path
+		// (inspectRepositoryDirectly) derives its own inside runAttempt.
+		const diffCoverage = gathered
+			? {
+					truncated: gathered.truncated,
+					omittedLines: gathered.omittedLines,
+					maxLines: config.maxDiffLines,
+				}
+			: undefined;
 
 		const extractedTask =
 			deps.extractTask(ctx.sessionManager?.getBranch() ?? []) ||
@@ -652,6 +660,7 @@ export function createPrReviewDispatch(
 			config: reviewConfig,
 			filterOptions,
 			diff,
+			diffCoverage,
 			baseRef,
 			testPlan,
 			headSha: reviewedHeadSha,
