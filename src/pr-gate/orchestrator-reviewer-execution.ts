@@ -1,10 +1,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { parseReviewReport } from "../shared/review-report.js";
 import { hasCriticalSecurityFinding } from "../shared/review-severity.js";
 import type { ReviewReport } from "../shared/review-types.js";
 import type { PassToken, PassTokenStore } from "./pass-token-store.js";
 import { getPassBlockingTestExecutionReason } from "./pr-review-dispatch.js";
 import type { ReviewerExecution, ReviewerResult } from "./reviewer.js";
-import { createBoundedTextCapture, parseReviewReport } from "./reviewer.js";
+import { createBoundedTextCapture } from "./reviewer.js";
 
 interface TextContentLike {
 	type?: string;

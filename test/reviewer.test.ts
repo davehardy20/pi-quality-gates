@@ -6,12 +6,14 @@ import {
 	createBoundedLineProcessor,
 	createBoundedTextCapture,
 	createReviewerExecution,
-	formatReportForDisplay,
-	parseReviewReport,
 	type ReviewerResult,
 	renderTaskTemplate,
 } from "../src/pr-gate/reviewer.js";
 import type { ReviewConfig } from "../src/shared/review-config.js";
+import {
+	formatReportForDisplay,
+	parseReviewReport,
+} from "../src/shared/review-report.js";
 import type { ReviewReport } from "../src/shared/review-types.js";
 
 describe("parseReviewReport", () => {
@@ -615,6 +617,9 @@ describe("formatReportForDisplay findings and test execution", () => {
 					title: "Missing null check",
 					file: "src/foo.ts",
 					line: 42,
+					rule: "null-guard",
+					issue: "Dereference may be null.",
+					evidence: "return x.value;",
 					effort: 10,
 					suggestion: "Guard with optional chaining.",
 				},
@@ -622,6 +627,11 @@ describe("formatReportForDisplay findings and test execution", () => {
 					severity: "NIT",
 					domain: "quality",
 					title: "Rename helper",
+					file: "",
+					rule: "naming",
+					issue: "Name is unclear.",
+					evidence: "function x() {}",
+					suggestion: "",
 					effort: null,
 				},
 			],

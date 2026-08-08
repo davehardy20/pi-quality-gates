@@ -23,7 +23,6 @@ import {
 	buildSanitizedReviewerCommand,
 	capDiff,
 	extractOriginalTask,
-	parseReviewReport,
 } from "../src/pr-gate/reviewer.js";
 import {
 	filterSkipped,
@@ -36,6 +35,7 @@ import {
 	normalizePath,
 	pathsEqual,
 } from "../src/shared/path-utils.js";
+import { parseReviewReport } from "../src/shared/review-report.js";
 
 const {
 	createPostTurnLinter,
