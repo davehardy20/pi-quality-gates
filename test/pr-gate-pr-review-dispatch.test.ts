@@ -159,7 +159,11 @@ function createTestDeps(
 		listChangedFiles: async () => ["src/a.ts", "src/b.ts"],
 		applyDiffFilters: async (files) => files,
 		countDiffLines: async () => 42,
-		gatherDiff: async () => "mock diff",
+		gatherDiff: async () => ({
+			text: "mock diff",
+			truncated: false,
+			omittedLines: 0,
+		}),
 		reviewerExecution: createMockReviewerExecution(report),
 	};
 }
@@ -376,7 +380,11 @@ describe("pr-review dispatch", () => {
 			listChangedFiles: async () => ["src/a.ts"],
 			applyDiffFilters: async (files) => files,
 			countDiffLines: async () => 42,
-			gatherDiff: async () => "mock diff",
+			gatherDiff: async () => ({
+				text: "mock diff",
+				truncated: false,
+				omittedLines: 0,
+			}),
 		});
 		const input = createInput(pi);
 
@@ -400,7 +408,11 @@ describe("pr-review dispatch", () => {
 			listChangedFiles,
 			applyDiffFilters: async (files) => files,
 			countDiffLines: async () => 42,
-			gatherDiff: async () => "mock diff",
+			gatherDiff: async () => ({
+				text: "mock diff",
+				truncated: false,
+				omittedLines: 0,
+			}),
 			reviewerExecution: createMockReviewerExecution(makePassReport()),
 		});
 		const input = createInput(pi, { baseRef: "feature/base" });
@@ -412,7 +424,11 @@ describe("pr-review dispatch", () => {
 
 	it("applies skip filters before repository-direct review scope", async () => {
 		const pi = createMockPi();
-		const gatherDiff = vi.fn(async () => "FULL_DIFF_SENTINEL");
+		const gatherDiff = vi.fn(async () => ({
+			text: "FULL_DIFF_SENTINEL",
+			truncated: false,
+			omittedLines: 0,
+		}));
 		const listChangedFiles = vi.fn(async () => [
 			"src/a.ts",
 			"generated/vendor.js",
@@ -493,7 +509,11 @@ describe("C5 incremental review (lastPassSha..HEAD scoping)", () => {
 	function createIncrementalDeps(report: ReviewReport) {
 		const listChangedFiles = vi.fn().mockResolvedValue(["src/a.ts"]);
 		const countDiffLines = vi.fn(async () => 42);
-		const gatherDiff = vi.fn(async () => "mock diff");
+		const gatherDiff = vi.fn(async () => ({
+			text: "mock diff",
+			truncated: false,
+			omittedLines: 0,
+		}));
 		const log = vi.fn();
 		const deps: Partial<PrReviewDispatchDeps> = {
 			...createTestDeps(report),

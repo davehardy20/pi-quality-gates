@@ -102,6 +102,19 @@ export function decidePushGate(input: PushGateInput): GateDecision {
       };
     }
     if (reviewReport.status === "PASS") {
+      // PARTIAL: only a truncated slice of the diff was reviewed, not the
+      // whole change. A truncated PASS must never be indistinguishable from a
+      // fully-reviewed PASS, so it does NOT stamp a token and blocks publish.
+      // (diffCoverage absent => the full-coverage direct-inspection path, or a
+      // legacy report: treat as fully reviewed, not PARTIAL.)
+      if (reviewReport.diffCoverage?.truncated) {
+        return {
+          verdict: "block",
+          reason: `PR review PARTIAL for HEAD ${headSha}: the diff fed to the reviewer was truncated (${reviewReport.diffCoverage.omittedLines} lines omitted, cap ${reviewReport.diffCoverage.maxLines}). A full PASS requires the complete diff.`,
+          steer:
+            "The diff exceeded the review line cap. Split the PR into smaller changes (or raise the cap deliberately) and re-run /pr-review so the whole diff is reviewed.",
+        };
+      }
       // Stamp the token so the retry push (same sha) allows without re-review.
       const token: PassToken = {
         sha: headSha,
@@ -163,8 +176,10 @@ export function decidePushGate(input: PushGateInput): GateDecision {
  * Whether a report qualifies for the opt-in below-threshold auto-PASS. The
  * report must be ISSUES (a PASS report already stamps unconditionally earlier,
  * and a CANNOT_REVIEW report must always block), with no CRITICAL or WARNING
- * findings (NIT-only, or none) AND an explicit test-execution PASS. CRITICAL
- * security escalation is handled earlier in decidePushGate; a non-security
+ * findings (NIT-only, or none) AND an explicit test-execution PASS. A
+ * truncated diff (diffCoverage.truncated) also disqualifies auto-PASS: partial
+ * coverage must never auto-stamp a PASS. CRITICAL security escalation is
+ * handled earlier in decidePushGate; a non-security
  * CRITICAL or any WARNING fails this check and keeps blocking. Because
  * auto-PASS relaxes a fail-closed invariant, it demands a positive test
  * signal: NOT_RUN / absent / FAIL all fall through to the normal ISSUES block
@@ -172,6 +187,9 @@ export function decidePushGate(input: PushGateInput): GateDecision {
  */
 function isNitOnlyAutoPassable(report: ReviewReport): boolean {
   if (report.status !== "ISSUES") return false;
+  // A truncated diff was reviewed, not the whole change: never auto-stamp a
+  // PASS on partial coverage, even for an all-NIT report with a test PASS.
+  if (report.diffCoverage?.truncated) return false;
   if (hasFindingsAboveThreshold(report, "warning")) return false;
   if (report.testExecution?.status !== "PASS") return false;
   return true;

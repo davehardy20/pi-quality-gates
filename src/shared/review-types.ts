@@ -67,6 +67,36 @@ export interface TestExecutionSummary {
 	sidecarRef?: string;
 }
 
+/**
+ * How much of the changed-lines diff was actually fed to the reviewer.
+ *
+ * NOT authored by the reviewer child: the dispatcher / `gatherDiff` compute it
+ * and attach it to the {@link ReviewReport} so the PR-gate verdict can tell a
+ * truncated (PARTIAL) review apart from a fully-reviewed one. A truncated diff
+ * must never yield a verdict indistinguishable from a full PASS.
+ */
+export interface DiffCoverage {
+	/** True when the raw diff exceeded `maxLines` and lines were dropped. */
+	truncated: boolean;
+	/** Number of raw diff lines dropped to meet `maxLines`. */
+	omittedLines: number;
+	/** The line cap applied to the raw diff (`config.maxDiffLines`). */
+	maxLines: number;
+}
+
+/**
+ * Percentage of the raw diff that was actually reviewed (0–100, rounded).
+ *
+ * When not truncated this is 100%; when truncated it reflects `maxLines` as a
+ * share of the full raw line count (`maxLines + omittedLines`). Used to surface
+ * PARTIAL coverage in the review report and the PR-gate message.
+ */
+export function diffCoveragePercent(coverage: DiffCoverage): number {
+	const total = coverage.maxLines + coverage.omittedLines;
+	if (total <= 0) return 100;
+	return Math.round((coverage.maxLines / total) * 100);
+}
+
 /** Structured report parsed from the reviewer child's output. */
 export interface ReviewReport {
 	/** Overall status: PASS | ISSUES | CANNOT_REVIEW */
@@ -81,6 +111,12 @@ export interface ReviewReport {
 	unverifiable: string[];
 	/** Review-time validation results, when the reviewer reports them. */
 	testExecution?: TestExecutionSummary;
+	/**
+	 * Diff coverage (truncation signal). Attached by the dispatcher / reviewer
+	 * execution after parsing — not produced by the reviewer child. Drives the
+	 * PARTIAL verdict when `truncated` is true.
+	 */
+	diffCoverage?: DiffCoverage;
 	/** 1–3 sentence overall assessment */
 	summary: string;
 }

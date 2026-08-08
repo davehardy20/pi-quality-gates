@@ -29,7 +29,11 @@ describe("createPrReviewDispatch", () => {
 			listChangedFiles: async () => ["src/foo.ts"],
 			applyDiffFilters: async (files) => files,
 			countDiffLines: async () => 10,
-			gatherDiff: async () => "diff",
+			gatherDiff: async () => ({
+				text: "diff",
+				truncated: false,
+				omittedLines: 0,
+			}),
 			extractTask: () => "review",
 			reviewerExecution: {
 				runAttempt: async () => ({
@@ -94,7 +98,11 @@ describe("createPrReviewDispatch", () => {
 			listChangedFiles: async () => ["src/foo.ts"],
 			applyDiffFilters: async (files) => files,
 			countDiffLines: async () => 10,
-			gatherDiff: async () => "diff",
+			gatherDiff: async () => ({
+				text: "diff",
+				truncated: false,
+				omittedLines: 0,
+			}),
 			extractTask: () => "review",
 			reviewerExecution: { runAttempt },
 		});
@@ -137,7 +145,11 @@ describe("createPrReviewDispatch", () => {
 			listChangedFiles: async () => ["src/foo.ts"],
 			applyDiffFilters: async (files) => files,
 			countDiffLines: async () => 10,
-			gatherDiff: async () => "diff",
+			gatherDiff: async () => ({
+				text: "diff",
+				truncated: false,
+				omittedLines: 0,
+			}),
 			extractTask: () => "review",
 			reviewerExecution: { runAttempt },
 		});
@@ -179,7 +191,11 @@ describe("createPrReviewDispatch", () => {
 			listChangedFiles: async () => ["src/foo.ts"],
 			applyDiffFilters: async (files) => files,
 			countDiffLines: async () => 10,
-			gatherDiff: async () => "diff",
+			gatherDiff: async () => ({
+				text: "diff",
+				truncated: false,
+				omittedLines: 0,
+			}),
 			extractTask: () => "review",
 			reviewerExecution: { runAttempt },
 		});
@@ -222,7 +238,11 @@ describe("createPrReviewDispatch", () => {
 			listChangedFiles: async () => ["src/foo.ts"],
 			applyDiffFilters: async (files) => files,
 			countDiffLines: async () => 10,
-			gatherDiff: async () => "diff",
+			gatherDiff: async () => ({
+				text: "diff",
+				truncated: false,
+				omittedLines: 0,
+			}),
 			extractTask: () => "review",
 			reviewerExecution: { runAttempt },
 		});
@@ -314,7 +334,11 @@ describe("createPrReviewDispatch", () => {
 				listChangedFiles: async () => ["src/foo.ts"],
 				applyDiffFilters: async (files) => files,
 				countDiffLines: async () => 10,
-				gatherDiff: async () => "diff",
+				gatherDiff: async () => ({
+					text: "diff",
+					truncated: false,
+					omittedLines: 0,
+				}),
 				extractTask: () => "review",
 				reviewerExecution: { runAttempt },
 			});
@@ -340,6 +364,100 @@ describe("createPrReviewDispatch", () => {
 		}
 	});
 
+	it("returns a PARTIAL (blocked) result when a PASS report's diff was truncated", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "review-partial-"));
+		try {
+			const runAttempt = vi.fn(async () => ({
+				report: {
+					status: "PASS" as const,
+					confidence: "HIGH" as const,
+					findings: [],
+					verified: [],
+					unverifiable: [],
+					summary: "ok",
+					diffCoverage: { truncated: true, omittedLines: 500, maxLines: 4000 },
+				},
+				rawOutput: "## Review Report",
+				exitCode: 0,
+				timedOut: false,
+				stderr: "",
+				command: "pi ...",
+			}));
+			const dispatch = createPrReviewDispatch({
+				getHeadSha: () => "abc123",
+				getBaseRef: () => "master",
+				isWorktreeClean: () => true,
+				listChangedFiles: async () => ["src/foo.ts"],
+				applyDiffFilters: async (files) => files,
+				countDiffLines: async () => 10,
+				gatherDiff: async () => ({
+					text: "diff",
+					truncated: true,
+					omittedLines: 500,
+				}),
+				extractTask: () => "review",
+				reviewerExecution: { runAttempt },
+			});
+
+			const result = await dispatch.dispatch({
+				ctx: { cwd: dir } as ExtensionContext,
+				state: {
+					tokens: createPassTokenStore(),
+					config: { enabled: true },
+				},
+				pi: {} as ExtensionAPI,
+			});
+
+			expect(result.blocked).toBe(true);
+			expect(result.stamped).toBe(false);
+			expect(result.message).toMatch(/PARTIAL|truncated/i);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("propagates gatherDiff truncation into runAttempt as diffCoverage", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "review-cov-"));
+		try {
+			const runAttempt = makePassRunAttempt();
+			const dispatch = createPrReviewDispatch({
+				getHeadSha: () => "abc123",
+				getBaseRef: () => "master",
+				isWorktreeClean: () => true,
+				listChangedFiles: async () => ["src/foo.ts"],
+				applyDiffFilters: async (files) => files,
+				countDiffLines: async () => 10,
+				gatherDiff: async () => ({
+					text: "diff",
+					truncated: true,
+					omittedLines: 777,
+				}),
+				extractTask: () => "review",
+				reviewerExecution: { runAttempt },
+			});
+
+			await dispatch.dispatch({
+				ctx: { cwd: dir } as ExtensionContext,
+				state: {
+					tokens: createPassTokenStore(),
+					config: { enabled: true },
+				},
+				pi: {} as ExtensionAPI,
+			});
+
+			expect(runAttempt).toHaveBeenCalledWith(
+				expect.objectContaining({
+					diffCoverage: expect.objectContaining({
+						truncated: true,
+						omittedLines: 777,
+					}),
+				}),
+			);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("omits extraInstructions when .pi/review-instructions.md is absent", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "review-noinstr-"));
 		try {
@@ -351,7 +469,11 @@ describe("createPrReviewDispatch", () => {
 				listChangedFiles: async () => ["src/foo.ts"],
 				applyDiffFilters: async (files) => files,
 				countDiffLines: async () => 10,
-				gatherDiff: async () => "diff",
+				gatherDiff: async () => ({
+					text: "diff",
+					truncated: false,
+					omittedLines: 0,
+				}),
 				extractTask: () => "review",
 				reviewerExecution: { runAttempt },
 			});
@@ -391,7 +513,11 @@ describe("createPrReviewDispatch", () => {
 				],
 				applyDiffFilters: async (files) => files,
 				countDiffLines: async () => 10,
-				gatherDiff: async () => "diff",
+				gatherDiff: async () => ({
+					text: "diff",
+					truncated: false,
+					omittedLines: 0,
+				}),
 				extractTask: () => "review",
 				reviewerExecution: { runAttempt },
 			});
@@ -434,7 +560,11 @@ describe("createPrReviewDispatch", () => {
 				applyDiffFilters: async (files) =>
 					files.filter((f) => f !== ".pi/review-instructions.md"),
 				countDiffLines: async () => 10,
-				gatherDiff: async () => "diff",
+				gatherDiff: async () => ({
+					text: "diff",
+					truncated: false,
+					omittedLines: 0,
+				}),
 				extractTask: () => "review",
 				reviewerExecution: { runAttempt },
 			});
@@ -476,7 +606,11 @@ describe("createPrReviewDispatch", () => {
 				],
 				applyDiffFilters: async (files) => files,
 				countDiffLines: async () => 10,
-				gatherDiff: async () => "diff",
+				gatherDiff: async () => ({
+					text: "diff",
+					truncated: false,
+					omittedLines: 0,
+				}),
 				extractTask: () => "review",
 				reviewerExecution: { runAttempt },
 			});
@@ -523,7 +657,11 @@ describe("createPrReviewDispatch", () => {
 				],
 				applyDiffFilters: async (files) => files,
 				countDiffLines: async () => 10,
-				gatherDiff: async () => "diff",
+				gatherDiff: async () => ({
+					text: "diff",
+					truncated: false,
+					omittedLines: 0,
+				}),
 				extractTask: () => "review",
 				reviewerExecution: { runAttempt },
 			});
@@ -566,7 +704,11 @@ describe("createPrReviewDispatch", () => {
 				listChangedFiles: async () => ["src/foo.ts", "INSTRUCTIONS_TARGET.md"],
 				applyDiffFilters: async (files) => files,
 				countDiffLines: async () => 10,
-				gatherDiff: async () => "diff",
+				gatherDiff: async () => ({
+					text: "diff",
+					truncated: false,
+					omittedLines: 0,
+				}),
 				extractTask: () => "review",
 				reviewerExecution: { runAttempt },
 			});
@@ -608,7 +750,11 @@ describe("createPrReviewDispatch", () => {
 				listChangedFiles: async () => ["src/foo.ts"],
 				applyDiffFilters: async (files) => files,
 				countDiffLines: async () => 10,
-				gatherDiff: async () => "diff",
+				gatherDiff: async () => ({
+					text: "diff",
+					truncated: false,
+					omittedLines: 0,
+				}),
 				extractTask: () => "review",
 				reviewerExecution: { runAttempt },
 			});
@@ -650,7 +796,11 @@ describe("createPrReviewDispatch", () => {
 				listChangedFiles: async () => ["src/foo.ts"],
 				applyDiffFilters: async (files) => files,
 				countDiffLines: async () => 10,
-				gatherDiff: async () => "diff",
+				gatherDiff: async () => ({
+					text: "diff",
+					truncated: false,
+					omittedLines: 0,
+				}),
 				extractTask: () => "review",
 				reviewerExecution: { runAttempt, inspectRepositoryDirectly: true },
 			});

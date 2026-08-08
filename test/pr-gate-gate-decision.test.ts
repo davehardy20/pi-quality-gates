@@ -131,6 +131,119 @@ describe("decidePushGate", () => {
     });
   });
 
+  describe("diff truncation -> PARTIAL (no full PASS on partial coverage)", () => {
+    const truncatedCoverage = {
+      truncated: true,
+      omittedLines: 500,
+      maxLines: 4000,
+    };
+    const fullCoverage = { truncated: false, omittedLines: 0, maxLines: 4000 };
+
+    it("BLOCKs (PARTIAL) on a PASS report whose diff was truncated; no token stamped", () => {
+      const tokens = createPassTokenStore();
+      const decision = decidePushGate({
+        action: "push",
+        headSha: "head123",
+        tokens,
+        baseSha: "base000",
+        reviewReport: makeReport({
+          status: "PASS",
+          diffCoverage: truncatedCoverage,
+        }),
+      });
+      expect(decision.verdict).toBe("block");
+      expect(decision.reason).toMatch(/PARTIAL|truncated/i);
+      expect(tokens.hasPass("head123")).toBe(false);
+    });
+
+    it("ALLOWs and stamps on a PASS report with full (non-truncated) coverage", () => {
+      const tokens = createPassTokenStore();
+      const decision = decidePushGate({
+        action: "push",
+        headSha: "head123",
+        tokens,
+        baseSha: "base000",
+        reviewReport: makeReport({
+          status: "PASS",
+          diffCoverage: fullCoverage,
+        }),
+      });
+      expect(decision.verdict).toBe("allow");
+      expect(tokens.hasPass("head123")).toBe(true);
+    });
+
+    it("ALLOWs on a PASS report with no diffCoverage (direct-inspection / legacy path)", () => {
+      const tokens = createPassTokenStore();
+      const decision = decidePushGate({
+        action: "push",
+        headSha: "head123",
+        tokens,
+        baseSha: "base000",
+        reviewReport: makeReport({ status: "PASS" }),
+      });
+      expect(decision.verdict).toBe("allow");
+      expect(tokens.hasPass("head123")).toBe(true);
+    });
+
+    it("BLOCKs auto-PASS (autoPassOnNitOnly) on a truncated NIT-only report with passing tests", () => {
+      const tokens = createPassTokenStore();
+      const decision = decidePushGate({
+        action: "push",
+        headSha: "head123",
+        tokens,
+        baseSha: "base000",
+        autoPassOnNitOnly: true,
+        reviewReport: makeReport({
+          status: "ISSUES",
+          findings: [
+            {
+              severity: "NIT",
+              domain: "quality",
+              title: "naming",
+              file: "src/y.ts",
+              rule: "naming",
+              issue: "x",
+              evidence: "x",
+              suggestion: "x",
+            },
+          ],
+          testExecution: { status: "PASS", summary: "tests pass" },
+          diffCoverage: truncatedCoverage,
+        }),
+      });
+      expect(decision.verdict).toBe("block");
+      expect(tokens.hasPass("head123")).toBe(false);
+    });
+
+    it("ESCALATES on a CRITICAL security finding even when the diff is truncated", () => {
+      const tokens = createPassTokenStore();
+      const decision = decidePushGate({
+        action: "push",
+        headSha: "head123",
+        tokens,
+        baseSha: "base000",
+        reviewReport: makeReport({
+          status: "ISSUES",
+          diffCoverage: truncatedCoverage,
+          findings: [
+            {
+              severity: "CRITICAL",
+              domain: "security",
+              title: "RCE",
+              file: "src/x.ts",
+              rule: "no-rce",
+              issue: "eval of user input",
+              evidence: "eval(req.body)",
+              suggestion: "don't",
+            },
+          ],
+        }),
+      });
+      expect(decision.verdict).toBe("escalate");
+      expect(decision.requiresHumanAck).toBe(true);
+    });
+  });
+
   describe("CRITICAL security escalation", () => {
     it("ESCALATES (human ack required) on a CRITICAL security finding", () => {
       const tokens = createPassTokenStore();

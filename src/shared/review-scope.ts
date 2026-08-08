@@ -195,11 +195,13 @@ export async function gatherDiff(
 	baseRef?: string,
 	filterOptions?: DiffFilterOptions,
 	structured?: boolean,
-): Promise<string> {
+): Promise<DiffCapResult> {
 	// Apply filters first
 	const filteredFiles = await applyDiffFilters(files, cwd, filterOptions);
 
-	if (filteredFiles.length === 0) return "";
+	if (filteredFiles.length === 0) {
+		return { text: "", truncated: false, omittedLines: 0 };
+	}
 
 	const baseSpec = baseRef ? `${baseRef}..HEAD` : "HEAD";
 
@@ -235,13 +237,26 @@ export async function gatherDiff(
 		}
 	}
 
-	// Optionally rewrite into deterministic __new hunk__ / __old hunk__ blocks
-	if (structured) {
-		diff = toStructuredHunks(diff);
+	// Cap the RAW diff BEFORE the structured-hunk transform. Running
+	// toStructuredHunks first expands the diff (it duplicates context into
+	// __new hunk__ / __old hunk__ blocks), which would push effective coverage
+	// below the raw cap and let capDiff slice a hunk block in half. Capping the
+	// raw diff keeps the cap meaningful in raw-line terms and guarantees every
+	// emitted block is complete.
+	const capped = capDiff(diff, maxLines);
+	let text = structured ? toStructuredHunks(capped.text) : capped.text;
+	// Append the truncation notice AFTER the (optional) structured-hunk
+	// transform so it stays clean footer text rather than being rewritten as
+	// hunk content (its leading `---` would otherwise be misclassified as a
+	// removed line by toStructuredHunks).
+	if (capped.truncated) {
+		text += `\n\n--- DIFF TRUNCATED: ${capped.omittedLines} lines omitted (cap: ${maxLines}) ---`;
 	}
-
-	// Cap at maxLines
-	return capDiff(diff, maxLines);
+	return {
+		text,
+		truncated: capped.truncated,
+		omittedLines: capped.omittedLines,
+	};
 }
 
 /**
@@ -322,20 +337,41 @@ export async function countDiffLinesFast(
 }
 
 /**
- * Cap a diff string at maxLines, keeping the most recent changes.
- * Adds a truncation notice if truncated.
+ * Outcome of capping a diff at a line limit.
+ *
+ * `capDiff` and `gatherDiff` both return this shape so callers can tell —
+ * without parsing the diff text — whether the diff fed to the reviewer was
+ * truncated. The PR-gate verdict uses `truncated` to emit a PARTIAL verdict: a
+ * diff reviewed only up to the cap must never be indistinguishable from a
+ * fully-reviewed PASS.
  */
-export function capDiff(diff: string, maxLines: number): string {
+export interface DiffCapResult {
+	/** Diff text to feed to the reviewer (raw, or structured-hunk form). */
+	text: string;
+	/** `true` when the RAW diff exceeded `maxLines` and lines were dropped. */
+	truncated: boolean;
+	/** Number of RAW lines dropped to meet `maxLines` (0 when not truncated). */
+	omittedLines: number;
+}
+
+/**
+ * Cap a diff string at maxLines, keeping the most recent changes.
+ *
+ * Returns a structured result so callers know whether (and how much) was
+ * dropped: the cap signal must reach the PR-gate verdict (a truncated diff
+ * yields a PARTIAL verdict, not a full PASS). The cap is always applied to the
+ * RAW diff — `gatherDiff` caps before the structured-hunk transform, never
+ * after.
+ */
+export function capDiff(diff: string, maxLines: number): DiffCapResult {
 	const lines = diff.split("\n");
-	if (lines.length <= maxLines) return diff;
+	if (lines.length <= maxLines) {
+		return { text: diff, truncated: false, omittedLines: 0 };
+	}
 
 	const kept = lines.slice(0, maxLines);
 	const dropped = lines.length - maxLines;
-	kept.push(
-		``,
-		`--- DIFF TRUNCATED: ${dropped} lines omitted (cap: ${maxLines}) ---`,
-	);
-	return kept.join("\n");
+	return { text: kept.join("\n"), truncated: true, omittedLines: dropped };
 }
 
 // ---------------------------------------------------------------------------

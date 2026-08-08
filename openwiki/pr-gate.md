@@ -57,7 +57,8 @@ Tokens are stored in-memory via `PassTokenStore` (`src/pr-gate/pass-token-store.
 |---|---|---|---|---|
 | `other` | * | * | * | **noop** (pass through) |
 | `push`/`pr_create` | * | CRITICAL security | * | **escalate** (`requiresHumanAck: true`) |
-| `push`/`pr_create` | valid | status=PASS | * | **allow** (+ stamps token) |
+| `push`/`pr_create` | valid | status=PASS, `diffCoverage.truncated` | * | **block** (PARTIAL — partial coverage; no stamp) |
+| `push`/`pr_create` | valid | status=PASS, full/absent coverage | * | **allow** (+ stamps token) |
 | `push`/`pr_create` | valid | ISSUES | * | **block** (fix loop steer) |
 | `push`/`pr_create` | valid | CANNOT_REVIEW | * | **block** (investigate) |
 | `push`/`pr_create` | valid | (none) | true | **allow** |
@@ -107,7 +108,8 @@ Tokens are stored in-memory via `PassTokenStore` (`src/pr-gate/pass-token-store.
    - No parseable report → block with sidecar hint.
    - CRITICAL security finding → escalate.
    - **PASS but missing/failed test execution** → convert to `CANNOT_REVIEW` and block.
-   - PASS → stamp token, return `stamped=true`.
+   - **PASS but diff truncated** (`diffCoverage.truncated`) → **PARTIAL**: block, no stamp; surface omitted lines and coverage %.
+   - PASS (full coverage) → stamp token, return `stamped=true`.
    - CANNOT_REVIEW → block.
    - ISSUES → build fix instruction, inject as user message via `pi.sendUserMessage()`, block.
 
@@ -233,7 +235,7 @@ and the push/pr_create gate remains fail-closed until the exact HEAD has a PASS 
 
 `src/shared/review-scope.ts` — shared diff gathering and file filtering:
 
-- `gatherDiff(files, cwd, maxLines, baseRef?, filterOptions?, structured?)` — generates `git diff`, handles untracked files via `git diff --no-index /dev/null`, caps at `maxLines`. When `structured` is true, rewrites the diff into deterministic `__new hunk__` / `__old hunk__` blocks (PR-Agent labelled-hunk format) via `toStructuredHunks`.
+- `gatherDiff(files, cwd, maxLines, baseRef?, filterOptions?, structured?)` — generates `git diff`, handles untracked files via `git diff --no-index /dev/null`, and returns a `DiffCapResult { text, truncated, omittedLines }`. It **caps the RAW diff before** `toStructuredHunks` (so the cap is meaningful in raw-line terms and no hunk block is cut mid-transform); the truncation notice is appended after structuring. When `structured` is true, rewrites the diff into deterministic `__new hunk__` / `__old hunk__` blocks (PR-Agent labelled-hunk format) via `toStructuredHunks`. The `truncated`/`omittedLines` signal threads to `ReviewReport.diffCoverage` and drives the PARTIAL verdict.
 - `toStructuredHunks(diff)` — pure, deterministic transform: per hunk it emits a `__new hunk__` block (added + context lines) and an `__old hunk__` block (removed + context lines), file headers verbatim. Improves reviewer grounding; on by default, controlled via `ReviewConfig.useStructuredHunks`.
 - `countDiffLinesFast(files, cwd, baseRef?)` — uses `git diff --numstat` for cheap counting.
 - `filterGitignoredFiles(files, cwd)` — uses `git check-ignore --stdin -z`.
@@ -351,22 +353,24 @@ return even when the HEAD already has a token.
 4. Unrecognised actions **always block** (fail-closed).
 5. CRITICAL security findings **always escalate**.
 6. PASS requires test execution — missing/failed tests → `CANNOT_REVIEW`.
-7. Tokens are sha-scoped, not branch-scoped.
-8. No persistence — session reload clears all tokens.
-9. Auto-review sticky guard: once attempted, same HEAD not auto-attempted again.
-10. Legacy/injected reviewer execution has no bash; the orchestrator bridge's disposable sandbox may use built-in shell only for sandbox-local read-only Git and trusted package scripts. Neither path permits host mutation or publishing.
-11. `/pr-review` and `pr_review` share one coordinator, one in-progress guard, one dispatch instance, and one exact-HEAD token store — no duplicate review or stamping path.
-12. `pr_review` is asynchronous: `execute` only kicks off the background dispatch and returns compact state; it never awaits the follow-up `orchestrate` result (no deadlock).
-13. `pr_review` and the coordinator **never publish** — no `git_safe`/`gh_safe` push/pr_create/update/merge. The push gate stays fail-closed until the exact HEAD has a PASS token, so a parallel `pr_review` + publish batch cannot bypass it.
-14. An explicit `baseRef` is an intentional re-review in both wrappers (bypasses the `already-passed` early return).
-15. Incremental review is default-on (`incrementalReview`) and fail-safe: an explicit base ref, a missing/stale last-PASS sha, or a last-PASS sha equal to HEAD all fall back to the default full-range review — a narrower scope is never silently assumed.
-16. Below-threshold auto-PASS is opt-in (`PrGateConfig.autoPassOnNitOnly` / `decidePushGate.autoPassOnNitOnly`, default OFF). When ON it auto-stamps a PASS only for an ISSUES report whose findings are all NIT (no CRITICAL/WARNING) **and** whose test execution status is an explicit `PASS` (NOT_RUN/absent/FAIL do not qualify — auto-PASS is a relaxation, so it demands a positive test signal). It never relaxes CRITICAL security escalation.
+7. A truncated diff never yields a full PASS. When `ReviewReport.diffCoverage.truncated` is true (the text-diff path capped the diff below `maxDiffLines`), a PASS report is an effective **PARTIAL**: `decidePushGate` blocks (no token stamp) and `autoPassOnNitOnly` cannot auto-stamp even for an all-NIT report with a test PASS. CRITICAL escalation still takes precedence. The direct-inspection path (orchestrator bridge) reviews the full `baseRef..HEAD` diff, so it carries no truncation (full coverage; `diffCoverage` absent).
+8. Tokens are sha-scoped, not branch-scoped.
+9. No persistence — session reload clears all tokens.
+10. Auto-review sticky guard: once attempted, same HEAD not auto-attempted again.
+11. Legacy/injected reviewer execution has no bash; the orchestrator bridge's disposable sandbox may use built-in shell only for sandbox-local read-only Git and trusted package scripts. Neither path permits host mutation or publishing.
+12. `/pr-review` and `pr_review` share one coordinator, one in-progress guard, one dispatch instance, and one exact-HEAD token store — no duplicate review or stamping path.
+13. `pr_review` is asynchronous: `execute` only kicks off the background dispatch and returns compact state; it never awaits the follow-up `orchestrate` result (no deadlock).
+14. `pr_review` and the coordinator **never publish** — no `git_safe`/`gh_safe` push/pr_create/update/merge. The push gate stays fail-closed until the exact HEAD has a PASS token, so a parallel `pr_review` + publish batch cannot bypass it.
+15. An explicit `baseRef` is an intentional re-review in both wrappers (bypasses the `already-passed` early return).
+16. Incremental review is default-on (`incrementalReview`) and fail-safe: an explicit base ref, a missing/stale last-PASS sha, or a last-PASS sha equal to HEAD all fall back to the default full-range review — a narrower scope is never silently assumed.
+17. Below-threshold auto-PASS is opt-in (`PrGateConfig.autoPassOnNitOnly` / `decidePushGate.autoPassOnNitOnly`, default OFF). When ON it auto-stamps a PASS only for an ISSUES report whose findings are all NIT (no CRITICAL/WARNING) **and** whose test execution status is an explicit `PASS` (NOT_RUN/absent/FAIL do not qualify — auto-PASS is a relaxation, so it demands a positive test signal) **and** whose diff was **not** truncated (`diffCoverage.truncated` must be false/absent). It never relaxes CRITICAL security escalation.
 
 ## Common failure modes
 
 - **Token cleared on reload**: Session reload clears in-memory tokens. Re-run `/pr-review` after reload.
 - **Linter not clean**: Review blocked by `isLinterClean`. Fix linter findings first.
 - **Diff too large**: Diffs exceeding `maxChangedLines` (5000) are rejected before review. Use `.pi/reviewer.skip` to exclude files.
+- **PARTIAL review (truncated diff)**: The text-diff path caps the diff at `maxDiffLines` (4000). A PASS on a truncated diff is an effective **PARTIAL** and blocks publish (`ReviewReport.diffCoverage.truncated`). Split the PR (or raise the cap deliberately) and re-review for full coverage.
 - **Report parse failure**: Child Pi output without `## Review Report` marker → sidecar written to `~/.pi/reviewer-failures/`. Check the sidecar for raw output.
 - **Test execution missing**: Report says PASS but no `### Test execution` section → overridden to `CANNOT_REVIEW`. Ensure the reviewer runs test commands.
 - **Base ref not found**: If `origin/master` doesn't exist, falls back through the chain. Verify the base ref exists.

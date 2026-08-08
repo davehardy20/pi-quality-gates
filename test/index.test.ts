@@ -754,13 +754,19 @@ describe("post-turn-reviewer: reviewer helpers", () => {
 	it("capDiff truncates at maxLines", () => {
 		const diff = Array.from({ length: 10 }, (_, i) => `line ${i}`).join("\n");
 		const capped = capDiff(diff, 5);
-		expect(capped).toContain("DIFF TRUNCATED");
-		expect(capped.split("\n").length).toBeLessThanOrEqual(7); // 5 lines + blank + truncation notice
+		expect(capped.truncated).toBe(true);
+		expect(capped.omittedLines).toBe(5);
+		// capDiff caps raw content only; gatherDiff appends the truncation notice.
+		expect(capped.text.split("\n").length).toBe(5);
+		expect(capped.text).not.toContain("DIFF TRUNCATED");
 	});
 
 	it("capDiff returns original when within limit", () => {
 		const diff = "line 1\nline 2\nline 3";
-		expect(capDiff(diff, 10)).toBe(diff);
+		const capped = capDiff(diff, 10);
+		expect(capped.text).toBe(diff);
+		expect(capped.truncated).toBe(false);
+		expect(capped.omittedLines).toBe(0);
 	});
 
 	it("extractOriginalTask finds the last user message", () => {

@@ -14,6 +14,7 @@ import type { ReviewConfig } from "../shared/review-config.js";
 import { type DiffFilterOptions, gatherDiff } from "../shared/review-scope.js";
 import { hasFindingsAboveThreshold } from "../shared/review-severity.js";
 import type {
+  DiffCoverage,
   Finding,
   ReviewConfidence,
   ReviewDomain,
@@ -22,6 +23,7 @@ import type {
   Severity,
   TestExecutionStatus,
 } from "../shared/review-types.js";
+import { diffCoveragePercent } from "../shared/review-types.js";
 
 // Re-export shared primitives for backwards compatibility
 export type { ReviewConfig } from "../shared/review-config.js";
@@ -34,6 +36,7 @@ export {
   gatherDiff,
 } from "../shared/review-scope.js";
 export type {
+  DiffCoverage,
   Finding,
   ReviewConfidence,
   ReviewDomain,
@@ -66,6 +69,13 @@ export interface ReviewerAttemptInput {
   filterOptions?: DiffFilterOptions;
   /** Optional pre-computed diff. If omitted, the execution gathers it. */
   diff?: string;
+  /**
+   * Diff coverage (truncation signal) for a pre-computed `diff`. When the
+   * execution gathers its own diff it derives this itself. Attached to the
+   * parsed report so the PR-gate verdict can emit a PARTIAL verdict on
+   * truncation.
+   */
+  diffCoverage?: DiffCoverage;
   /** Optional test-execution plan rendered into the task template. */
   testPlan?: string;
   /** Base ref for repository-direct review execution. */
@@ -215,16 +225,32 @@ export function createReviewerExecution(
         rawSystemPrompt,
         input.config,
       );
-      const diff =
-        input.diff ??
-        (await (deps.gatherDiff ?? gatherDiff)(
+      // Resolve the diff and its coverage signal. When a diff is supplied
+      // (dispatcher path) honour its coverage too; otherwise gather the diff
+      // and derive coverage here (reviewer-direct path). The coverage is
+      // stamped onto the parsed report so the PR-gate verdict can tell a
+      // truncated (PARTIAL) review from a fully-reviewed one.
+      let diff: string;
+      let coverage: DiffCoverage | undefined;
+      if (input.diff !== undefined) {
+        diff = input.diff;
+        coverage = input.diffCoverage;
+      } else {
+        const gathered = await (deps.gatherDiff ?? gatherDiff)(
           input.files,
           input.cwd,
           input.config.maxDiffLines,
           undefined, // baseRef — post-turn reviewer diffs working tree vs HEAD
           input.filterOptions,
           input.config.useStructuredHunks === true,
-        ));
+        );
+        diff = gathered.text;
+        coverage = {
+          truncated: gathered.truncated,
+          omittedLines: gathered.omittedLines,
+          maxLines: input.config.maxDiffLines,
+        };
+      }
       const taskPrompt = (deps.renderTaskTemplate ?? renderTaskTemplate)(
         promptsDir,
         input.task,
@@ -234,12 +260,20 @@ export function createReviewerExecution(
         input.config.extraInstructions,
       );
       const spawn = deps.spawnReviewer ?? spawnReviewer;
-      const primaryResult = await spawn(
-        taskPrompt,
-        systemPrompt,
-        input.config,
-        input.cwd,
-        input.signal,
+      // Stamp the diff-coverage signal onto the parsed report (metadata; not
+      // authored by the reviewer child).
+      const stampCoverage = (result: ReviewerResult): ReviewerResult =>
+        result.report && coverage
+          ? { ...result, report: { ...result.report, diffCoverage: coverage } }
+          : result;
+      const primaryResult = stampCoverage(
+        await spawn(
+          taskPrompt,
+          systemPrompt,
+          input.config,
+          input.cwd,
+          input.signal,
+        ),
       );
       if (primaryResult.report || !isEmptyModelFailure(primaryResult)) {
         return primaryResult;
@@ -250,12 +284,14 @@ export function createReviewerExecution(
       // review report or a non-empty failure. Returns the primary failure if
       // every fallback is also an empty-output model failure.
       for (const fallbackModel of input.config.fallbackModels ?? []) {
-        const fallbackResult = await spawn(
-          taskPrompt,
-          systemPrompt,
-          { ...input.config, model: fallbackModel },
-          input.cwd,
-          input.signal,
+        const fallbackResult = stampCoverage(
+          await spawn(
+            taskPrompt,
+            systemPrompt,
+            { ...input.config, model: fallbackModel },
+            input.cwd,
+            input.signal,
+          ),
         );
         if (fallbackResult.report || !isEmptyModelFailure(fallbackResult)) {
           return fallbackResult;
@@ -996,6 +1032,21 @@ export function formatReportForDisplay(report: ReviewReport): string {
     lines.push(`- **Summary:** ${report.testExecution.summary}`);
     if (report.testExecution.sidecarRef) {
       lines.push(`- **Sidecar:** ${report.testExecution.sidecarRef}`);
+    }
+    lines.push("");
+  }
+
+  if (report.diffCoverage) {
+    lines.push("### Diff coverage");
+    lines.push("");
+    const pct = diffCoveragePercent(report.diffCoverage);
+    lines.push(
+      `- **Coverage:** ${pct}% (${report.diffCoverage.truncated ? "truncated — PARTIAL review" : "complete"})`,
+    );
+    if (report.diffCoverage.truncated) {
+      lines.push(
+        `- **Omitted:** ${report.diffCoverage.omittedLines} lines (cap ${report.diffCoverage.maxLines})`,
+      );
     }
     lines.push("");
   }
