@@ -6,6 +6,7 @@ import type {
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import type { ReviewConfig } from "../shared/review-config.js";
+import { formatReportForDisplay } from "../shared/review-report.js";
 import {
 	applyDiffFilters,
 	countDiffLinesFast,
@@ -22,7 +23,6 @@ import type { PassTokenStore } from "./pass-token-store.js";
 import { PR_REVIEW_CONFIG } from "./pr-review-config.js";
 import {
 	createBoundedTextCapture,
-	formatReportForDisplay,
 	type ReviewerExecution,
 	type ReviewerResult,
 } from "./reviewer.js";

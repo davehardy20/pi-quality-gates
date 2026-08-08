@@ -6,12 +6,14 @@ import {
 	createBoundedLineProcessor,
 	createBoundedTextCapture,
 	createReviewerExecution,
-	formatReportForDisplay,
-	parseReviewReport,
 	type ReviewerResult,
 	renderTaskTemplate,
 } from "../src/pr-gate/reviewer.js";
 import type { ReviewConfig } from "../src/shared/review-config.js";
+import {
+	formatReportForDisplay,
+	parseReviewReport,
+} from "../src/shared/review-report.js";
 import type { ReviewReport } from "../src/shared/review-types.js";
 
 describe("parseReviewReport", () => {
@@ -600,5 +602,60 @@ describe("formatReportForDisplay diff coverage", () => {
 			summary: "",
 		});
 		expect(out).not.toContain("Diff coverage");
+	});
+});
+
+describe("formatReportForDisplay findings and test execution", () => {
+	it("renders findings with severity, loc, effort, and suggestion", () => {
+		const out = formatReportForDisplay({
+			status: "ISSUES",
+			confidence: "MEDIUM",
+			findings: [
+				{
+					severity: "WARNING",
+					domain: "correctness",
+					title: "Missing null check",
+					file: "src/foo.ts",
+					line: 42,
+					rule: "null-guard",
+					issue: "Dereference may be null.",
+					evidence: "return x.value;",
+					effort: 10,
+					suggestion: "Guard with optional chaining.",
+				},
+				{
+					severity: "NIT",
+					domain: "quality",
+					title: "Rename helper",
+					file: "",
+					rule: "naming",
+					issue: "Name is unclear.",
+					evidence: "function x() {}",
+					suggestion: "",
+					effort: null,
+				},
+			],
+			verified: [],
+			unverifiable: [],
+			summary: "Two findings.",
+			testExecution: {
+				status: "PASS",
+				summary: "vitest and typecheck passed",
+				sidecarRef: "tool-output:abc",
+			},
+		});
+
+		expect(out).toContain("**Review: ISSUES** (confidence: MEDIUM)");
+		expect(out).toContain("### Findings");
+		expect(out).toContain("- **[WARNING]** Missing null check `src/foo.ts:42`");
+		expect(out).toContain("  - ⏱ ~10 min to fix");
+		expect(out).toContain("  - 💡 Guard with optional chaining.");
+		// NIT finding with no file/line renders an empty loc and no effort line
+		expect(out).toContain("- **[NIT]** Rename helper ``");
+		expect(out).toContain("### Test execution");
+		expect(out).toContain("- **Status:** PASS");
+		expect(out).toContain("- **Summary:** vitest and typecheck passed");
+		expect(out).toContain("- **Sidecar:** tool-output:abc");
+		expect(out).toContain("Two findings.");
 	});
 });
