@@ -179,7 +179,7 @@ export interface PrReviewDispatchDeps {
 	 */
 	reviewConfig?: ReviewConfig;
 	/** Resolve the runtime default config when no explicit override is injected. */
-	resolveReviewConfig?: () => ReviewConfig;
+	resolveReviewConfig?: (ctx: ExtensionContext) => ReviewConfig;
 	/**
 	 * Git ref verifier used by incremental review to confirm the last-PASS
 	 * sha still resolves before scoping to it. Defaults to `git rev-parse
@@ -534,7 +534,13 @@ export function createPrReviewDispatch(
 		gatherDiff,
 		extractTask: extractOriginalTask,
 		log: console.error,
-		resolveReviewConfig: resolvePrReviewConfig,
+		resolveReviewConfig: (ctx) =>
+			resolvePrReviewConfig({
+				sessionModel: ctx.model,
+				sessionFallbackModels: (ctx.scopedModels ?? []).map(
+					({ model }) => model,
+				),
+			}),
 		verifyRef: verifyGitRef,
 		reviewerExecution: missingReviewerExecution(),
 		...partialDeps,
@@ -562,8 +568,13 @@ export function createPrReviewDispatch(
 		const cwd = ctx.cwd;
 		const config =
 			deps.reviewConfig ??
-			deps.resolveReviewConfig?.() ??
-			resolvePrReviewConfig();
+			deps.resolveReviewConfig?.(ctx) ??
+			resolvePrReviewConfig({
+				sessionModel: ctx.model,
+				sessionFallbackModels: (ctx.scopedModels ?? []).map(
+					({ model }) => model,
+				),
+			});
 
 		// C5 incremental review: with no explicit base ref, an enabled
 		// `incrementalReview` toggle scopes the review to lastPassSha..HEAD.

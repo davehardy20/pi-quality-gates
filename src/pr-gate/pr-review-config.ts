@@ -18,9 +18,18 @@ const MODEL_FALLBACKS_PATH = join(
 	"model-fallbacks.json",
 );
 
+export interface ReviewerModelIdentity {
+	provider?: unknown;
+	id?: unknown;
+}
+
 export interface ResolveReviewerModelConfigOptions {
 	configPath?: string;
 	readFile?: (path: string) => string;
+	/** Active parent-session model, used when the fallback config is unavailable. */
+	sessionModel?: ReviewerModelIdentity;
+	/** Session-scoped retry candidates, in preference order. */
+	sessionFallbackModels?: readonly ReviewerModelIdentity[];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -32,9 +41,32 @@ function normalizedModel(value: unknown): string | null {
 	return value.trim() || null;
 }
 
+function modelIdentifier(
+	model: ReviewerModelIdentity | undefined,
+): string | null {
+	const provider = normalizedModel(model?.provider);
+	const id = normalizedModel(model?.id);
+	return provider && id ? `${provider}/${id}` : null;
+}
+
+function resolveSessionModelConfig(
+	options: ResolveReviewerModelConfigOptions,
+): Pick<ReviewConfig, "model" | "fallbackModels"> {
+	const models = [
+		options.sessionModel,
+		...(options.sessionFallbackModels ?? []),
+	]
+		.map(modelIdentifier)
+		.filter((model): model is string => model !== null);
+	const [model = null, ...fallbackModels] = [...new Set(models)];
+	return { model, fallbackModels };
+}
+
 /**
  * Resolve the PR reviewer model from ~/.pi/agent/model-fallbacks.json.
- * Missing or malformed config deliberately falls back to Pi's session model.
+ * Missing or malformed config uses the active parent-session model and its
+ * session-scoped retry candidates. Without either, Pi's own default selection
+ * remains the fail-closed review attempt.
  */
 export function resolveReviewerModelConfig(
 	options: ResolveReviewerModelConfigOptions = {},
@@ -46,12 +78,12 @@ export function resolveReviewerModelConfig(
 			readFile(options.configPath ?? MODEL_FALLBACKS_PATH),
 		);
 		if (!isRecord(parsed) || !isRecord(parsed.profiles)) {
-			return { model: null, fallbackModels: [] };
+			return resolveSessionModelConfig(options);
 		}
 		const profile = parsed.profiles[REVIEWER_MODEL_PROFILE];
-		if (!isRecord(profile)) return { model: null, fallbackModels: [] };
+		if (!isRecord(profile)) return resolveSessionModelConfig(options);
 		const model = normalizedModel(profile.primary);
-		if (!model) return { model: null, fallbackModels: [] };
+		if (!model) return resolveSessionModelConfig(options);
 		const fallbackModels: string[] = [];
 		if (Array.isArray(profile.fallbacks)) {
 			for (const candidate of profile.fallbacks) {
@@ -67,7 +99,7 @@ export function resolveReviewerModelConfig(
 		}
 		return { model, fallbackModels };
 	} catch {
-		return { model: null, fallbackModels: [] };
+		return resolveSessionModelConfig(options);
 	}
 }
 
@@ -80,8 +112,8 @@ export function resolveReviewerModelConfig(
  * `resolvePrReviewConfig()` at review time.
  */
 export const PR_REVIEW_CONFIG: ReviewConfig = {
-	// When model-fallbacks.json is unavailable, let Pi select the session
-	// model rather than preserving stale provider/model literals in source.
+	// When model-fallbacks.json is unavailable, resolvePrReviewConfig() uses the
+	// active session model and its scoped retry candidates rather than stale source literals.
 	model: null,
 	fallbackModels: [],
 	minChangedLines: 0,
@@ -151,8 +183,10 @@ export const PR_REVIEW_CONFIG: ReviewConfig = {
 };
 
 /** Resolve the default reviewer config immediately before a review starts. */
-export function resolvePrReviewConfig(): ReviewConfig {
-	return { ...PR_REVIEW_CONFIG, ...resolveReviewerModelConfig() };
+export function resolvePrReviewConfig(
+	options: ResolveReviewerModelConfigOptions = {},
+): ReviewConfig {
+	return { ...PR_REVIEW_CONFIG, ...resolveReviewerModelConfig(options) };
 }
 
 /**

@@ -36,7 +36,7 @@ export interface ReviewOptions {
 /** Reviewer configuration. Used by the pr-gate PR_REVIEW_CONFIG and the
  * reviewer execution core. */
 export interface ReviewConfig {
-	/** Model override for the reviewer (null = use session model) */
+	/** Model override for the reviewer (null = spawned Pi selects its default) */
 	model: string | null;
 	/** Ordered fallback models tried when the primary model fails with an
 	 * empty-output model failure (e.g. quota exhaustion, empty response).

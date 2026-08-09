@@ -33,7 +33,10 @@ function createMockPi(): ExtensionAPI & { userMessages: string[] } {
 	} as unknown as ExtensionAPI & { userMessages: string[] };
 }
 
-function createMockContext(linterClean = true): ExtensionContext {
+function createMockContext(
+	linterClean = true,
+	model?: { provider: string; id: string },
+): ExtensionContext {
 	const branch: Array<{
 		type: string;
 		message?: { role: string; content: string };
@@ -54,6 +57,7 @@ function createMockContext(linterClean = true): ExtensionContext {
 	}
 	return {
 		cwd: "/repo",
+		model,
 		sessionManager: {
 			getBranch: () => branch,
 		},
@@ -195,6 +199,23 @@ describe("pr-review dispatch", () => {
 		expect(input.state.tokens.hasPass(HEAD_SHA)).toBe(true);
 		expect(result.message).toContain("PASS");
 		expect(result.message).toContain(HEAD_SHA);
+	});
+
+	it("passes the active extension context to runtime config resolution", async () => {
+		const pi = createMockPi();
+		const ctx = createMockContext(true, {
+			provider: "session",
+			id: "override",
+		});
+		const resolveReviewConfig = vi.fn(() => PR_REVIEW_CONFIG);
+		const dispatch = createPrReviewDispatch({
+			...createTestDeps(makePassReport()),
+			resolveReviewConfig,
+		});
+
+		await dispatch.dispatch(createInput(pi, { ctx }));
+
+		expect(resolveReviewConfig).toHaveBeenCalledWith(ctx);
 	});
 
 	it("blocks PASS reports that omit required test execution", async () => {
