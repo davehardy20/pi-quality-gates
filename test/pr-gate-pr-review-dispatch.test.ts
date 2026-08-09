@@ -4,11 +4,15 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 import { createPrGateState, resolveHeadSha } from "../src/pr-gate/index.js";
-import { PR_REVIEW_CONFIG } from "../src/pr-gate/pr-review-config.js";
+import {
+	PR_REVIEW_CONFIG,
+	resolvePrReviewConfig,
+} from "../src/pr-gate/pr-review-config.js";
 import {
 	createPrReviewDispatch,
 	type PrReviewDispatchDeps,
 	type PrReviewDispatchInput,
+	resolveRuntimeReviewConfig,
 } from "../src/pr-gate/pr-review-dispatch.js";
 import type {
 	ReviewerExecution,
@@ -216,6 +220,34 @@ describe("pr-review dispatch", () => {
 		await dispatch.dispatch(createInput(pi, { ctx }));
 
 		expect(resolveReviewConfig).toHaveBeenCalledWith(ctx);
+	});
+
+	it("uses scoped session fallbacks when fallback configuration is unavailable", () => {
+		const ctx = createMockContext(true, {
+			provider: "session",
+			id: "primary",
+		}) as ExtensionContext & { scopedModels?: unknown };
+		const scopedModels: unknown = [
+			{ model: { provider: "session", id: "primary" } },
+			{ model: { provider: "fallback", id: "first" } },
+			{ model: { provider: "fallback", id: "first" } },
+			{ model: { provider: "fallback", id: "second" } },
+		];
+		ctx.scopedModels = scopedModels as typeof ctx.scopedModels;
+
+		const config = resolveRuntimeReviewConfig(ctx, (options) =>
+			resolvePrReviewConfig({
+				...options,
+				readFile: () => {
+					throw new Error("ENOENT");
+				},
+			}),
+		);
+
+		expect(config).toMatchObject({
+			model: "session/primary",
+			fallbackModels: ["fallback/first", "fallback/second"],
+		});
 	});
 
 	it("blocks PASS reports that omit required test execution", async () => {
