@@ -20,7 +20,7 @@ import type { ReviewReport } from "../shared/review-types.js";
 import { diffCoveragePercent } from "../shared/review-types.js";
 import { decidePushGate } from "./gate-decision.js";
 import type { PassTokenStore } from "./pass-token-store.js";
-import { PR_REVIEW_CONFIG } from "./pr-review-config.js";
+import { resolvePrReviewConfig } from "./pr-review-config.js";
 import {
 	createBoundedTextCapture,
 	type ReviewerExecution,
@@ -174,10 +174,12 @@ export interface PrReviewDispatchDeps {
 	log?: (msg: string) => void;
 	/**
 	 * Review config overrides (limits, filters, and review-quality toggles
-	 * such as `useStructuredHunks` / `incrementalReview`). Defaults to
-	 * `PR_REVIEW_CONFIG`.
+	 * such as `useStructuredHunks` / `incrementalReview`). When absent, model
+	 * configuration is resolved from ~/.pi/agent/model-fallbacks.json per review.
 	 */
 	reviewConfig?: ReviewConfig;
+	/** Resolve the runtime default config when no explicit override is injected. */
+	resolveReviewConfig?: () => ReviewConfig;
 	/**
 	 * Git ref verifier used by incremental review to confirm the last-PASS
 	 * sha still resolves before scoping to it. Defaults to `git rev-parse
@@ -532,7 +534,7 @@ export function createPrReviewDispatch(
 		gatherDiff,
 		extractTask: extractOriginalTask,
 		log: console.error,
-		reviewConfig: PR_REVIEW_CONFIG,
+		resolveReviewConfig: resolvePrReviewConfig,
 		verifyRef: verifyGitRef,
 		reviewerExecution: missingReviewerExecution(),
 		...partialDeps,
@@ -558,7 +560,10 @@ export function createPrReviewDispatch(
 	): Promise<ReviewerResult> {
 		const { ctx, baseRef: explicitBaseRef } = input;
 		const cwd = ctx.cwd;
-		const config = deps.reviewConfig ?? PR_REVIEW_CONFIG;
+		const config =
+			deps.reviewConfig ??
+			deps.resolveReviewConfig?.() ??
+			resolvePrReviewConfig();
 
 		// C5 incremental review: with no explicit base ref, an enabled
 		// `incrementalReview` toggle scopes the review to lastPassSha..HEAD.

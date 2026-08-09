@@ -294,16 +294,38 @@ export function createReviewerExecution(
 }
 
 /**
+ * Pi may print this no-session startup notice even when the model returns no
+ * reviewer output. Treat it as transport noise, but only when every nonblank
+ * line in a stream matches the known notice.
+ */
+function isStartupNoiseOnly(value: string): boolean {
+  const lines = value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return (
+    lines.length > 0 &&
+    lines.every((line) =>
+      /^Configuration file not found at .+\.pi[/\\]settings\.json\. Using defaults\.$/.test(
+        line,
+      ),
+    )
+  );
+}
+
+/**
  * Detect a child result that looks like an empty-output model failure
  * (e.g. quota exhaustion or an empty model response) rather than a real
- * review failure or error. Such results are retryable via model fallback:
- * zero review output, no stderr, clean exit, and no timeout.
+ * review failure or error. Startup-noise-only streams count as empty so the
+ * fallback chain remains available when Pi's child startup emits its notice.
  */
 function isEmptyModelFailure(result: ReviewerResult): boolean {
+  const hasNoReviewerOutput = (value: string) =>
+    value.trim() === "" || isStartupNoiseOnly(value);
   return (
     result.report === null &&
-    result.rawOutput.trim() === "" &&
-    result.stderr.trim() === "" &&
+    hasNoReviewerOutput(result.rawOutput) &&
+    hasNoReviewerOutput(result.stderr) &&
     result.exitCode === 0 &&
     !result.timedOut
   );
