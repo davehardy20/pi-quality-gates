@@ -535,12 +535,7 @@ export function createPrReviewDispatch(
 		extractTask: extractOriginalTask,
 		log: console.error,
 		resolveReviewConfig: (ctx) =>
-			resolvePrReviewConfig({
-				sessionModel: ctx.model,
-				sessionFallbackModels: (ctx.scopedModels ?? []).map(
-					({ model }) => model,
-				),
-			}),
+			resolvePrReviewConfig({ sessionModel: ctx.model }),
 		verifyRef: verifyGitRef,
 		reviewerExecution: missingReviewerExecution(),
 		...partialDeps,
@@ -569,12 +564,7 @@ export function createPrReviewDispatch(
 		const config =
 			deps.reviewConfig ??
 			deps.resolveReviewConfig?.(ctx) ??
-			resolvePrReviewConfig({
-				sessionModel: ctx.model,
-				sessionFallbackModels: (ctx.scopedModels ?? []).map(
-					({ model }) => model,
-				),
-			});
+			resolvePrReviewConfig({ sessionModel: ctx.model });
 
 		// C5 incremental review: with no explicit base ref, an enabled
 		// `incrementalReview` toggle scopes the review to lastPassSha..HEAD.
