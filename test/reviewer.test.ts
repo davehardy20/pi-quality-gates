@@ -386,6 +386,41 @@ describe("createReviewerExecution model fallback", () => {
 		expect(result.report?.status).toBe("PASS");
 	});
 
+	it("retries when startup noise is the only child output", async () => {
+		const calls: Array<string | null> = [];
+		const startupNoise =
+			"Configuration file not found at /tmp/.pi/settings.json. Using defaults.\n";
+		const spawnReviewer = vi.fn(
+			async (_task, _prompt, config: ReviewConfig) => {
+				calls.push(config.model);
+				if (config.model === "primary/model") {
+					return {
+						...emptyFailureResult(config.model),
+						rawOutput: startupNoise,
+						stderr: startupNoise,
+					};
+				}
+				return passResult(config.model ?? "unknown");
+			},
+		);
+		const exec = createReviewerExecution({
+			getPromptsDir: () => "/prompts",
+			spawnReviewer: spawnReviewer as never,
+			readSystemPrompt: () => "sys",
+			renderTaskTemplate: () => "task",
+		});
+
+		const result = await exec.runAttempt({
+			task: "t",
+			files: [],
+			cwd: "/r",
+			config: makeConfig("primary/model", ["fallback/model"]),
+		});
+
+		expect(calls).toEqual(["primary/model", "fallback/model"]);
+		expect(result.report?.status).toBe("PASS");
+	});
+
 	it("returns the primary failure when every fallback also fails empty", async () => {
 		const spawnReviewer = vi.fn(async (_task, _prompt, config: ReviewConfig) =>
 			emptyFailureResult(config.model ?? "unknown"),

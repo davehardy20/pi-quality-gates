@@ -1,27 +1,89 @@
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { ReviewConfig } from "../shared/review-config.js";
 
 /**
  * PR reviewer configuration.
  *
- * Shared PR review limits and legacy tool policy.
+ * Shared PR review limits and legacy tool policy. The reviewer model is
+ * resolved from the canonical `worker` profile at review time, rather than
+ * copied into source.
+ */
+const REVIEWER_MODEL_PROFILE = "worker";
+const MODEL_FALLBACKS_PATH = join(
+	homedir(),
+	".pi",
+	"agent",
+	"model-fallbacks.json",
+);
+
+export interface ResolveReviewerModelConfigOptions {
+	configPath?: string;
+	readFile?: (path: string) => string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function normalizedModel(value: unknown): string | null {
+	if (typeof value !== "string") return null;
+	return value.trim() || null;
+}
+
+/**
+ * Resolve the PR reviewer model from ~/.pi/agent/model-fallbacks.json.
+ * Missing or malformed config deliberately falls back to Pi's session model.
+ */
+export function resolveReviewerModelConfig(
+	options: ResolveReviewerModelConfigOptions = {},
+): Pick<ReviewConfig, "model" | "fallbackModels"> {
+	const readFile =
+		options.readFile ?? ((path: string) => readFileSync(path, "utf8"));
+	try {
+		const parsed: unknown = JSON.parse(
+			readFile(options.configPath ?? MODEL_FALLBACKS_PATH),
+		);
+		if (!isRecord(parsed) || !isRecord(parsed.profiles)) {
+			return { model: null, fallbackModels: [] };
+		}
+		const profile = parsed.profiles[REVIEWER_MODEL_PROFILE];
+		if (!isRecord(profile)) return { model: null, fallbackModels: [] };
+		const model = normalizedModel(profile.primary);
+		if (!model) return { model: null, fallbackModels: [] };
+		const fallbackModels: string[] = [];
+		if (Array.isArray(profile.fallbacks)) {
+			for (const candidate of profile.fallbacks) {
+				const fallback = normalizedModel(candidate);
+				if (
+					fallback &&
+					fallback !== model &&
+					!fallbackModels.includes(fallback)
+				) {
+					fallbackModels.push(fallback);
+				}
+			}
+		}
+		return { model, fallbackModels };
+	} catch {
+		return { model: null, fallbackModels: [] };
+	}
+}
+
+/**
+ * PR reviewer configuration.
  *
  * The default `/pr-review` extension path spawns a read-only host child Pi
  * (`src/pr-gate/reviewer.ts`); the sandboxed orchestrator `pr-reviewer` is
- * opt-in via PI_PR_REVIEW_BRIDGE=orchestrator.
- * These values still provide model/timeout/diff defaults, and the tool policy
- * guards any tests or dependency-injected legacy reviewer execution from
- * accidentally receiving publishing or durable-state mutation tools.
+ * opt-in via PI_PR_REVIEW_BRIDGE=orchestrator. Model values are populated by
+ * `resolvePrReviewConfig()` at review time.
  */
 export const PR_REVIEW_CONFIG: ReviewConfig = {
-	model: "zai/glm-5.2",
-	// Primary = the `worker` profile primary in ~/.pi/agent/model-fallbacks.json
-	// (stablest known-working model; enabled in ~/.pi/agent/settings.json).
-	// openai-codex/gpt-5.5 (previously pinned here) returned empty output (zero
-	// tokens in/out) in the no-session child context as of 2026-08-07 — the codex
-	// provider was failing across models that day. Fallbacks are tried in order
-	// on an empty-output model failure; Pi core has no native --model fallback,
-	// so the reviewer execution retries each model itself.
-	fallbackModels: ["kimi-coding/k3-256k", "opencode/deepseek-v4-flash"],
+	// When model-fallbacks.json is unavailable, let Pi select the session
+	// model rather than preserving stale provider/model literals in source.
+	model: null,
+	fallbackModels: [],
 	minChangedLines: 0,
 	enabled: true,
 	maxReReviewPasses: 1,
@@ -87,6 +149,11 @@ export const PR_REVIEW_CONFIG: ReviewConfig = {
 		canSplit: true,
 	},
 };
+
+/** Resolve the default reviewer config immediately before a review starts. */
+export function resolvePrReviewConfig(): ReviewConfig {
+	return { ...PR_REVIEW_CONFIG, ...resolveReviewerModelConfig() };
+}
 
 /**
  * Allowed tool names for the PR reviewer. Useful for tests and policy checks.
