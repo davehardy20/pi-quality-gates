@@ -159,10 +159,6 @@ The pipeline derives coverage after adapter execution. Status and findings summa
 
 A transitional re-export module for backward compatibility during refactoring. Re-exports symbols from `config-loader.ts`, `outcome-merger.ts`, `pipeline.ts`, `report-builder.ts`, and `markdownlint.ts`. Contains `@deprecated` functions (`runQueuedLintChecks`, `groupFilesByLinter`) — new code should import from the smaller modules directly.
 
-## Remark-lint POC (`src/linter/remark-lint-poc.ts`)
-
-A proof-of-concept remark-lint runner using `remark()` with plugins (`remark-lint`, `remark-preset-lint-recommended`, `remark-preset-lint-consistent`, etc.). **Not wired into production.** To use: swap the `.md` linter definition from markdownlint to this runner. It is not active in `DEFAULT_CONFIG`.
-
 ## Change-entrypoints
 
 | To change... | Start at | Watch out for |
@@ -218,7 +214,6 @@ A proof-of-concept remark-lint runner using `remark()` with plugins (`remark-lin
 | `src/linter/outcome-merger.ts` | Validation outcome merging |
 | `src/linter/report-builder.ts` | Issue parsing and code excerpts |
 | `src/linter/report-hygiene.ts` | Summary building and sidecar persistence |
-| `src/linter/remark-lint-poc.ts` | Inactive remark-lint proof-of-concept |
 | `src/linter/adapters/types.ts` | `LinterAdapter` interface |
 | `src/linter/adapters/cli.ts` | CLI linter adapter (Biome, Ruff, cppcheck, tflint, cargo) |
 | `src/linter/adapters/go.ts` | Go adapter composing modified-file `gofmt` checks with module-scoped `go vet` |

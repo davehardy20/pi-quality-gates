@@ -253,6 +253,7 @@ function isBuiltInIgnoredAgentArtifact(filePath: string): boolean {
 }
 
 export const __test__ = {
+	buildAdaptersFromConfig,
 	groupFilesByAdapter,
 	definitionKey,
 	isBuiltInIgnoredAgentArtifact,
