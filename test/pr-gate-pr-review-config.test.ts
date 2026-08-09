@@ -64,6 +64,19 @@ describe("PR reviewer config", () => {
 		}
 	});
 
+	it("requires policy-to-runtime tracing in the host reviewer prompt", () => {
+		const prompt = readFileSync(
+			new URL("../src/pr-gate/prompts/system.md", import.meta.url),
+			"utf8",
+		);
+		expect(prompt).toContain("Execution Policy Trace");
+		expect(prompt).toMatch(/declaration.*compiler\/normalization/is);
+		expect(prompt).toMatch(/dispatch\/preflight.*spawn\/runtime/is);
+		expect(prompt).toMatch(/contradictory hard requirements/i);
+		expect(prompt).toMatch(/redundant defaults/i);
+		expect(prompt).toMatch(/enforcement sink/i);
+	});
+
 	it("enables the PR-Agent review-quality features by default", () => {
 		// C2 structured diff hunks — labelled-hunk (__new__/__old__) diff format.
 		expect(PR_REVIEW_CONFIG.useStructuredHunks).toBe(true);
