@@ -56,14 +56,36 @@ describe("PR reviewer config", () => {
 		});
 	});
 
-	it("uses the session model when model-fallbacks is unavailable", () => {
+	it("uses the active session model and scoped retry candidates when model-fallbacks is unavailable", () => {
 		const result = resolveReviewerModelConfig({
 			readFile: () => {
 				throw new Error("ENOENT");
 			},
+			sessionModel: { provider: "active", id: "primary" },
+			sessionFallbackModels: [
+				{ provider: "active", id: "primary" },
+				{ provider: "fallback", id: "first" },
+				{ provider: "fallback", id: "first" },
+				{ provider: "fallback", id: "second" },
+			],
 		});
 
-		expect(result).toEqual({ model: null, fallbackModels: [] });
+		expect(result).toEqual({
+			model: "active/primary",
+			fallbackModels: ["fallback/first", "fallback/second"],
+		});
+	});
+
+	it("uses the active session model when model-fallbacks is malformed", () => {
+		const result = resolveReviewerModelConfig({
+			readFile: () => "{ malformed",
+			sessionModel: { provider: "session", id: "override" },
+		});
+
+		expect(result).toEqual({
+			model: "session/override",
+			fallbackModels: [],
+		});
 	});
 
 	it("allows enough time for sandbox image startup and deep review", () => {

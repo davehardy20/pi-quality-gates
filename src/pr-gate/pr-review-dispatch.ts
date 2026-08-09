@@ -20,7 +20,10 @@ import type { ReviewReport } from "../shared/review-types.js";
 import { diffCoveragePercent } from "../shared/review-types.js";
 import { decidePushGate } from "./gate-decision.js";
 import type { PassTokenStore } from "./pass-token-store.js";
-import { resolvePrReviewConfig } from "./pr-review-config.js";
+import {
+	type ReviewerModelIdentity,
+	resolvePrReviewConfig,
+} from "./pr-review-config.js";
 import {
 	createBoundedTextCapture,
 	type ReviewerExecution,
@@ -179,7 +182,7 @@ export interface PrReviewDispatchDeps {
 	 */
 	reviewConfig?: ReviewConfig;
 	/** Resolve the runtime default config when no explicit override is injected. */
-	resolveReviewConfig?: () => ReviewConfig;
+	resolveReviewConfig?: (ctx: ExtensionContext) => ReviewConfig;
 	/**
 	 * Git ref verifier used by incremental review to confirm the last-PASS
 	 * sha still resolves before scoping to it. Defaults to `git rev-parse
@@ -509,6 +512,37 @@ export function defaultIsWorktreeClean(cwd: string): boolean {
 	}
 }
 
+type ScopedModelsContext = ExtensionContext & { scopedModels?: unknown };
+
+/**
+ * Return the active session's retry candidates. Older Pi SDKs do not declare
+ * `scopedModels`, so inspect it structurally for compatibility.
+ */
+function resolveSessionFallbackModels(
+	ctx: ExtensionContext,
+): ReviewerModelIdentity[] {
+	const scopedModels = (ctx as ScopedModelsContext).scopedModels;
+	if (!Array.isArray(scopedModels)) return [];
+	return scopedModels.flatMap((candidate) => {
+		if (typeof candidate !== "object" || candidate === null) return [];
+		const model = (candidate as { model?: unknown }).model;
+		return typeof model === "object" && model !== null
+			? [model as ReviewerModelIdentity]
+			: [];
+	});
+}
+
+/** Resolve the reviewer config from the active extension session. */
+export function resolveRuntimeReviewConfig(
+	ctx: ExtensionContext,
+	resolveConfig = resolvePrReviewConfig,
+): ReviewConfig {
+	return resolveConfig({
+		sessionModel: ctx.model,
+		sessionFallbackModels: resolveSessionFallbackModels(ctx),
+	});
+}
+
 export function createPrReviewDispatch(
 	partialDeps: Partial<PrReviewDispatchDeps> = {},
 ): {
@@ -534,7 +568,7 @@ export function createPrReviewDispatch(
 		gatherDiff,
 		extractTask: extractOriginalTask,
 		log: console.error,
-		resolveReviewConfig: resolvePrReviewConfig,
+		resolveReviewConfig: resolveRuntimeReviewConfig,
 		verifyRef: verifyGitRef,
 		reviewerExecution: missingReviewerExecution(),
 		...partialDeps,
@@ -562,8 +596,8 @@ export function createPrReviewDispatch(
 		const cwd = ctx.cwd;
 		const config =
 			deps.reviewConfig ??
-			deps.resolveReviewConfig?.() ??
-			resolvePrReviewConfig();
+			deps.resolveReviewConfig?.(ctx) ??
+			resolveRuntimeReviewConfig(ctx);
 
 		// C5 incremental review: with no explicit base ref, an enabled
 		// `incrementalReview` toggle scopes the review to lastPassSha..HEAD.
