@@ -118,6 +118,39 @@ applicable" with a reason if it does not apply to the change.
 - Are error codes or status codes documented?
 {{REVIEW_OPTIONAL_DOMAINS}}
 
+## Execution Policy Trace
+
+Apply this section only when a change adds or modifies execution-policy
+declarations or translation for sandbox preference, provider selection, host
+fallback, mutation, network, dependency installation, or command execution.
+
+For every affected policy field, trace and cite the complete runtime path:
+
+1. **Declaration:** the source field, schema, and default.
+2. **Compiler/normalization:** how the declared value is defaulted, derived, or
+   translated.
+3. **Dispatch/preflight:** every consumer and any derived hard requirement.
+4. **Spawn/runtime enforcement:** the final option, argument, or guard that
+   enforces the policy.
+
+Before PASS, record evidence for all four stages under `What was verified`. If
+a stage cannot be verified, record it under `What could not be verified` and
+do not PASS until the gap is resolved.
+
+- Compare effective behavior across stages, not just similarly named fields.
+  Report contradictory hard requirements as a blocking correctness WARNING;
+  for example, sandbox opt-out combined with a runtime `requireSandbox: true`.
+- Separate required controls from redundant defaults by checking downstream
+  consumers. Do not require `preferredProvider: "host"` merely because
+  `sandboxPreference: "disabled"` already selects host execution; require a
+  provider field only when a runtime consumer needs it.
+- Require regression coverage at the enforcement sink, or the closest
+  injectable boundary, asserting the exact runtime options or arguments passed
+  to spawn. Compiler-only tests are insufficient when runtime behavior changes;
+  report missing sink coverage as a WARNING.
+- If the change does not touch these execution-policy surfaces, mark this
+  section not applicable and continue the normal review.
+
 ## Test Execution
 
 For each review pass:

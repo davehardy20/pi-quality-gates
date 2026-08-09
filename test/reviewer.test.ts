@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import {
 	createBoundedLineProcessor,
@@ -322,6 +323,36 @@ describe("createReviewerExecution model fallback", () => {
 			command: `pi --model ${model}`,
 		};
 	}
+
+	it("delivers execution-policy trace guidance to the host spawn sink", async () => {
+		let receivedSystemPrompt = "";
+		const spawnReviewer = vi.fn(
+			async (_task, systemPrompt: string, config: ReviewConfig) => {
+				receivedSystemPrompt = systemPrompt;
+				return passResult(config.model ?? "unknown");
+			},
+		);
+		const exec = createReviewerExecution({
+			getPromptsDir: () =>
+				fileURLToPath(new URL("../src/pr-gate/prompts", import.meta.url)),
+			spawnReviewer: spawnReviewer as never,
+		});
+
+		await exec.runAttempt({
+			task: "change sandbox policy",
+			files: ["src/category.ts"],
+			cwd: "/repo",
+			diff: "policy diff",
+			config: makeConfig("review-model"),
+		});
+
+		expect(spawnReviewer).toHaveBeenCalledOnce();
+		expect(receivedSystemPrompt).toContain("Execution Policy Trace");
+		expect(receivedSystemPrompt).toMatch(
+			/dispatch\/preflight.*spawn\/runtime/is,
+		);
+		expect(receivedSystemPrompt).toMatch(/enforcement sink/i);
+	});
 
 	it("retries fallback models when primary produces an empty-output model failure", async () => {
 		const calls: Array<string | null> = [];
