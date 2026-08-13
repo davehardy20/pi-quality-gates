@@ -274,6 +274,7 @@ function extractIssueLocations(
     const rawPath = match[1]?.trim();
     const lineNumber = Number.parseInt(match[2] ?? "", 10);
     if (!rawPath || !Number.isFinite(lineNumber) || lineNumber < 1) continue;
+    if (isBiomeDiffHunkLine(rawPath)) continue;
     if (rawPath.startsWith("http://") || rawPath.startsWith("https://")) {
       continue;
     }
@@ -293,6 +294,10 @@ function extractIssueLocations(
         .sort((a, b) => a - b)
         .map((lineNumber) => ({ filePath, lineNumber })),
     );
+}
+
+function isBiomeDiffHunkLine(rawPath: string): boolean {
+  return rawPath.includes("│");
 }
 
 function normalizeCliOutput(
@@ -329,16 +334,53 @@ function normalizeCliOutput(
     ) {
       return "";
     }
-    return prefixBiomeFormatterDiagnostics(trimmed);
+    return normalizeBiomeDiagnostics(trimmed);
   }
 
   return trimmed;
 }
 
-function prefixBiomeFormatterDiagnostics(output: string): string {
-  const diagnostics = extractBiomeFormatterDiagnostics(output);
-  if (diagnostics.length === 0) return output;
-  return `${diagnostics.join("\n")}\n${output}`;
+function normalizeBiomeDiagnostics(output: string): string {
+  const normalizedOutput = normalizeBiomeDiagnosticHeaders(output);
+  const diagnostics = extractBiomeFormatterDiagnostics(normalizedOutput);
+  if (diagnostics.length === 0) return normalizedOutput;
+  return `${diagnostics.join("\n")}\n${normalizedOutput}`;
+}
+
+function normalizeBiomeDiagnosticHeaders(output: string): string {
+  const lines = output.split(/\r?\n/);
+  return lines
+    .map((line, index) => normalizeBiomeDiagnosticHeader(line, lines, index))
+    .join("\n");
+}
+
+function normalizeBiomeDiagnosticHeader(
+  line: string,
+  lines: string[],
+  index: number,
+): string {
+  const headerMatch = line.match(/^(.+?):(\d+):(\d+)\s+(\S+).*━+\s*$/);
+  if (!headerMatch) return line;
+
+  const [, rawPath, lineNumber, column, category] = headerMatch;
+  if (!rawPath || !lineNumber || !column || !category) return line;
+
+  const message = findBiomeDiagnosticMessage(lines, index + 1);
+  return `${rawPath}:${lineNumber}:${column} ${category} ${message}`;
+}
+
+function findBiomeDiagnosticMessage(
+  lines: string[],
+  startIndex: number,
+): string {
+  for (let i = startIndex; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    if (/^.+?\s+\S+.*━+\s*$/.test(line)) break;
+    const messageMatch = line.match(/^\s*[×!i]\s+(.+)$/);
+    const message = messageMatch?.[1]?.trim();
+    if (message) return normalizeBiomeFormatterText(message);
+  }
+  return "Diagnostic reported by Biome";
 }
 
 function extractBiomeFormatterDiagnostics(output: string): string[] {
@@ -351,12 +393,25 @@ function extractBiomeFormatterDiagnostics(output: string): string[] {
     const rawPath = headerMatch?.[1]?.trim();
     if (!rawPath) continue;
 
-    diagnostics.push(
-      `${rawPath}:${findBiomeFormatterLine(lines, i + 1)}:1 format Formatter would have printed different content`,
-    );
+    const diagnostic = buildBiomeFormatterDiagnostic(rawPath, lines, i + 1);
+    if (diagnostic) diagnostics.push(diagnostic);
   }
 
   return diagnostics;
+}
+
+function buildBiomeFormatterDiagnostic(
+  rawPath: string,
+  lines: string[],
+  startIndex: number,
+): string | null {
+  const message = findBiomeDiagnosticMessage(lines, startIndex);
+  if (/formatting aborted due to parsing errors/i.test(message)) return null;
+
+  const lineNumber = findBiomeFormatterLine(lines, startIndex);
+  const fix = findBiomeFormatterFix(lines, startIndex);
+  const fixSuffix = fix ? ` — fix: ${fix}` : "";
+  return `${rawPath}:${lineNumber}:1 format Formatter would have printed different content${fixSuffix}`;
 }
 
 function findBiomeFormatterLine(lines: string[], startIndex: number): number {
@@ -368,6 +423,29 @@ function findBiomeFormatterLine(lines: string[], startIndex: number): number {
     if (Number.isFinite(lineNumber) && lineNumber > 0) return lineNumber;
   }
   return 1;
+}
+
+function findBiomeFormatterFix(
+  lines: string[],
+  startIndex: number,
+): string | null {
+  const addedLines: string[] = [];
+
+  for (let i = startIndex; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    if (/^.+?\s+\w+\s+━+\s*$/.test(line)) break;
+    const addedLineMatch = line.match(/^\s*(?:\d+\s+)?\d+\s+│\s+\+\s?(.*)$/);
+    if (!addedLineMatch) continue;
+    const normalized = normalizeBiomeFormatterText(addedLineMatch[1] ?? "");
+    if (normalized) addedLines.push(normalized);
+  }
+
+  if (addedLines.length !== 1) return "run biome format";
+  return `replace with: ${addedLines[0]}`;
+}
+
+function normalizeBiomeFormatterText(text: string): string {
+  return text.replaceAll("·", " ").replace(/\s+/g, " ").trim();
 }
 
 export function findProjectRoot(

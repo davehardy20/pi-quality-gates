@@ -296,7 +296,12 @@ function parseFindingLine(
 	const lineNumber = Number.parseInt(match[2] ?? "", 10);
 	const column = match[3] ? Number.parseInt(match[3], 10) : undefined;
 	const tail = match[4]?.trim() ?? "";
-	if (!rawPath || !Number.isFinite(lineNumber) || tail.length === 0) {
+	if (
+		!rawPath ||
+		!Number.isFinite(lineNumber) ||
+		tail.length === 0 ||
+		isBiomeDiffHunkPath(rawPath)
+	) {
 		return null;
 	}
 
@@ -340,6 +345,10 @@ function parseFindingLine(
 		fix,
 		lowPriority,
 	};
+}
+
+function isBiomeDiffHunkPath(rawPath: string): boolean {
+	return rawPath.includes("│");
 }
 
 function selectTopFindings(
