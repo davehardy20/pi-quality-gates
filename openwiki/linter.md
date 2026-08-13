@@ -119,7 +119,7 @@ Config keys in `linters` are file extensions (e.g., `".ts"`).
 - `DEFAULT_MAX_FINDINGS_PER_FILE = 3` — per-file cap
 - `DEFAULT_SUMMARY_MAX_CHARS = 6000` — character cap on message
 
-**Report parsing** (`parseLintReport`): detects `--- LinterName (N files) ---` section headers, parses `path:line:col: message` lines into `ParsedLintFinding`, flags `lowPriority: true` for MD013/line-length findings. Finding selection prioritises non-low-priority findings.
+**Report parsing** (`parseLintReport`): detects `--- LinterName (N files) ---` section headers, parses `path:line:col: message` lines into `ParsedLintFinding`, flags `lowPriority: true` for MD013/line-length findings. Biome formatter headers (`path format ━...`) are normalized by the CLI adapter into synthetic `path:line:1 format ...` diagnostics before summary parsing, so format-only failures still appear in concise summaries and affected-file lists. Finding selection prioritises non-low-priority findings.
 
 See [Architecture](architecture.md) → Report sidecar for the generic sidecar system.
 

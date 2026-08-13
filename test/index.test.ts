@@ -251,6 +251,27 @@ describe("post-turn-linter: core helpers", () => {
 		});
 		expect(ruffSummary.message).toContain("app.py:2:1");
 		expect(ruffSummary.message).toContain("F401");
+
+		const biomeFormatterSummary = buildSummaryFirstLintMessage({
+			report: [
+				"--- Biome (1 file) ---",
+				"test/example.ts:11:1 format Formatter would have printed different content",
+				"Checked 1 file in 4ms. No fixes applied.",
+				"Found 1 error.",
+				"",
+				"test/example.ts format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+				"",
+				"  × Formatter would have printed the following content:",
+			].join("\n"),
+			filesChecked: ["/repo/test/example.ts"],
+			affectedFiles: ["/repo/test/example.ts"],
+			cwd: "/repo",
+			reportId: 9,
+			sidecar: null,
+		});
+		expect(biomeFormatterSummary.message).toContain("test/example.ts:11:1");
+		expect(biomeFormatterSummary.message).toContain("Biome — format");
+		expect(biomeFormatterSummary.details.totalFindings).toBe(1);
 	});
 
 	it("writes redacted sidecar reports and recovers preview/slice/full separately", async () => {
