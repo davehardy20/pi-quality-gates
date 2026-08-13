@@ -440,8 +440,8 @@ function findBiomeFormatterFix(
     if (normalized) addedLines.push(normalized);
   }
 
-  if (addedLines.length === 0) return "run biome format";
-  return `replace with: ${addedLines.join(" ")}`;
+  if (addedLines.length !== 1) return "run biome format";
+  return `replace with: ${addedLines[0]}`;
 }
 
 function normalizeBiomeFormatterText(text: string): string {

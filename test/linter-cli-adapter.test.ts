@@ -120,6 +120,27 @@ describe("linter cli adapter", () => {
     ]);
   });
 
+  it("uses a generic Biome formatter fix hint for multiline replacements", () => {
+    const biomeReport = [
+      "Checked 1 file in 4ms. No fixes applied.",
+      "Found 1 error.",
+      "",
+      "test/example.ts format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+      "",
+      "  × Formatter would have printed the following content:",
+      "  ",
+      "    10    │ - ······const·value·=·DEFAULT_AGENT_PROFILES.profiles[profileName·as·AgentProfileName];",
+      "       10 │ + ······const·value·=",
+      "       11 │ + ········DEFAULT_AGENT_PROFILES.profiles[profileName·as·AgentProfileName];",
+    ].join("\n");
+
+    expect(
+      cliAdapterTest.normalizeCliOutput("biome", biomeReport, 1),
+    ).toContain(
+      "test/example.ts:10:1 format Formatter would have printed different content — fix: run biome format",
+    );
+  });
+
   it("uses a generic Biome formatter fix hint for removal-only diffs", () => {
     const biomeReport = [
       "Checked 1 file in 4ms. No fixes applied.",
