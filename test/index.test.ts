@@ -262,6 +262,8 @@ describe("post-turn-linter: core helpers", () => {
 				"test/example.ts format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
 				"",
 				"  × Formatter would have printed the following content:",
+				"  ",
+				"    139 141 │         \"agent/extensions/shared/orchestrator-agent-spec.ts:116:1 parse Expected a statement but instead found '}'.\",",
 			].join("\n"),
 			filesChecked: ["/repo/test/example.ts"],
 			affectedFiles: ["/repo/test/example.ts"],
@@ -272,6 +274,7 @@ describe("post-turn-linter: core helpers", () => {
 		expect(biomeFormatterSummary.message).toContain("test/example.ts:11:1");
 		expect(biomeFormatterSummary.message).toContain("Biome — format");
 		expect(biomeFormatterSummary.details.totalFindings).toBe(1);
+		expect(biomeFormatterSummary.message).not.toContain("139 141 │");
 	});
 
 	it("writes redacted sidecar reports and recovers preview/slice/full separately", async () => {

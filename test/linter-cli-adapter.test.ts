@@ -99,8 +99,11 @@ describe("linter cli adapter", () => {
       "  × Formatter would have printed the following content:",
       "  ",
       "    10 10 │   const value = 1;",
-      "    11    │ - ",
-      "    12 11 │   export { value };",
+      "    11    │ - ······DEFAULT_AGENT_PROFILES.profiles[",
+      "    12    │ - ········profileName·as·AgentProfileName",
+      "    13    │ - ······],",
+      "       11 │ + ······DEFAULT_AGENT_PROFILES.profiles[profileName·as·AgentProfileName],",
+      "    14 12 │   export { value };",
     ].join("\n");
 
     const normalized = cliAdapterTest.normalizeCliOutput(
@@ -110,10 +113,69 @@ describe("linter cli adapter", () => {
     );
 
     expect(normalized).toContain(
-      "test/example.ts:11:1 format Formatter would have printed different content",
+      "test/example.ts:11:1 format Formatter would have printed different content — fix: replace with: DEFAULT_AGENT_PROFILES.profiles[profileName as AgentProfileName],",
     );
     expect(cliAdapterTest.extractAffectedFiles(normalized, "/repo")).toEqual([
       "/repo/test/example.ts",
+    ]);
+  });
+
+  it("uses a generic Biome formatter fix hint for removal-only diffs", () => {
+    const biomeReport = [
+      "Checked 1 file in 4ms. No fixes applied.",
+      "Found 1 error.",
+      "",
+      "test/example.ts format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+      "",
+      "  × Formatter would have printed the following content:",
+      "  ",
+      "    10 10 │   const value = 1;",
+      "    11    │ - ",
+      "    12 11 │   export { value };",
+    ].join("\n");
+
+    expect(
+      cliAdapterTest.normalizeCliOutput("biome", biomeReport, 1),
+    ).toContain(
+      "test/example.ts:11:1 format Formatter would have printed different content — fix: run biome format",
+    );
+  });
+
+  it("normalizes Biome diagnostic headers with their message", () => {
+    const biomeReport = [
+      "Checked 1 file in 3ms. No fixes applied.",
+      "Found 2 errors.",
+      "",
+      "agent/extensions/shared/orchestrator-agent-spec.ts:116:1 parse ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+      "",
+      "  × Expected a statement but instead found '}'.",
+      "  ",
+      "    114 │   return spec;",
+      "    115 │ }",
+      "  > 116 │ }",
+      "        │ ^",
+      "  ",
+      "    139 141 │         \"agent/extensions/shared/orchestrator-agent-spec.ts:116:1 parse Expected a statement but instead found '}'.\",",
+      "",
+      "agent/extensions/shared/orchestrator-agent-spec.ts format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+      "",
+      "  × Code formatting aborted due to parsing errors. To format code with errors, enable the 'formatter.formatWithErrors' option.",
+    ].join("\n");
+
+    const normalized = cliAdapterTest.normalizeCliOutput(
+      "biome",
+      biomeReport,
+      1,
+    );
+
+    expect(normalized).toContain(
+      "agent/extensions/shared/orchestrator-agent-spec.ts:116:1 parse Expected a statement but instead found '}'.",
+    );
+    expect(normalized).not.toContain(
+      "format Formatter would have printed different content",
+    );
+    expect(cliAdapterTest.extractAffectedFiles(normalized, "/repo")).toEqual([
+      "/repo/agent/extensions/shared/orchestrator-agent-spec.ts",
     ]);
   });
 
