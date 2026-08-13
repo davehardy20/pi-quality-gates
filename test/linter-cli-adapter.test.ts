@@ -89,6 +89,34 @@ describe("linter cli adapter", () => {
     ]);
   });
 
+  it("normalizes Biome formatter diagnostics into affected files", () => {
+    const biomeReport = [
+      "Checked 1 file in 4ms. No fixes applied.",
+      "Found 1 error.",
+      "",
+      "test/example.ts format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+      "",
+      "  × Formatter would have printed the following content:",
+      "  ",
+      "    10 10 │   const value = 1;",
+      "    11    │ - ",
+      "    12 11 │   export { value };",
+    ].join("\n");
+
+    const normalized = cliAdapterTest.normalizeCliOutput(
+      "biome",
+      biomeReport,
+      1,
+    );
+
+    expect(normalized).toContain(
+      "test/example.ts:11:1 format Formatter would have printed different content",
+    );
+    expect(cliAdapterTest.extractAffectedFiles(normalized, "/repo")).toEqual([
+      "/repo/test/example.ts",
+    ]);
+  });
+
   it("does not misparse Ruff default-format output as a clean path", () => {
     // Guards the regression: the default `text` format emits ` --> path:line`,
     // which the location regex captures as ` --> path` (corrupted).

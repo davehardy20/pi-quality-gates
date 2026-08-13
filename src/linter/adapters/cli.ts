@@ -320,17 +320,54 @@ function normalizeCliOutput(
       .join("\n");
   }
 
-  if (
-    command === "biome" &&
-    exitCode === 0 &&
-    trimmed.startsWith("Checked ") &&
-    trimmed.includes("No fixes applied.") &&
-    !trimmed.includes("Found ")
-  ) {
-    return "";
+  if (command === "biome") {
+    if (
+      exitCode === 0 &&
+      trimmed.startsWith("Checked ") &&
+      trimmed.includes("No fixes applied.") &&
+      !trimmed.includes("Found ")
+    ) {
+      return "";
+    }
+    return prefixBiomeFormatterDiagnostics(trimmed);
   }
 
   return trimmed;
+}
+
+function prefixBiomeFormatterDiagnostics(output: string): string {
+  const diagnostics = extractBiomeFormatterDiagnostics(output);
+  if (diagnostics.length === 0) return output;
+  return `${diagnostics.join("\n")}\n${output}`;
+}
+
+function extractBiomeFormatterDiagnostics(output: string): string[] {
+  const lines = output.split(/\r?\n/);
+  const diagnostics: string[] = [];
+  const formatterHeaderPattern = /^(.+?)\s+format\s+━+\s*$/;
+
+  for (let i = 0; i < lines.length; i++) {
+    const headerMatch = lines[i]?.match(formatterHeaderPattern);
+    const rawPath = headerMatch?.[1]?.trim();
+    if (!rawPath) continue;
+
+    diagnostics.push(
+      `${rawPath}:${findBiomeFormatterLine(lines, i + 1)}:1 format Formatter would have printed different content`,
+    );
+  }
+
+  return diagnostics;
+}
+
+function findBiomeFormatterLine(lines: string[], startIndex: number): number {
+  for (let i = startIndex; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    if (/^.+?\s+\w+\s+━+\s*$/.test(line)) break;
+    const changedLineMatch = line.match(/^\s*(\d+)(?:\s+\d+)?\s+│\s*[+-]/);
+    const lineNumber = Number.parseInt(changedLineMatch?.[1] ?? "", 10);
+    if (Number.isFinite(lineNumber) && lineNumber > 0) return lineNumber;
+  }
+  return 1;
 }
 
 export function findProjectRoot(
