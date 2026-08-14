@@ -152,8 +152,15 @@ const COMPACT_PLUS_PATTERN = /pi-compact-plus/i;
 export function classifyReviewerFailure(
   output: ReviewerFailureSignals,
 ): string | null {
-  const combined = `${output.rawOutput}\n${output.stderr}`;
-  if (COMPACT_PLUS_PATTERN.test(combined) && STALE_CTX_PATTERN.test(combined)) {
+  // Match process diagnostics only (stderr). rawOutput may contain
+  // model-authored text that legitimately mentions pi-compact-plus or the
+  // stale-ctx message (e.g. a reviewer discussing this very code); the
+  // transport-failure signature belongs to stderr, not assistant output.
+  const diagnostics = output.stderr;
+  if (
+    COMPACT_PLUS_PATTERN.test(diagnostics) &&
+    STALE_CTX_PATTERN.test(diagnostics)
+  ) {
     return [
       "Known failure mode detected: the reviewer child crashed before model output because pi-compact-plus hit a stale extension context during auto-compaction in the ephemeral reviewer process.",
       "Remediation: ensure the parent session runs current pi-quality-gates (buildReviewerChildEnv sets COMPACT_PLUS_DISABLE_AUTO_COMPACTION=true for reviewer children) and pi-compact-plus ≥ the PR #30 lifecycle fix; if it persists, inspect the sidecar stderr for the lifecycle.ts onError frame.",

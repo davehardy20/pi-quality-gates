@@ -908,19 +908,31 @@ describe("classifyReviewerFailure", () => {
 	it("requires both the compact-plus marker and the stale signature", () => {
 		expect(
 			classifyReviewerFailure({
-				rawOutput:
+				rawOutput: "",
+				stderr:
 					"This extension ctx is stale after session replacement or reload.",
-				stderr: "",
 				exitCode: 1,
 				timedOut: false,
 			}),
 		).toBeNull();
 		expect(
 			classifyReviewerFailure({
-				rawOutput:
+				rawOutput: "",
+				stderr:
 					"Extension error (/somewhere/pi-compact-plus/src/index.ts): other error",
-				stderr: "",
 				exitCode: 1,
+				timedOut: false,
+			}),
+		).toBeNull();
+	});
+
+	it("does not classify model-authored text that mentions the stale-ctx code", () => {
+		expect(
+			classifyReviewerFailure({
+				rawOutput:
+					"Reviewing pi-compact-plus, isStaleExtensionContextError guards 'extension ctx is stale' — looks fine.",
+				stderr: "",
+				exitCode: 0,
 				timedOut: false,
 			}),
 		).toBeNull();
