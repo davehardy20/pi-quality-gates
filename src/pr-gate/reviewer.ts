@@ -117,7 +117,12 @@ export function checkReviewerPromptBudget(
   taskPrompt: string,
   config: ReviewConfig,
 ): ReviewerPromptBudgetResult {
-  const maxChars = config.maxReviewerPromptChars ?? 100_000;
+  // 0 (or negative) disables the guard entirely — documented knob semantics.
+  const configured = config.maxReviewerPromptChars;
+  if (configured !== undefined && configured <= 0) {
+    return { ok: true, actualChars: taskPrompt.length, maxChars: configured };
+  }
+  const maxChars = configured ?? 100_000;
   const actualChars = taskPrompt.length;
   if (actualChars <= maxChars) {
     return { ok: true, actualChars, maxChars };

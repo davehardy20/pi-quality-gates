@@ -868,3 +868,22 @@ describe("createReviewerExecution prompt budget", () => {
 		expect(result.report?.status).toBe("PASS");
 	});
 });
+
+describe("checkReviewerPromptBudget disable semantics", () => {
+	it("treats 0 as guard-disabled", () => {
+		const result = checkReviewerPromptBudget("x".repeat(50_000), {
+			...baseBudgetConfig(),
+			maxReviewerPromptChars: 0,
+		});
+		expect(result.ok).toBe(true);
+		expect(result.maxChars).toBe(0);
+	});
+
+	it("treats negative values as guard-disabled (-1 = no limit convention)", () => {
+		const result = checkReviewerPromptBudget("x".repeat(50_000), {
+			...baseBudgetConfig(),
+			maxReviewerPromptChars: -1,
+		});
+		expect(result.ok).toBe(true);
+	});
+});
