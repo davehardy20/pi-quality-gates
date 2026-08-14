@@ -168,6 +168,7 @@ tool allowlist and blocklist.
 - Model: **resolved at review time**, not hardcoded. `resolvePrReviewConfig()` (`resolveReviewerModelConfig`) reads the `worker` profile from `~/.pi/agent/model-fallbacks.json`; when that config is missing/malformed it falls back to the active parent-session model plus its scoped retry candidates (`ctx.model` + `ctx.scopedModels`, via `resolveRuntimeReviewConfig` / `resolveSessionFallbackModels`). Without either, Pi's own default selection is the fail-closed review attempt. The `PR_REVIEW_CONFIG.model` literal is `null` and is only a source placeholder.
 - `timeoutMs: 45 * 60_000` (45 minutes)
 - `maxDiffLines: 4000`, `maxChangedLines: 5000`
+- `maxReviewerPromptChars: 100_000` (optional; `0` or negative disables the guard). Fail-closed prompt budget: an over-budget rendered task prompt never spawns the reviewer child — dispatch surfaces a blocked prompt-budget scope-reduction message instead. Evidence is never auto-trimmed to fit (a PASS must be based on the full diff).
 - Tool policy intentionally excludes host publishing and durable state mutation
 
 **`PR_REVIEWER_FORBIDDEN_TOOLS`**: bash, git_safe, gh_safe, write/edit-style
@@ -376,6 +377,7 @@ return even when the HEAD already has a token.
 - **Report parse failure**: Child Pi output without `## Review Report` marker → sidecar written to `~/.pi/reviewer-failures/`. Check the sidecar for raw output.
 - **Test execution missing**: Report says PASS but no `### Test execution` section → overridden to `CANNOT_REVIEW`. Ensure the reviewer runs test commands.
 - **Base ref not found**: If `origin/master` doesn't exist, falls back through the chain. Verify the base ref exists.
+- **Reviewer prompt exceeded safety budget**: The rendered task prompt exceeded `maxReviewerPromptChars` (default 100000), so the reviewer child was never spawned. The blocked message from dispatch asks you to reduce scope — split unrelated/generated changes out, narrow the base ref for incremental re-review, or shrink large generated docs/fixtures — then re-run `/pr-review`. Do not raise the knob to bypass the guard. Setting it to `0` or negative disables it (not recommended).
 - **Duplicate commands**: If Pi loads both this package and old local extension files. Disable old local extensions.
 
 ## Safe-edit guidance
