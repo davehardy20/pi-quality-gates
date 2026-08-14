@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
 	buildReviewerChildEnv,
 	checkReviewerPromptBudget,
+	classifyReviewerFailure,
 	createBoundedLineProcessor,
 	createBoundedTextCapture,
 	createReviewerExecution,
@@ -885,5 +886,54 @@ describe("checkReviewerPromptBudget disable semantics", () => {
 			maxReviewerPromptChars: -1,
 		});
 		expect(result.ok).toBe(true);
+	});
+});
+
+describe("classifyReviewerFailure", () => {
+	it("classifies a compact-plus stale-ctx crash signature", () => {
+		const diag = classifyReviewerFailure({
+			rawOutput:
+				"Extension error (/Users/dave/tools/pi-compact-plus/src/index.ts): This extension ctx is stale after session replacement or reload.",
+			stderr:
+				"Error: This extension ctx is stale after session replacement or reload.\n    at Object.onError (/Users/dave/tools/pi-compact-plus/src/lifecycle.ts:56:15)",
+			exitCode: 1,
+			timedOut: false,
+		});
+		expect(diag).not.toBeNull();
+		expect(diag).toContain("pi-compact-plus");
+		expect(diag).toContain("stale extension context");
+		expect(diag).toContain("COMPACT_PLUS_DISABLE_AUTO_COMPACTION");
+	});
+
+	it("requires both the compact-plus marker and the stale signature", () => {
+		expect(
+			classifyReviewerFailure({
+				rawOutput:
+					"This extension ctx is stale after session replacement or reload.",
+				stderr: "",
+				exitCode: 1,
+				timedOut: false,
+			}),
+		).toBeNull();
+		expect(
+			classifyReviewerFailure({
+				rawOutput:
+					"Extension error (/somewhere/pi-compact-plus/src/index.ts): other error",
+				stderr: "",
+				exitCode: 1,
+				timedOut: false,
+			}),
+		).toBeNull();
+	});
+
+	it("returns null for unrelated parse failures", () => {
+		expect(
+			classifyReviewerFailure({
+				rawOutput: "garbage output",
+				stderr: "quota exceeded",
+				exitCode: 1,
+				timedOut: false,
+			}),
+		).toBeNull();
 	});
 });
