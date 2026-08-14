@@ -798,6 +798,28 @@ export function createPrReviewDispatch(
 			const report = childOutput.report;
 
 			if (!report) {
+				// Fail-closed prompt-budget guard: the reviewer was never spawned
+				// because the rendered prompt exceeded maxReviewerPromptChars. Never
+				// trim evidence to fit — reduce scope and re-run instead.
+				if (childOutput.promptBudgetExceeded) {
+					return {
+						report: null,
+						stamped: false,
+						escalated: false,
+						blocked: true,
+						message: [
+							`\`/pr-review\` could not run because the reviewer prompt exceeded the safety budget (prompt-budget guard, HEAD ${headSha}).`,
+							childOutput.rawOutput,
+							"Reduce review scope before re-running /pr-review:",
+							"1. Inspect changed files and split unrelated/generated/noisy changes into a separate PR.",
+							"2. For incremental re-review, pass a narrower explicit base ref when appropriate.",
+							"3. Remove or shrink large generated docs/fixtures where safe.",
+							"4. Re-run local validation for the reduced scope, then re-run /pr-review.",
+							"Do not push or create a PR until /pr-review passes for the exact HEAD.",
+							"Budget knob: config maxReviewerPromptChars (default 100000). Do not raise it to bypass this guard; reduce scope instead.",
+						].join("\n\n"),
+					};
+				}
 				const sidecarHint = childOutput.sidecarPath
 					? `Reviewer output preserved at: ${childOutput.sidecarPath}`
 					: "Reviewer output was not preserved (sidecar unavailable).";

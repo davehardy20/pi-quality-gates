@@ -137,15 +137,16 @@ once the container reviewer is stable.
 - Bounds result capture at 262,144 characters and fails closed on overflow.
 - Fails closed if `orchestrate` is unavailable, the request times out, or the session shuts down. Shutdown clears pending timers/correlation state.
 
-`src/pr-gate/reviewer.ts` is the default host bridge: report parsing,
-injectable reviewer execution, and `spawnReviewer` (the headless child Pi). The
-host bridge materializes a capped diff (`maxDiffLines` = 4000) and passes it to
-the child; the orchestrator bridge sets `inspectRepositoryDirectly` and skips
-parent diff materialization.
+`src/pr-gate/reviewer.ts` is the default host bridge: injectable reviewer
+execution and `spawnReviewer` (the headless child Pi). The host bridge
+materializes a capped diff (`maxDiffLines` = 4000) and passes it to the child;
+the orchestrator bridge sets `inspectRepositoryDirectly` and skips parent diff
+materialization. Both bridges delegate report parsing to the shared parser in
+`src/shared/review-report.ts`.
 
 Legacy direct child capture is also pre-close bounded: 1,048,576 characters per JSON line, 262,144 characters of assistant output, and 65,536 characters of stderr. Overflow produces a parse-failure sidecar and cannot stamp PASS.
 
-**Report parsing** (`parseReviewReport`):
+**Report parsing** (`parseReviewReport`, in `src/shared/review-report.ts`):
 - Finds `## Review Report` marker (regex, case-insensitive).
 - Extracts `STATUS:`, `CONFIDENCE:` fields.
 - Parses `#### [SEVERITY] title` finding blocks → extracts File, Category, Rule, Issue, Evidence, Suggestion, and the optional Effort estimate (minutes; `Finding.effort` is `number | null | undefined`).
@@ -164,9 +165,10 @@ Legacy direct child capture is also pre-close bounded: 1,048,576 characters per 
 tool allowlist and blocklist.
 
 **`PR_REVIEW_CONFIG`** (source: `src/pr-gate/pr-review-config.ts`):
-- Model: `zai/glm-5.2` with fallback chain `["kimi-coding/k3-256k", "opencode/deepseek-v4-flash"]` *(verify in source)*
+- Model: **resolved at review time**, not hardcoded. `resolvePrReviewConfig()` (`resolveReviewerModelConfig`) reads the `worker` profile from `~/.pi/agent/model-fallbacks.json`; when that config is missing/malformed it falls back to the active parent-session model plus its scoped retry candidates (`ctx.model` + `ctx.scopedModels`, via `resolveRuntimeReviewConfig` / `resolveSessionFallbackModels`). Without either, Pi's own default selection is the fail-closed review attempt. The `PR_REVIEW_CONFIG.model` literal is `null` and is only a source placeholder.
 - `timeoutMs: 45 * 60_000` (45 minutes)
 - `maxDiffLines: 4000`, `maxChangedLines: 5000`
+- `maxReviewerPromptChars: 100_000` (optional; `0` or negative disables the guard). Fail-closed prompt budget: an over-budget rendered task prompt never spawns the reviewer child — dispatch surfaces a blocked prompt-budget scope-reduction message instead. Evidence is never auto-trimmed to fit (a PASS must be based on the full diff).
 - Tool policy intentionally excludes host publishing and durable state mutation
 
 **`PR_REVIEWER_FORBIDDEN_TOOLS`**: bash, git_safe, gh_safe, write/edit-style
@@ -334,10 +336,11 @@ return even when the HEAD already has a token.
 | Gate decision logic | `src/pr-gate/gate-decision.ts` → `decidePushGate` | Must maintain fail-closed invariants |
 | PASS token behaviour | `src/pr-gate/pass-token-store.ts` | Only "PASS" stamps; no persistence |
 | Reviewer tool allowlist | `src/pr-gate/pr-review-config.ts` → `PR_REVIEW_CONFIG` | Run `assertPrReviewerToolPolicy()` |
+| Reviewer model resolution | `src/pr-gate/pr-review-config.ts` → `resolveReviewerModelConfig` / `resolvePrReviewConfig`; dispatch wiring in `src/pr-gate/pr-review-dispatch.ts` → `resolveRuntimeReviewConfig` / `resolveSessionFallbackModels` | Model read from `~/.pi/agent/model-fallbacks.json` `worker` profile, else active session model; source literal stays `null` |
 | Reviewer timeout/diff limits | `src/pr-gate/pr-review-config.ts` | Affects child Pi spawn and cost |
 | Reviewer bridge (host vs container) | `src/pr-gate/index.ts` → `resolveReviewerBridgeMode` / `PI_PR_REVIEW_BRIDGE` | Host default; container needs the sandbox reviewer stable |
 | Child Pi spawn args | `src/pr-gate/reviewer.ts` → `buildReviewerPiArgs` | Tool list must match policy |
-| Report parsing format | `src/pr-gate/reviewer.ts` → `parseReviewReport` | Must match prompt output format in `system.md` |
+| Report parsing format | `src/shared/review-report.ts` → `parseReviewReport` | Must match prompt output format in `system.md` |
 | Base ref fallback chain | `src/pr-gate/pr-review-dispatch.ts` → `resolveBaseRef` | Ordered: origin/master → origin/main → master → main → HEAD~1 |
 | Incremental review scoping | `src/pr-gate/pr-review-dispatch.ts` → `resolveIncrementalBaseRef` + `PassTokenStore.lastPassSha` | Default-on via `incrementalReview`; always falls back to full-range base on any doubt |
 | Auto-review guards | `src/pr-gate/auto-review-trigger.ts` → `decideAutoReview` | Sticky `lastReviewedSha` prevents loops |
@@ -374,6 +377,7 @@ return even when the HEAD already has a token.
 - **Report parse failure**: Child Pi output without `## Review Report` marker → sidecar written to `~/.pi/reviewer-failures/`. Check the sidecar for raw output.
 - **Test execution missing**: Report says PASS but no `### Test execution` section → overridden to `CANNOT_REVIEW`. Ensure the reviewer runs test commands.
 - **Base ref not found**: If `origin/master` doesn't exist, falls back through the chain. Verify the base ref exists.
+- **Reviewer prompt exceeded safety budget**: The rendered task prompt exceeded `maxReviewerPromptChars` (default 100000), so the reviewer child was never spawned. The blocked message from dispatch asks you to reduce scope — split unrelated/generated changes out, narrow the base ref for incremental re-review, or shrink large generated docs/fixtures — then re-run `/pr-review`. Do not raise the knob to bypass the guard. Setting it to `0` or negative disables it (not recommended).
 - **Duplicate commands**: If Pi loads both this package and old local extension files. Disable old local extensions.
 
 ## Safe-edit guidance
@@ -381,7 +385,7 @@ return even when the HEAD already has a token.
 - **Changing gate logic**: Always maintain the fail-closed contract. Any ambiguity or error → block. Add test cases to `test/pr-gate-gate-decision.test.ts`.
 - **Adding a gated action**: Update `DEFAULT_GATED_ACTIONS` and `GATED_TOOL_NAMES`, ensure `inferAction` handles the new action shape.
 - **Changing the reviewer tool list**: Update `PR_REVIEW_CONFIG.tools` and `PR_REVIEWER_FORBIDDEN_TOOLS`. Run `assertPrReviewerToolPolicy()` to verify. **Never** grant bash or mutating tools to the child reviewer.
-- **Changing report format**: The parser in `parseReviewReport` and the output format in `system.md` are tightly coupled. Update both together. Add test cases to `test/reviewer.test.ts`.
+- **Changing report format**: The parser in `parseReviewReport` (`src/shared/review-report.ts`) and the output format in `system.md` are tightly coupled. Update both together. Add test cases to `test/reviewer.test.ts`.
 - **Changing diff limits**: Update `maxDiffLines` and `maxChangedLines` in `pr-review-config.ts`. These are cost guards.
 
 ## Source map
@@ -393,8 +397,9 @@ return even when the HEAD already has a token.
 | `src/pr-gate/push-gate-hook.ts` | `tool_call` interceptor (veto-only) |
 | `src/pr-gate/pass-token-store.ts` | In-memory PASS token store |
 | `src/pr-gate/pr-review-dispatch.ts` | Review orchestration |
-| `src/pr-gate/reviewer.ts` | Child Pi spawn and report parsing |
-| `src/pr-gate/pr-review-config.ts` | Reviewer tool policy and config |
+| `src/pr-gate/reviewer.ts` | Child Pi spawn and report parsing delegation |
+| `src/shared/review-report.ts` | Shared `parseReviewReport` — turns reviewer text output into a `ReviewReport` |
+| `src/pr-gate/pr-review-config.ts` | Reviewer tool policy, review limits, and runtime model resolution |
 | `src/pr-gate/auto-review-trigger.ts` | Linter-clean → auto-review bridge |
 | `src/pr-gate/reviewer-skip.ts` | `.pi/reviewer.skip` parser |
 | `src/pr-gate/test-execution.ts` | Ecosystem detection and test command recommendation |
