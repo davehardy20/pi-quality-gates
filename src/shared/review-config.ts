@@ -72,6 +72,14 @@ export interface ReviewConfig {
 	maxDiffLines: number;
 	/** Max changed lines before skipping review entirely (cost guard). -1 = no limit. */
 	maxChangedLines: number;
+	/**
+	 * Fail-closed reviewer prompt budget in characters. When the rendered
+	 * task prompt exceeds this, the reviewer child is never spawned; the
+	 * dispatch surfaces an actionable scope-reduction message instead.
+	 * Never auto-trim evidence — a PASS must be based on the full diff.
+	 * 0 disables the guard (not recommended). Default 100000.
+	 */
+	maxReviewerPromptChars?: number;
 	/** Delay in ms before triggering a review after linter goes clean.
 	 *  This debounces reviews so the main agent can finish multi-step work
 	 *  before the reviewer interrupts. 0 = immediate (legacy behavior). */

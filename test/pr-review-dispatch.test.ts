@@ -821,3 +821,46 @@ describe("createPrReviewDispatch", () => {
 		}
 	});
 });
+
+describe("createPrReviewDispatch prompt budget", () => {
+	it("fails closed with scope-reduction guidance when the reviewer prompt exceeds the budget", async () => {
+		const runAttempt = vi.fn(async () => ({
+			report: null,
+			rawOutput: "",
+			exitCode: 0,
+			timedOut: false,
+			stderr: "",
+			command: "pi ...",
+			promptBudgetExceeded: true,
+		}));
+		const dispatch = createPrReviewDispatch({
+			getHeadSha: () => "abc123",
+			getBaseRef: () => "origin/main",
+			isWorktreeClean: () => true,
+			listChangedFiles: async () => ["src/foo.ts"],
+			applyDiffFilters: async (files) => files,
+			countDiffLines: async () => 10,
+			gatherDiff: async () => ({
+				text: "diff",
+				truncated: false,
+				omittedLines: 0,
+			}),
+			extractTask: () => "review",
+			reviewerExecution: {
+				runAttempt: runAttempt as never,
+			},
+		});
+
+		const result = await dispatch.dispatch({
+			ctx: { cwd: "/tmp" } as ExtensionContext,
+			state: { tokens: createPassTokenStore(), config: { enabled: true } },
+			pi: {} as ExtensionAPI,
+		});
+
+		expect(result.blocked).toBe(true);
+		expect(result.stamped).toBe(false);
+		expect(result.message).toContain("prompt-budget");
+		expect(result.message).toContain("maxReviewerPromptChars");
+		expect(result.message).toContain("re-run /pr-review");
+	});
+});

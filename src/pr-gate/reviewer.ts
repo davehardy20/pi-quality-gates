@@ -48,6 +48,9 @@ export interface ReviewerResult {
   sidecarPath?: string;
   /** True when output capture exceeded a pre-close memory limit. */
   outputOverflowed?: boolean;
+  /** True when the rendered task prompt exceeded maxReviewerPromptChars and
+   * the reviewer child was never spawned (fail-closed budget guard). */
+  promptBudgetExceeded?: boolean;
 }
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -83,6 +86,48 @@ export interface ReviewerExecution {
   runAttempt(input: ReviewerAttemptInput): Promise<ReviewerResult>;
   /** Skip parent-side diff materialization; the reviewer inspects baseRef..HEAD. */
   inspectRepositoryDirectly?: boolean;
+}
+
+/** Env for the headless reviewer child. Extensions stay enabled (the child
+ * needs extension-provided safe runners like run_vitest), but Compact+
+ * auto-compaction is disabled: the child is a one-shot --no-session process,
+ * and auto-compaction there previously crashed on stale extension contexts
+ * (see ~/Desktop/handoff.md; root cause fixed in pi-compact-plus PR #30).
+ * The kill switch keeps compact_plus_query_tool_output available. */
+export function buildReviewerChildEnv(
+  parentEnv: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
+  return {
+    ...parentEnv,
+    COMPACT_PLUS_DISABLE_AUTO_COMPACTION: "true",
+  } as Record<string, string>;
+}
+
+export interface ReviewerPromptBudgetResult {
+  ok: boolean;
+  actualChars: number;
+  maxChars: number;
+  message?: string;
+}
+
+/** Fail-closed prompt-budget guard: over-budget prompts must never spawn a
+ * reviewer child, because auto-trimming or summarizing evidence could mint a
+ * PASS on unseen diff material. Default budget 100k chars. */
+export function checkReviewerPromptBudget(
+  taskPrompt: string,
+  config: ReviewConfig,
+): ReviewerPromptBudgetResult {
+  const maxChars = config.maxReviewerPromptChars ?? 100_000;
+  const actualChars = taskPrompt.length;
+  if (actualChars <= maxChars) {
+    return { ok: true, actualChars, maxChars };
+  }
+  return {
+    ok: false,
+    actualChars,
+    maxChars,
+    message: `Reviewer prompt exceeded safety budget (${actualChars}/${maxChars} chars).`,
+  };
 }
 
 export interface ReviewerExecutionDependencies {
@@ -250,6 +295,22 @@ export function createReviewerExecution(
         input.testPlan,
         input.config.extraInstructions,
       );
+      // Prompt-budget guard (fail-closed): an over-budget prompt must never
+      // reach the child. Auto-trimming evidence could mint a PASS on unseen
+      // diff material, so return a marker result for the dispatcher to turn
+      // into an actionable scope-reduction message instead of spawning.
+      const budget = checkReviewerPromptBudget(taskPrompt, input.config);
+      if (!budget.ok) {
+        return {
+          report: null,
+          rawOutput: `prompt-budget exceeded (${budget.actualChars}/${budget.maxChars} chars). Reduce review scope: narrow baseRef, split the PR, or exclude unrelated/generated files.`,
+          exitCode: 0,
+          timedOut: false,
+          stderr: "",
+          command: "(not spawned)",
+          promptBudgetExceeded: true,
+        };
+      }
       const spawn = deps.spawnReviewer ?? spawnReviewer;
       // Stamp the diff-coverage signal onto the parsed report (metadata; not
       // authored by the reviewer child).
@@ -539,7 +600,9 @@ export async function spawnReviewer(
         cwd,
         shell: false,
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env } as Record<string, string>,
+        // Kill switch for Compact+ auto-compaction in the ephemeral reviewer
+        // child; extensions (safe runners) stay enabled. See buildReviewerChildEnv.
+        env: buildReviewerChildEnv(),
       });
 
       const cleanupControlState = () => {

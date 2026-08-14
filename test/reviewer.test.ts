@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import {
+	buildReviewerChildEnv,
+	checkReviewerPromptBudget,
 	createBoundedLineProcessor,
 	createBoundedTextCapture,
 	createReviewerExecution,
@@ -723,5 +725,146 @@ describe("formatReportForDisplay findings and test execution", () => {
 		expect(out).toContain("- **Summary:** vitest and typecheck passed");
 		expect(out).toContain("- **Sidecar:** tool-output:abc");
 		expect(out).toContain("Two findings.");
+	});
+});
+
+describe("buildReviewerChildEnv", () => {
+	it("sets the Compact+ auto-compaction kill switch without dropping parent env", () => {
+		const env = buildReviewerChildEnv({ FOO: "bar" });
+		expect(env.COMPACT_PLUS_DISABLE_AUTO_COMPACTION).toBe("true");
+		expect(env.FOO).toBe("bar");
+	});
+
+	it("overrides an inherited kill-switch value", () => {
+		const env = buildReviewerChildEnv({
+			COMPACT_PLUS_DISABLE_AUTO_COMPACTION: "false",
+		});
+		expect(env.COMPACT_PLUS_DISABLE_AUTO_COMPACTION).toBe("true");
+	});
+
+	it("defaults to the real process env", () => {
+		const env = buildReviewerChildEnv();
+		expect(env.COMPACT_PLUS_DISABLE_AUTO_COMPACTION).toBe("true");
+		expect(env.PATH).toBe(process.env.PATH);
+	});
+});
+
+describe("checkReviewerPromptBudget", () => {
+	it("allows prompts within the configured budget", () => {
+		const result = checkReviewerPromptBudget("x".repeat(1000), {
+			...baseBudgetConfig(),
+			maxReviewerPromptChars: 1000,
+		});
+		expect(result.ok).toBe(true);
+		expect(result.actualChars).toBe(1000);
+		expect(result.maxChars).toBe(1000);
+		expect(result.message).toBeUndefined();
+	});
+
+	it("rejects prompts over budget with an actionable message", () => {
+		const result = checkReviewerPromptBudget("x".repeat(1500), {
+			...baseBudgetConfig(),
+			maxReviewerPromptChars: 1000,
+		});
+		expect(result.ok).toBe(false);
+		expect(result.actualChars).toBe(1500);
+		expect(result.maxChars).toBe(1000);
+		expect(result.message).toContain("1500/1000");
+	});
+
+	it("defaults to 100000 chars when the config omits the budget", () => {
+		const result = checkReviewerPromptBudget(
+			"x".repeat(100_001),
+			baseBudgetConfig(),
+		);
+		expect(result.ok).toBe(false);
+		expect(result.maxChars).toBe(100_000);
+	});
+});
+
+function baseBudgetConfig(): ReviewConfig {
+	return {
+		model: null,
+		fallbackModels: [],
+		minChangedLines: 0,
+		enabled: true,
+		maxReReviewPasses: 0,
+		autoFixThreshold: "warning",
+		maxTokens: 8192,
+		timeoutMs: 600_000,
+		tools: ["read"],
+		allowedBashPatterns: [],
+		respectGitignore: true,
+		skipFile: null,
+		allowTestDiscovery: false,
+		testDiscoveryCommands: {},
+		maxDiffLines: 4000,
+		maxChangedLines: 5000,
+		reviewDelayMs: 0,
+	};
+}
+
+describe("createReviewerExecution prompt budget", () => {
+	function budgetPassResult() {
+		const report: ReviewReport = {
+			status: "PASS",
+			confidence: "HIGH",
+			findings: [],
+			verified: [],
+			unverifiable: [],
+			testExecution: { status: "PASS", summary: "ok" },
+			summary: "ok",
+		};
+		return {
+			report,
+			rawOutput: "## Review Report\nSTATUS: PASS\n",
+			exitCode: 0,
+			timedOut: false,
+			stderr: "",
+			command: "pi ...",
+		};
+	}
+
+	it("does not spawn when the rendered task prompt exceeds the budget", async () => {
+		const spawnReviewer = vi.fn();
+		const exec = createReviewerExecution({
+			getPromptsDir: () => "/prompts",
+			spawnReviewer: spawnReviewer as never,
+			readSystemPrompt: () => "sys",
+			renderTaskTemplate: () => "x".repeat(1500),
+		});
+		const result = await exec.runAttempt({
+			task: "t",
+			files: ["a.ts"],
+			cwd: "/r",
+			diff: "(stub)",
+			config: { ...baseBudgetConfig(), maxReviewerPromptChars: 1000 },
+		});
+
+		expect(spawnReviewer).not.toHaveBeenCalled();
+		expect(result.report).toBeNull();
+		expect(result.promptBudgetExceeded).toBe(true);
+		expect(result.rawOutput).toContain("1000");
+		expect(result.rawOutput).toContain("1500");
+	});
+
+	it("falls through to the reviewer when within budget", async () => {
+		const spawnReviewer = vi.fn(async () => budgetPassResult());
+		const exec = createReviewerExecution({
+			getPromptsDir: () => "/prompts",
+			spawnReviewer: spawnReviewer as never,
+			readSystemPrompt: () => "sys",
+			renderTaskTemplate: () => "short task",
+		});
+		const result = await exec.runAttempt({
+			task: "t",
+			files: ["a.ts"],
+			cwd: "/r",
+			diff: "(stub)",
+			config: { ...baseBudgetConfig(), maxReviewerPromptChars: 1000 },
+		});
+
+		expect(spawnReviewer).toHaveBeenCalledOnce();
+		expect(result.report?.status).toBe("PASS");
 	});
 });

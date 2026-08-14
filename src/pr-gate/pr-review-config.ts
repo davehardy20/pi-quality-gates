@@ -164,6 +164,14 @@ export const PR_REVIEW_CONFIG: ReviewConfig = {
 	},
 	maxDiffLines: 4000,
 	maxChangedLines: 5000,
+	/**
+	 * Fail-closed reviewer prompt budget in characters. When the rendered
+	 * task prompt exceeds this, the reviewer child is never spawned; the
+	 * dispatch surfaces an actionable scope-reduction message instead.
+	 * Never auto-trim evidence — a PASS must be based on the full diff.
+	 * 0 disables the guard (not recommended).
+	 */
+	maxReviewerPromptChars: 100_000,
 	reviewDelayMs: 0,
 	// C2 structured diff hunks — ON by default. Adopts the PR-Agent
 	// labelled-hunk (__new hunk__ / __old hunk__) diff format so the reviewer
