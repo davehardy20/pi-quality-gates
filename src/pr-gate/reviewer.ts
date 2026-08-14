@@ -135,6 +135,40 @@ export function checkReviewerPromptBudget(
   };
 }
 
+/** Inputs for {@link classifyReviewerFailure} — the parse-failed child output. */
+export interface ReviewerFailureSignals {
+  rawOutput: string;
+  stderr: string;
+  exitCode: number;
+  timedOut: boolean;
+}
+
+const STALE_CTX_PATTERN = /extension ctx is stale/i;
+const COMPACT_PLUS_PATTERN = /pi-compact-plus/i;
+
+/** Known-failure classifier for parse-failed reviewer children. Returns an
+ * actionable diagnostic string, or null when the signature is unrecognized.
+ * Additive only: callers still fail closed; this never changes the verdict. */
+export function classifyReviewerFailure(
+  output: ReviewerFailureSignals,
+): string | null {
+  // Match process diagnostics only (stderr). rawOutput may contain
+  // model-authored text that legitimately mentions pi-compact-plus or the
+  // stale-ctx message (e.g. a reviewer discussing this very code); the
+  // transport-failure signature belongs to stderr, not assistant output.
+  const diagnostics = output.stderr;
+  if (
+    COMPACT_PLUS_PATTERN.test(diagnostics) &&
+    STALE_CTX_PATTERN.test(diagnostics)
+  ) {
+    return [
+      "Known failure mode detected: the reviewer child crashed before model output because pi-compact-plus hit a stale extension context during auto-compaction in the ephemeral reviewer process.",
+      "Remediation: ensure the parent session runs current pi-quality-gates (buildReviewerChildEnv sets COMPACT_PLUS_DISABLE_AUTO_COMPACTION=true for reviewer children) and pi-compact-plus ≥ the PR #30 lifecycle fix; if it persists, inspect the sidecar stderr for the lifecycle.ts onError frame.",
+    ].join(" ");
+  }
+  return null;
+}
+
 export interface ReviewerExecutionDependencies {
   gatherDiff?: typeof gatherDiff;
   readSystemPrompt?: typeof readSystemPrompt;

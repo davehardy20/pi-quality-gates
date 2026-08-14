@@ -864,3 +864,50 @@ describe("createPrReviewDispatch prompt budget", () => {
 		expect(result.message).toContain("re-run /pr-review");
 	});
 });
+
+describe("createPrReviewDispatch stale-ctx classification", () => {
+	it("surfaces an actionable compact-plus diagnostic for stale-ctx crashes", async () => {
+		const staleStderr = [
+			"Extension error (/Users/dave/tools/pi-compact-plus/src/index.ts): This extension ctx is stale after session replacement or reload.",
+			"    at Object.onError (/Users/dave/tools/pi-compact-plus/src/lifecycle.ts:56:15)",
+		].join("\n");
+		const dispatch = createPrReviewDispatch({
+			getHeadSha: () => "abc123",
+			getBaseRef: () => "origin/master",
+			isWorktreeClean: () => true,
+			listChangedFiles: async () => ["src/foo.ts"],
+			applyDiffFilters: async (files) => files,
+			countDiffLines: async () => 10,
+			gatherDiff: async () => ({
+				text: "diff",
+				truncated: false,
+				omittedLines: 0,
+			}),
+			extractTask: () => "review",
+			reviewerExecution: {
+				runAttempt: async () => ({
+					report: null,
+					rawOutput: staleStderr,
+					exitCode: 1,
+					timedOut: false,
+					usage: "↑0 ↓0 $0.0000",
+					stderr: staleStderr,
+					command: "pi ...",
+				}),
+			},
+		});
+
+		const result = await dispatch.dispatch({
+			ctx: { cwd: "/tmp" } as ExtensionContext,
+			state: { tokens: createPassTokenStore(), config: { enabled: true } },
+			pi: {} as ExtensionAPI,
+		});
+
+		expect(result.blocked).toBe(true);
+		expect(result.stamped).toBe(false);
+		expect(result.message).toContain("could not parse review report");
+		expect(result.message).toContain("Known failure mode detected");
+		expect(result.message).toContain("pi-compact-plus");
+		expect(result.message).toContain("COMPACT_PLUS_DISABLE_AUTO_COMPACTION");
+	});
+});

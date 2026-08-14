@@ -25,6 +25,7 @@ import {
 	resolvePrReviewConfig,
 } from "./pr-review-config.js";
 import {
+	classifyReviewerFailure,
 	createBoundedTextCapture,
 	type ReviewerExecution,
 	type ReviewerResult,
@@ -830,6 +831,12 @@ export function createPrReviewDispatch(
 					blocked: true,
 					message: [
 						"PR review gate: could not parse review report from child output.",
+						...(() => {
+							const knownFailure = classifyReviewerFailure(childOutput);
+							return knownFailure
+								? [`**Known failure mode detected.** ${knownFailure}`]
+								: [];
+						})(),
 						sidecarHint,
 						formatUnparseableReviewerOutput(childOutput),
 						"Re-run /pr-review after investigating the reviewer output.",
