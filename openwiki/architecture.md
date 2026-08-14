@@ -54,7 +54,7 @@ src/index.ts
 │    │    ├── src/pr-gate/review-coordinator.ts ← shared review-start coordinator (/pr-review + pr_review)
 │    │    ├── src/pr-gate/pr-review-tool.ts ← agent-callable pr_review custom tool
 │    │    └── src/pr-gate/reviewer.ts      ← default host reviewer bridge (createReviewerExecution + spawnReviewer)
-│    ├── src/pr-gate/pr-review-config.ts   ← tool policy
+│    ├── src/pr-gate/pr-review-config.ts   ← tool policy + runtime model resolution
 │    ├── src/pr-gate/auto-review-trigger.ts ← retired helper, not registered
 │    ├── src/pr-gate/reviewer-skip.ts
 │    └── src/pr-gate/test-execution.ts
@@ -69,6 +69,7 @@ src/index.ts
      ├── lsp-auto-installer.ts  ← language server install
      ├── lsp-utils.ts           ← file filtering/grouping
      ├── review-config.ts       ← ReviewConfig interface
+     ├── review-report.ts       ← parseReviewReport (shared by both bridges)
      ├── review-types.ts        ← ReviewReport, Finding, Severity
      ├── review-severity.ts     ← threshold helpers
      ├── review-scope.ts        ← diff gathering, gitignore filter
@@ -103,6 +104,7 @@ Shared types and logic for the PR gate's review system:
 
 - **`review-types.ts`**: canonical `ReviewReport` schema with `Severity` (`CRITICAL`/`WARNING`/`NIT`), `ReviewStatus` (`PASS`/`ISSUES`/`CANNOT_REVIEW`), `ReviewConfidence`, 7 `ReviewDomain` values, and `Finding`/`TestExecutionSummary` interfaces.
 - **`review-severity.ts`**: threshold helpers including `hasCriticalSecurityFinding` — the gate's escalation trigger (CRITICAL + security domain).
+- **`review-report.ts`**: `parseReviewReport` — parses a reviewer's structured text output into a `ReviewReport`; shared by both the host bridge (`reviewer.ts`) and the orchestrator bridge (`orchestrator-reviewer-execution.ts`).
 - **`review-scope.ts`**: `gatherDiff`, `toStructuredHunks`, `countDiffLinesFast`, `extractOriginalTask`, `filterGitignoredFiles`, `capDiff`.
 - **`review-checklist.md`**: 7-domain checklist (task-completion, correctness, error-handling, security, quality, testing, documentation) referenced by reviewer prompts.
 
