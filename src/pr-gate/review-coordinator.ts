@@ -111,6 +111,13 @@ export function createReviewCoordinator(
 	let disposed = false;
 	let activeController: AbortController | undefined;
 
+	/** Local 24h start timestamp, e.g. "16:37", for kickoff messages. */
+	function formatStartTime(at: Date = new Date()): string {
+		const h = `${at.getHours()}`.padStart(2, "0");
+		const m = `${at.getMinutes()}`.padStart(2, "0");
+		return `${h}:${m}`;
+	}
+
 	function setStatus(ctx: ExtensionContext, text: string | undefined): void {
 		if (disposed) return;
 		if (ctx.hasUI) {
@@ -132,15 +139,16 @@ export function createReviewCoordinator(
 		setStatus(ctx, `PR review: running ${headSha.slice(0, 8) || "unknown"}`);
 		pi.sendMessage({
 			customType: "pr-review-status",
-			content: `PR review started for HEAD ${headSha}${dispatchInput.baseRef ? ` against ${dispatchInput.baseRef}` : ""}. This runs in the background and may take several minutes.`,
-			display: true,
+			content: `PR review started for HEAD ${headSha}${dispatchInput.baseRef ? ` against ${dispatchInput.baseRef}` : ""}. This runs in the background and may take several minutes. Start time: ${formatStartTime()}.`,
 			details: {
 				headSha,
 				baseRef: dispatchInput.baseRef ?? null,
 				enabled: state.config.enabled,
 				tokenCount: state.tokens.size,
 				status: "running",
+				startedAt: Date.now(),
 			},
+			display: true,
 		});
 		void (async () => {
 			try {
@@ -298,7 +306,7 @@ export function createReviewCoordinator(
 			return {
 				...base,
 				status: "started",
-				message: `PR review started for HEAD ${headSha}${baseRef ? ` against ${baseRef}` : ""} via ${source}. It runs in the background through the configured reviewer bridge (default host; orchestrator verifier child when PI_PR_REVIEW_BRIDGE=orchestrator — still host-side, never an Apple container). Do NOT publish yet — wait for the pr-review-pass message / re-check before calling git_safe push or gh_safe pr_create.`,
+				message: `PR review started for HEAD ${headSha}${baseRef ? ` against ${baseRef}` : ""} via ${source}. It runs in the background through the configured reviewer bridge (default host; orchestrator verifier child when PI_PR_REVIEW_BRIDGE=orchestrator — still host-side, never an Apple container). Do NOT publish yet — wait for the pr-review-pass message / re-check before calling git_safe push or gh_safe pr_create. Start time: ${formatStartTime()}.`,
 				started: true,
 			};
 		},
