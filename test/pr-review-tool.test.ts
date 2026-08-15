@@ -72,6 +72,7 @@ describe("pr_review custom tool", () => {
 		expect(result.content[0]).toMatchObject({ type: "text" });
 		expect(result.details.status).toBe("started");
 		expect(result.details.started).toBe(true);
+		expect(result.details.startedAt).toEqual(expect.any(Number));
 		expect(result.details.headSha).toBe("deadbeef");
 	});
 

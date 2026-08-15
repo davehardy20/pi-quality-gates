@@ -80,6 +80,7 @@ describe("createReviewCoordinator (shared by /pr-review and pr_review)", () => {
 		});
 		expect(result.status).toBe("disabled");
 		expect(result.started).toBe(false);
+		expect(result.startedAt).toBeUndefined();
 		expect(result.gateEnabled).toBe(false);
 		expect(dispatch).not.toHaveBeenCalled();
 	});
@@ -145,6 +146,8 @@ describe("createReviewCoordinator (shared by /pr-review and pr_review)", () => {
 		expect(result.status).toBe("started");
 		expect(result.started).toBe(true);
 		expect(result.headSha).toBe("abc123");
+		expect(typeof result.startedAt).toBe("number");
+		expect(result.startedAt ?? 0).toBeLessThanOrEqual(Date.now());
 		expect(dispatch).toHaveBeenCalledTimes(1);
 		const sent = (pi.sendMessage as ReturnType<typeof vi.fn>).mock.calls.find(
 			(c: unknown[]) =>
@@ -292,8 +295,8 @@ describe("createReviewCoordinator (shared by /pr-review and pr_review)", () => {
 				"headSha",
 				"message",
 				"started",
+				"startedAt",
 				"gateEnabled",
-				"tokenCount",
 			]),
 		);
 		// No report/findings/diff fields on the kickoff contract.
