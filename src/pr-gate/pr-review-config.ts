@@ -136,7 +136,6 @@ export const PR_REVIEW_CONFIG: ReviewConfig = {
 		"lsp_symbols",
 		"lsp_prepare_rename",
 		"git_inspect_safe",
-		"container_safe",
 		"context7_library",
 		"context7_docs",
 		"web_search",

@@ -15,10 +15,11 @@ describe("PR reviewer config", () => {
 		}
 	});
 
-	it("grants the Apple-container validation/read-only tools", () => {
+	it("grants the host read-only/validation tools", () => {
 		expect(PR_REVIEWER_TOOLS.has("read")).toBe(true);
 		expect(PR_REVIEWER_TOOLS.has("pi_docs")).toBe(false);
-		expect(PR_REVIEWER_TOOLS.has("container_safe")).toBe(true);
+		// Host-honesty: the reviewer runs host-side; container_safe is no longer granted.
+		expect(PR_REVIEWER_TOOLS.has("container_safe")).toBe(false);
 		expect(PR_REVIEWER_TOOLS.has("git_inspect_safe")).toBe(true);
 		expect(PR_REVIEWER_TOOLS.has("web_search")).toBe(true);
 		expect(PR_REVIEWER_TOOLS.has("mulch_query")).toBe(true);
@@ -110,6 +111,21 @@ describe("PR reviewer config", () => {
 			expect(prompt).not.toMatch(/\bpi_docs\b/);
 			expect(prompt).toMatch(/Pi.*documentation.*read/i);
 		}
+	});
+
+	it("keeps the live host reviewer prompt host-only and package-script-free", () => {
+		const prompt = readFileSync(
+			new URL("../src/pr-gate/prompts/system.md", import.meta.url),
+			"utf8",
+		);
+		expect(prompt).toContain("Host read-only");
+		expect(prompt).toMatch(/do NOT run package/);
+		expect(prompt).not.toContain("trusted package scripts");
+		// Duplication guard: the intro sentence and the runner bullet each appear once.
+		expect(prompt.match(/running on the host/g)?.length).toBe(1);
+		expect(
+			prompt.match(/`run_biome`, `run_vitest`, `run_typecheck`/g)?.length,
+		).toBe(1);
 	});
 
 	it("requires policy-to-runtime tracing in the host reviewer prompt", () => {

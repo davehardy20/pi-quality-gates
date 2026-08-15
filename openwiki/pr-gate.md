@@ -175,13 +175,15 @@ tool allowlist and blocklist.
 mutation tools, and all mulch/seeds mutating tools. This allowlist protects
 legacy/dependency-injected reviewer execution.
 
-The configured reviewer bridge runs the review. The default `host` bridge runs
-`git_inspect_safe` and custom validation runners on the host; the `orchestrator`
-bridge (`PI_PR_REVIEW_BRIDGE=orchestrator`) dispatches a host-side orchestrate
-`verifier`/`pr-review` child, where the parent instruction permits read-only
-Git and trusted package scripts when runners are unavailable. Host
-mutation and publishing remain forbidden on both paths, and unverifiable
-HEAD/base state still fails closed.
+The configured reviewer bridge runs the review, always host-side. The default
+`host` bridge runs `git_inspect_safe` and custom validation runners on the
+host; the `orchestrator` bridge (`PI_PR_REVIEW_BRIDGE=orchestrator`) dispatches
+a host-side orchestrate `verifier`/`pr-review` child, where the parent
+instruction permits built-in read-only Git only; when a safe validation runner
+is unavailable, that validation is recorded as NOT_RUN and package scripts
+from the reviewed checkout never run on the host. Host mutation and publishing
+remain forbidden on both paths, and unverifiable HEAD/base state still fails
+closed.
 
 **`assertPrReviewerToolPolicy()`**: startup-time safety check — throws if any
 forbidden tool appears in `PR_REVIEW_CONFIG.tools`.
@@ -360,7 +362,7 @@ return even when the HEAD already has a token.
 8. Tokens are sha-scoped, not branch-scoped.
 9. No persistence — session reload clears all tokens.
 10. Auto-review sticky guard: once attempted, same HEAD not auto-attempted again.
-11. Legacy/injected reviewer execution has no bash; the orchestrator bridge's verifier child may use built-in shell only for read-only Git and trusted package scripts. Neither path permits host mutation or publishing.
+11. Legacy/injected reviewer execution has no bash; the orchestrator bridge's verifier child may use built-in read-only Git only. When a safe validation runner is unavailable, that validation is recorded as NOT_RUN; package scripts from the reviewed checkout never run on the host. Neither path permits host mutation or publishing.
 12. `/pr-review` and `pr_review` share one coordinator, one in-progress guard, one dispatch instance, and one exact-HEAD token store — no duplicate review or stamping path.
 13. `pr_review` is asynchronous: `execute` only kicks off the background dispatch and returns compact state; it never awaits the follow-up `orchestrate` result (no deadlock).
 14. `pr_review` and the coordinator **never publish** — no `git_safe`/`gh_safe` push/pr_create/update/merge. The push gate stays fail-closed until the exact HEAD has a PASS token, so a parallel `pr_review` + publish batch cannot bypass it.
