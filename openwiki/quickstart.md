@@ -98,7 +98,7 @@ No separate config file. The PR gate uses built-in defaults defined in `src/pr-g
 
 The reviewer bridge defaults to **host** (a read-only headless child Pi runs validation against the repo checkout, where deps live). Setting `PI_PR_REVIEW_BRIDGE=orchestrator` routes the review through a host-side orchestrate `verifier`/`pr-review` child instead; neither bridge runs in a container today.
 
-PR reviewer config (`src/pr-gate/pr-review-config.ts`): model, `timeoutMs: 45 * 60_000` (45 minutes), `maxDiffLines: 4000`, `maxChangedLines: 5000`, and a read-only legacy/injected tool policy. The orchestrator bridge's verifier child prefers custom safe Git/validation tools but permits read-only Git and trusted package-script fallbacks when those tools are unavailable.
+PR reviewer config (`src/pr-gate/pr-review-config.ts`): model, `timeoutMs: 45 * 60_000` (45 minutes), `maxDiffLines: 4000`, `maxChangedLines: 5000`, and a read-only legacy/injected tool policy. The orchestrator bridge's verifier child prefers custom safe Git/validation tools, falls back to built-in read-only Git only, and records unavailable safe runners as NOT_RUN — package scripts never run on the host.
 
 ### LSP server config
 

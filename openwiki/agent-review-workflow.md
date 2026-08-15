@@ -179,12 +179,14 @@ in `src/pr-gate/pr-review-config.ts`:
 - `assertPrReviewerToolPolicy()` runs at startup and **throws** if any forbidden
   tool appears in the allowed list.
 
-The configured reviewer bridge runs the review. The default `host` bridge runs
-`git_inspect_safe` and custom validation runners on the host; the `orchestrator`
-bridge (`PI_PR_REVIEW_BRIDGE=orchestrator`) runs a host-side orchestrate
-`verifier`/`pr-review` child that may use read-only Git and trusted package
-scripts when those custom tools are absent. Host mutation and publishing remain
-forbidden on both paths; HEAD/base verification remains fail-closed.
+The configured reviewer bridge runs the review, always host-side. The
+default `host` bridge runs `git_inspect_safe` and custom validation runners
+on the host; the `orchestrator` bridge (`PI_PR_REVIEW_BRIDGE=orchestrator`)
+runs a host-side orchestrate `verifier`/`pr-review` child where the parent
+instruction permits built-in read-only Git only; unavailable safe runners
+are recorded as NOT_RUN and package scripts never run on the host. Host
+mutation and publishing remain forbidden on both paths; HEAD/base
+verification remains fail-closed.
 
 ### Linter prerequisite
 
@@ -250,7 +252,7 @@ verified test execution, on the exact HEAD.
 | `src/pr-gate/review-coordinator.ts` | Shared coordinator (eligibility, kickoff, in-progress guard) — `/pr-review` + `pr_review` |
 | `src/pr-gate/index.ts` | Registers the tool and the coordinator once |
 | `src/pr-gate/pr-review-dispatch.ts` | Background dispatch (diff scope, report parsing, stamp/escalate/block) |
-| `src/pr-gate/orchestrator-reviewer-execution.ts` | Sandboxed orchestrator dispatch + exact-HEAD PASS stamping |
+| `src/pr-gate/orchestrator-reviewer-execution.ts` | Host-side orchestrator dispatch + exact-HEAD PASS stamping |
 | `src/pr-gate/pr-review-config.ts` | Reviewer tool policy + `assertPrReviewerToolPolicy()` |
 | `src/pr-gate/gate-decision.ts` | Fail-closed decision core (unchanged by the agent path) |
 | `src/pr-gate/push-gate-hook.ts` | Veto-only `tool_call` interceptor (unchanged by the agent path) |

@@ -18,7 +18,7 @@ HEAD. Your goal is to decide whether the HEAD is safe to push: **PASS**,
    correctness concerns. Use NIT for style preferences.
 3. **Ground truth is the code, not the commit message.** Verify claims by
    reading files and running tests.
-4. **Container read-only.** You must not write files, edit code, run arbitrary
+4. **Host read-only.** You must not write files, edit code, run arbitrary
    shell commands, use git/GitHub operations, spawn containers, or mutate
    Seeds/Mulch state.
 
@@ -31,7 +31,6 @@ You have the full read-only toolset plus safe validation runners:
 - For Pi documentation, use `read` with the absolute paths supplied by Pi's system prompt
 - `context7_library`, `context7_docs` for external library documentation
 - `git_inspect_safe` for read-only git status/diff inspection
-- `container_safe` only as the Apple-container sandbox bridge
 - `run_biome`, `run_vitest`, `run_typecheck`, `run_pytest`, `run_cargo_test`,
   `run_node_test`
 
