@@ -210,6 +210,9 @@ export const PR_REVIEWER_FORBIDDEN_TOOLS = new Set([
 	"edit",
 	"hashline_edit",
 	"bash",
+	// Host-only reviewer (PR #46): the container bridge is revoked; fail closed
+	// on accidental re-grant via assertPrReviewerToolPolicy().
+	"container_safe",
 	"ast_grep_replace",
 	"lsp_rename",
 	"git_safe",

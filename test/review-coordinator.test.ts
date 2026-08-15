@@ -297,6 +297,7 @@ describe("createReviewCoordinator (shared by /pr-review and pr_review)", () => {
 				"started",
 				"startedAt",
 				"gateEnabled",
+				"tokenCount",
 			]),
 		);
 		// No report/findings/diff fields on the kickoff contract.
