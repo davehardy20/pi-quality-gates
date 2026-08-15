@@ -199,7 +199,7 @@ function renderParentInstruction(input: {
 				]
 			: []),
 		"- git_inspect_safe is optional: use it first when available; otherwise you MUST use built-in read-only Git commands against the repository.",
-		"- Prefer safe validation runners; when unavailable, use trusted package scripts according to the supplied test plan.",
+		"- Prefer safe validation runners. When a needed runner is unavailable, do NOT run package scripts from the reviewed checkout on the host; record that validation as NOT_RUN under Test execution.",
 		"- Read only the filtered changed files and run the relevant validation. Never use host mutation or publishing commands.",
 		"- Fail closed only if HEAD/base still cannot be verified after the Git fallback.",
 	].join("\n");

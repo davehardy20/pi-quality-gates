@@ -61,8 +61,9 @@ describe("createOrchestratorReviewerExecution", () => {
 		expect(instruction).toContain("Parent diff omitted:");
 		expect(instruction).toContain("git_inspect_safe is optional");
 		expect(instruction).toContain("built-in read-only Git commands");
-		expect(instruction).toContain("trusted package scripts");
-		// Honesty: the orchestrator bridge is a host-side child, never a container.
+		expect(instruction).toContain("safe validation runners");
+		// Host safety: package scripts from the reviewed checkout must never run on the host.
+		expect(instruction).toMatch(/do NOT run package scripts/);
 		expect(instruction).not.toContain("sandbox");
 		expect(instruction).not.toContain("Apple");
 		expect(instruction).toContain(
