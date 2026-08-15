@@ -331,6 +331,7 @@ export default function prGateExtension(
 				started: result.started,
 				enabled: result.gateEnabled,
 				tokenCount: result.tokenCount,
+				startedAt: result.startedAt ?? null,
 			},
 		});
 	}

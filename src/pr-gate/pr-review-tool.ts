@@ -34,6 +34,8 @@ export interface PrReviewToolDetails {
 	started: boolean;
 	gateEnabled: boolean;
 	tokenCount: number;
+	/** Epoch ms when the background dispatch kicked off (set iff started). */
+	startedAt?: number;
 }
 
 /** TypeBox input schema: an optional base ref for an intentional re-review. */
@@ -112,6 +114,7 @@ export function createPrReviewToolDefinition(deps: PrReviewToolDeps): {
 				started: result.started,
 				gateEnabled: result.gateEnabled,
 				tokenCount: result.tokenCount,
+				startedAt: result.startedAt,
 			};
 
 			return {
