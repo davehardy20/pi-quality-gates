@@ -89,7 +89,7 @@ describe("PR reviewer config", () => {
 		});
 	});
 
-	it("allows enough time for sandbox image startup and deep review", () => {
+	it("allows enough time for host-side deep review", () => {
 		expect(PR_REVIEW_CONFIG.timeoutMs).toBeGreaterThanOrEqual(45 * 60_000);
 	});
 

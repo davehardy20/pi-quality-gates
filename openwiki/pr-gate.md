@@ -346,7 +346,7 @@ return even when the HEAD already has a token.
 | Base ref fallback chain | `src/pr-gate/pr-review-dispatch.ts` → `resolveBaseRef` | Ordered: origin/master → origin/main → master → main → HEAD~1 |
 | Incremental review scoping | `src/pr-gate/pr-review-dispatch.ts` → `resolveIncrementalBaseRef` + `PassTokenStore.lastPassSha` | Default-on via `incrementalReview`; always falls back to full-range base on any doubt |
 | Auto-review guards | `src/pr-gate/auto-review-trigger.ts` → `decideAutoReview` | Sticky `lastReviewedSha` prevents loops |
-| Test execution recommendations | `src/pr-gate/test-execution.ts` | All via safe runners (`run_*` host / `container_safe` orchestrator) |
+| Test execution recommendations | `src/pr-gate/test-execution.ts` | All via safe runners (`run_*`) on the host; unavailable runners record NOT_RUN |
 | Agent review kickoff logic | `src/pr-gate/review-coordinator.ts` → `createReviewCoordinator` | Shared by `/pr-review` and `pr_review`; keep parity |
 | `pr_review` tool contract | `src/pr-gate/pr-review-tool.ts` | Tool stays async; never publishes |
 

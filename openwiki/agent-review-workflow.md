@@ -268,7 +268,9 @@ verified test execution, on the exact HEAD.
 5. An explicit `baseRef` is an intentional re-review in both wrappers.
 6. The kickoff result carries no report/diff/findings content.
 7. Legacy/injected execution has no bash; the orchestrator bridge's verifier
-   child may use built-in shell only for read-only Git and
-   trusted package scripts. Neither path permits host mutation or publishing.
+   child may use built-in read-only Git only. When a safe validation runner is
+   unavailable, that validation is recorded as NOT_RUN; package scripts from
+   the reviewed checkout never run on the host. Neither path permits host
+   mutation or publishing.
 8. PASS requires verified test execution; missing/failed tests →
    `CANNOT_REVIEW` → blocked.
