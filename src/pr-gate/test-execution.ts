@@ -39,11 +39,11 @@ export interface TestExecutionPlan {
 	runnerCommands: RecommendedTestCommand[];
 	discoveryCommand?: string;
 	/**
-	 * Where the plan executes. Defaults to the repository checkout (host bridge);
-	 * "apple-container" applies only for PI_PR_REVIEW_BRIDGE=orchestrator.
+	 * Where the plan executes. Always the repository checkout on the host
+	 * bridge (the reviewer never runs in an Apple container).
 	 */
-	executionSandbox: "repository-checkout" | "apple-container";
-	/** Container bridge used when PI_PR_REVIEW_BRIDGE=orchestrator. */
+	executionSandbox: "repository-checkout";
+	/** Retained for schema compatibility; no container bridge is wired. */
 	containerTool: "container_safe";
 	/** Reviewer-facing instruction for bounded logs and sidecar references. */
 	resultContract: string;
@@ -278,7 +278,7 @@ export function recommendTestCommands(
 export function formatTestExecutionPlan(plan: TestExecutionPlan): string {
 	const lines = [
 		`**Ecosystem:** ${plan.ecosystem}`,
-		`**Execution:** safe validation runners (run_*) against the repository checkout (Apple container via ${plan.containerTool} only when PI_PR_REVIEW_BRIDGE=orchestrator)`,
+		`**Execution:** safe validation runners (run_*) on the host against the repository checkout (host bridge only)`,
 		`**Result contract:** ${plan.resultContract}`,
 	];
 

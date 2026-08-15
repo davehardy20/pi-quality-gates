@@ -56,12 +56,12 @@ Everything else on this page follows from that rule.
           ▼
    6. Configured reviewer bridge runs (read-only; no host mutation):
       host (default): headless child Pi runs validation against the checkout
-      orchestrator (PI_PR_REVIEW_BRIDGE=orchestrator): sandboxed pr-reviewer
+      orchestrator (PI_PR_REVIEW_BRIDGE=orchestrator): host-side orchestrate verifier
           │
           ▼
    7. Bridge completion resumes dispatch → exact-HEAD PASS stamp (or block / escalate)
       host: child returns the report directly
-      orchestrator: matching tool_result handler parses the sandbox report
+      orchestrator: matching tool_result handler parses the child's report
           │
           ▼
    8. Completion message emitted
@@ -111,9 +111,9 @@ command/tool parity.
 4. Completion depends on the configured reviewer bridge:
    - host (default): the headless child Pi returns the report directly.
    - orchestrator (`PI_PR_REVIEW_BRIDGE=orchestrator`): the matching `tool_result`
-     handler in `orchestrator-reviewer-execution.ts` parses the sandbox report.
+     handler in `orchestrator-reviewer-execution.ts` parses the child's report.
    Either way the dispatch stamps a PASS token **only for the exact reviewed HEAD**.
-   The parent follow-up contains bounded metadata only; the full diff is not relayed through session context. The sandbox reviewer inspects the stated base ref and HEAD directly.
+   The parent follow-up contains bounded metadata only; the full diff is not relayed through session context. The verifier child inspects the stated base ref and HEAD directly.
 5. On completion the coordinator emits one of:
    - `pr-review-pass` — PASS report, exact-HEAD token stamped.
    - `pr-review-escalation` — CRITICAL security finding; requires human ack.
@@ -164,7 +164,7 @@ The push gate (`push-gate-hook.ts` → `gate-decision.ts`) is unchanged:
 
 ### Exact-HEAD PASS stamping
 
-A PASS token is stamped **only** for the sha the sandbox reviewer actually
+A PASS token is stamped **only** for the sha the verifier child actually
 reviewed (enforced in `orchestrator-reviewer-execution.ts`). The agent cannot
 carry a token across a HEAD change, and there is no persistence — session reload
 clears all tokens, so a re-review is required after reload (fail-safe default).
@@ -179,12 +179,14 @@ in `src/pr-gate/pr-review-config.ts`:
 - `assertPrReviewerToolPolicy()` runs at startup and **throws** if any forbidden
   tool appears in the allowed list.
 
-The configured reviewer bridge runs the review. The default `host` bridge runs
-`git_inspect_safe` and custom validation runners on the host; the `orchestrator`
-bridge (`PI_PR_REVIEW_BRIDGE=orchestrator`) runs `pr-reviewer` in a disposable
-Apple container that may use sandbox-local read-only Git and trusted package
-scripts when those custom tools are absent. Host mutation and publishing remain
-forbidden on both paths; HEAD/base verification remains fail-closed.
+The configured reviewer bridge runs the review, always host-side. The
+default `host` bridge runs `git_inspect_safe` and custom validation runners
+on the host; the `orchestrator` bridge (`PI_PR_REVIEW_BRIDGE=orchestrator`)
+runs a host-side orchestrate `verifier`/`pr-review` child where the parent
+instruction permits built-in read-only Git only; unavailable safe runners
+are recorded as NOT_RUN and package scripts never run on the host. Host
+mutation and publishing remain forbidden on both paths; HEAD/base
+verification remains fail-closed.
 
 ### Linter prerequisite
 
@@ -201,8 +203,9 @@ machinery. The agent gets enough state to drive the loop, nothing more.
 ### No new publication authority
 
 The agent gains the ability to **start** a review autonomously. It gains **no**
-ability to publish, merge, or self-approve. Approval still requires the sandboxed
-pr-reviewer to return PASS with verified test execution, on the exact HEAD.
+ability to publish, merge, or self-approve. Approval still requires the
+reviewer bridge (host child or orchestrator verifier) to return PASS with
+verified test execution, on the exact HEAD.
 
 ## Decision flowchart (agent view)
 
@@ -249,7 +252,7 @@ pr-reviewer to return PASS with verified test execution, on the exact HEAD.
 | `src/pr-gate/review-coordinator.ts` | Shared coordinator (eligibility, kickoff, in-progress guard) — `/pr-review` + `pr_review` |
 | `src/pr-gate/index.ts` | Registers the tool and the coordinator once |
 | `src/pr-gate/pr-review-dispatch.ts` | Background dispatch (diff scope, report parsing, stamp/escalate/block) |
-| `src/pr-gate/orchestrator-reviewer-execution.ts` | Sandboxed orchestrator dispatch + exact-HEAD PASS stamping |
+| `src/pr-gate/orchestrator-reviewer-execution.ts` | Host-side orchestrator dispatch + exact-HEAD PASS stamping |
 | `src/pr-gate/pr-review-config.ts` | Reviewer tool policy + `assertPrReviewerToolPolicy()` |
 | `src/pr-gate/gate-decision.ts` | Fail-closed decision core (unchanged by the agent path) |
 | `src/pr-gate/push-gate-hook.ts` | Veto-only `tool_call` interceptor (unchanged by the agent path) |
@@ -266,8 +269,10 @@ pr-reviewer to return PASS with verified test execution, on the exact HEAD.
    parallel `pr_review` + publish batch cannot bypass it.
 5. An explicit `baseRef` is an intentional re-review in both wrappers.
 6. The kickoff result carries no report/diff/findings content.
-7. Legacy/injected execution has no bash; the orchestrator bridge's disposable
-   sandbox may use built-in shell only for sandbox-local read-only Git and
-   trusted package scripts. Neither path permits host mutation or publishing.
+7. Legacy/injected execution has no bash; the orchestrator bridge's verifier
+   child may use built-in read-only Git only. When a safe validation runner is
+   unavailable, that validation is recorded as NOT_RUN; package scripts from
+   the reviewed checkout never run on the host. Neither path permits host
+   mutation or publishing.
 8. PASS requires verified test execution; missing/failed tests →
    `CANNOT_REVIEW` → blocked.

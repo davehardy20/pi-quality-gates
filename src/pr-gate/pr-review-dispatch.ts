@@ -254,14 +254,14 @@ function missingReviewerExecution(): ReviewerExecution {
 	return {
 		async runAttempt(): Promise<ReviewerResult> {
 			const message =
-				"PR review gate: no reviewer execution bridge was configured; expected sandboxed orchestrator pr-reviewer routing.";
+				"PR review gate: no reviewer execution bridge was configured; expected orchestrator verifier bridge routing.";
 			return {
 				report: null,
 				rawOutput: message,
 				exitCode: 1,
 				timedOut: false,
 				stderr: message,
-				command: "orchestrate category=pr-reviewer",
+				command: "orchestrate agentType=verifier profile=pr-review",
 			};
 		},
 	};

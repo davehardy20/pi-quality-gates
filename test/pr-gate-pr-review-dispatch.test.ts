@@ -447,7 +447,7 @@ describe("pr-review dispatch", () => {
 		expect(result.stamped).toBe(false);
 		expect(result.report).toBeNull();
 		expect(result.message).toContain(
-			"expected sandboxed orchestrator pr-reviewer routing",
+			"expected orchestrator verifier bridge routing",
 		);
 	});
 
@@ -494,7 +494,7 @@ describe("pr-review dispatch", () => {
 			exitCode: 0,
 			timedOut: false,
 			stderr: "",
-			command: "orchestrate category=pr-reviewer",
+			command: "orchestrate agentType=verifier profile=pr-review",
 		}));
 		const reviewerExecution: ReviewerExecution = {
 			inspectRepositoryDirectly: true,

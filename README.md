@@ -25,14 +25,14 @@ gate that blocks unsafe publishing until changes are reviewed.
 - Gates `gh_safe` `push` / `pr_create` behind a PASS token: the hook vetoes
   publishing until the current HEAD has been reviewed
 - `/pr-review` prepares the PR diff, then runs the configured reviewer bridge
-  (default host; Apple-container `pr-reviewer` via `PI_PR_REVIEW_BRIDGE=orchestrator`)
-  to review it; on PASS it stamps a token for that HEAD
+  (default host; orchestrator verifier child via `PI_PR_REVIEW_BRIDGE=orchestrator` —
+  still host-side, never a container) to review it; on PASS it stamps a token for that HEAD
 - An agent-callable `pr_review` custom tool requests the same review autonomously
   (over the shared coordinator) without a human running `/pr-review`
 - The main agent remains the sole publisher; the gate only vetoes and steers
 - The default host bridge runs read-only validation (`run_typecheck`, `run_vitest`,
   `run_biome`, etc.) against the repository checkout; the orchestrator bridge runs
-  in the Apple-container sandbox with broad in-container tooling. Publishing and
+  a host-side orchestrate verifier child (no container). Publishing and
   durable state mutation stay denied on both paths
 - On CRITICAL security findings the gate escalates for a human acknowledgement
 - `/pr-review` — Run a PR review for the current HEAD (optional base ref arg)
@@ -107,14 +107,17 @@ been retired in favour of explicit `/pr-review` and governed Seeds closeout
 review requests. `/pr-review` prepares a PR diff and runs the configured
 reviewer bridge to produce the `## Review Report`, stamping a PASS token before
 publishing. The default host bridge spawns a read-only headless child Pi; set
-`PI_PR_REVIEW_BRIDGE=orchestrator` to use the sandboxed `pr-reviewer` category.
+`PI_PR_REVIEW_BRIDGE=orchestrator` to route the review through a host-side
+orchestrate `verifier`/`pr-review` child (no container is involved on either
+bridge today).
 There is no separate reviewer config file; PR review uses built-in diff limits
 and the reviewer tool policy.
 
 ## Notes
 
-- `/pr-review` runs the configured reviewer bridge (default host child Pi); the
-  `orchestrate` tool is only required when `PI_PR_REVIEW_BRIDGE=orchestrator`.
+- `/pr-review` runs the configured reviewer bridge (default host child Pi; the
+  `orchestrate` tool is only required when `PI_PR_REVIEW_BRIDGE=orchestrator` is
+  set to route through the host-side verifier child).
 - LSP diagnostics are optional and disabled by default. Enable via linter config.
 - Go files are validated by default with `gofmt -l` for modified files and
   `go vet ./...` once per nearest `go.mod` module. This does not require LSP.

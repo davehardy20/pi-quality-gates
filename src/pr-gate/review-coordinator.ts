@@ -298,7 +298,7 @@ export function createReviewCoordinator(
 			return {
 				...base,
 				status: "started",
-				message: `PR review started for HEAD ${headSha}${baseRef ? ` against ${baseRef}` : ""} via ${source}. It runs in the background through the configured reviewer bridge (default host; Apple-container when PI_PR_REVIEW_BRIDGE=orchestrator). Do NOT publish yet — wait for the pr-review-pass message / re-check before calling git_safe push or gh_safe pr_create.`,
+				message: `PR review started for HEAD ${headSha}${baseRef ? ` against ${baseRef}` : ""} via ${source}. It runs in the background through the configured reviewer bridge (default host; orchestrator verifier child when PI_PR_REVIEW_BRIDGE=orchestrator — still host-side, never an Apple container). Do NOT publish yet — wait for the pr-review-pass message / re-check before calling git_safe push or gh_safe pr_create.`,
 				started: true,
 			};
 		},

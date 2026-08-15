@@ -68,8 +68,8 @@ export interface OrchestratorReviewerDiagnostic {
 
 export interface OrchestratorReviewerExecutionOptions {
 	/**
-	 * Optional token store used to stamp a PASS only after a sandboxed
-	 * `pr-reviewer` result is correlated to a known request and its exact HEAD.
+	 * Optional token store used to stamp a PASS only after an orchestrator
+	 * verifier result is correlated to a known request and its exact HEAD.
 	 * Timed-out requests remain known so a late, explicitly correlated result
 	 * can still stamp the reviewed SHA without trusting the current HEAD.
 	 */
@@ -128,7 +128,7 @@ function unavailableResult(reason: string): ReviewerResult {
 		exitCode: 1,
 		timedOut: false,
 		stderr: reason,
-		command: "orchestrate category=pr-reviewer",
+		command: "orchestrate agentType=verifier profile=pr-review",
 	};
 }
 
@@ -158,12 +158,12 @@ function renderParentInstruction(input: {
 	if (omittedFiles > 0)
 		fileLines.push(`- … ${omittedFiles} more file(s) omitted`);
 	return [
-		`Run the PR review via the sandboxed orchestrator category now. Request id: ${input.requestId}.`,
+		`Run the PR review via the orchestrator verifier bridge now. Request id: ${input.requestId}.`,
 		"",
-		"Call the `orchestrate` tool with category `pr-reviewer` and the bounded task below.",
+		"Call the `orchestrate` tool with agentType `verifier` and profile `pr-review` and the bounded task below.",
 		"Do not review in the parent conversation. Do not use host mutation or publishing tools.",
-		"The full diff is deliberately absent from this follow-up. The sandbox reviewer must inspect the repository directly.",
-		"Return the pr-reviewer result normally so the PR gate can parse its `## Review Report` block.",
+		"The full diff is deliberately absent from this follow-up. The verifier child must inspect the repository directly.",
+		"Return the verifier result normally so the PR gate can parse its `## Review Report` block.",
 		"",
 		`PR_REVIEW_REQUEST_ID: ${input.requestId}`,
 		`HEAD: ${truncateMetadata(input.headSha, 80)}`,
@@ -181,7 +181,7 @@ function renderParentInstruction(input: {
 		truncateMetadata(input.testPlan, MAX_PARENT_TEST_PLAN_CHARS),
 		"",
 		"Reviewer instructions:",
-		"- Inspect the current repository and compare the stated base ref with HEAD inside the disposable sandbox.",
+		"- Inspect the current repository and compare the stated base ref with HEAD directly.",
 		"- Treat the supplied changed-file list as the authoritative filtered review scope for every path shown; never inspect or report findings for excluded paths.",
 		...(omittedFiles > 0
 			? [
@@ -190,18 +190,18 @@ function renderParentInstruction(input: {
 			: []),
 		...(input.respectGitignore
 			? [
-					"- Apply repository `.gitignore` rules to any changed paths derived inside the sandbox before inspecting file content.",
+					"- Apply repository `.gitignore` rules to any changed paths derived by the verifier child before inspecting file content.",
 				]
 			: []),
 		...(input.skipFile
 			? [
-					`- Read and apply \`${truncateMetadata(input.skipFile, 256)}\` using gitignore semantics to any changed paths derived inside the sandbox before inspecting file content.`,
+					`- Read and apply \`${truncateMetadata(input.skipFile, 256)}\` using gitignore semantics to any changed paths derived by the verifier child before inspecting file content.`,
 				]
 			: []),
-		"- git_inspect_safe is optional: use it first when available; otherwise you MUST use built-in sandbox-local read-only Git commands against the disposable `.git` clone.",
-		"- Prefer safe validation runners; when unavailable, use trusted package scripts inside the disposable sandbox according to the supplied test plan.",
+		"- git_inspect_safe is optional: use it first when available; otherwise you MUST use built-in read-only Git commands against the repository.",
+		"- Prefer safe validation runners. When a needed runner is unavailable, do NOT run package scripts from the reviewed checkout on the host; record that validation as NOT_RUN under Test execution.",
 		"- Read only the filtered changed files and run the relevant validation. Never use host mutation or publishing commands.",
-		"- Fail closed only if HEAD/base still cannot be verified after the disposable Git fallback.",
+		"- Fail closed only if HEAD/base still cannot be verified after the Git fallback.",
 	].join("\n");
 }
 
@@ -286,7 +286,8 @@ export function createOrchestratorReviewerExecution(
 		handleToolResult(event): boolean {
 			if (
 				event.toolName !== "orchestrate" ||
-				event.input?.category !== "pr-reviewer"
+				event.input?.agentType !== "verifier" ||
+				event.input?.profile !== "pr-review"
 			) {
 				return false;
 			}
@@ -424,12 +425,12 @@ export function createOrchestratorReviewerExecution(
 					typeof pi.getActiveTools === "function" ? pi.getActiveTools() : [];
 				if (!activeTools.includes("orchestrate")) {
 					return unavailableResult(
-						"PR review gate: orchestrate tool is unavailable; cannot route /pr-review through sandboxed pr-reviewer.",
+						"PR review gate: orchestrate tool is unavailable; cannot route /pr-review through the orchestrator verifier bridge.",
 					);
 				}
 
 				const requestId = createRequestId();
-				const command = `orchestrate category=pr-reviewer requestId=${requestId}`;
+				const command = `orchestrate agentType=verifier profile=pr-review requestId=${requestId}`;
 				const headSha = input.headSha || resolveHeadSha() || "";
 				const instruction = renderParentInstruction({
 					requestId,

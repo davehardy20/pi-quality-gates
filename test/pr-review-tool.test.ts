@@ -48,6 +48,18 @@ describe("pr_review custom tool", () => {
 		).toBe(true);
 	});
 
+	it("advertises an honest reviewer bridge (no container claims)", () => {
+		const { tool } = buildTool();
+		const description = String(tool.description);
+		expect(description).toContain("default host");
+		expect(description).toContain("PI_PR_REVIEW_BRIDGE=orchestrator");
+		// The orchestrator bridge is a host-side orchestrate verifier child —
+		// it never executes in an Apple container. The description must not
+		// claim otherwise.
+		expect(description).not.toContain("Apple-container");
+		expect(description).not.toContain("Apple container");
+	});
+
 	it("starts a review and returns compact structured kickoff state", async () => {
 		const { tool } = buildTool();
 		const result = await tool.execute(

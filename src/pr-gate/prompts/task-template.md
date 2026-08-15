@@ -33,8 +33,7 @@
 
 - You are **read-only**. Do not use `write`, `edit`, `hashline_edit`, `bash`,
   `git_safe`, `gh_safe`, or any mutating Seeds/Mulch tools.
-- Use `container_safe` only as the Apple-container sandbox bridge for review-time
-  validation. Do not build/publish arbitrary images or mutate the host repo.
+- Do not use `container_safe`; this reviewer runs host-side with no container.
 - Use only the safe validation runners (`run_biome`, `run_vitest`,
   `run_typecheck`, `run_pytest`, `run_cargo_test`, `run_node_test`) to execute
   project tests.

@@ -77,7 +77,7 @@ export function createPrReviewToolDefinition(deps: PrReviewToolDeps): {
 		name: "pr_review",
 		label: "PR Review",
 		description:
-			"Request a PR review for the current HEAD via the configured reviewer bridge (default host; Apple-container when PI_PR_REVIEW_BRIDGE=orchestrator) to obtain the PASS token required by the PR gate before git_safe push / gh_safe pr_create. Asynchronous: returns kickoff state; the review completes in the background and emits a pr-review-pass message. Never publishes.",
+			"Request a PR review for the current HEAD via the configured reviewer bridge (default host; orchestrator verifier child via PI_PR_REVIEW_BRIDGE=orchestrator — runs on the host, not in a container) to obtain the PASS token required by the PR gate before git_safe push / gh_safe pr_create. Asynchronous: returns kickoff state; the review completes in the background and emits a pr-review-pass message. Never publishes.",
 		promptSnippet:
 			"pr_review — request a PR review for the current HEAD via the configured reviewer bridge (default host); required to obtain the PASS token before git_safe push / gh_safe pr_create. Returns kickoff state; wait for the pr-review-pass message before publishing.",
 		promptGuidelines: [
