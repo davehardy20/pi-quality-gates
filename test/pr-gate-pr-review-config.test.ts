@@ -98,6 +98,13 @@ describe("PR reviewer config", () => {
 		expect(PR_REVIEWER_FORBIDDEN_TOOLS.has("bash")).toBe(true);
 	});
 
+	it("forbids the revoked container bridge (fail-closed re-grant)", () => {
+		expect(PR_REVIEWER_TOOLS.has("container_safe")).toBe(false);
+		expect(PR_REVIEWER_FORBIDDEN_TOOLS.has("container_safe")).toBe(true);
+		// assertPrReviewerToolPolicy() throws if a forbidden tool lands in the allowlist.
+		expect(() => assertPrReviewerToolPolicy()).not.toThrow();
+	});
+
 	it("passes the policy assertion", () => {
 		expect(() => assertPrReviewerToolPolicy()).not.toThrow();
 	});
