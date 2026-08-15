@@ -50,7 +50,7 @@ src/index.ts
 │    ├── src/pr-gate/gate-decision.ts      ← pure decision core
 │    ├── src/pr-gate/pass-token-store.ts   ← in-memory tokens
 │    ├── src/pr-gate/pr-review-dispatch.ts ← review orchestration
-│    │    ├── src/pr-gate/orchestrator-reviewer-execution.ts ← opt-in sandbox reviewer bridge (PI_PR_REVIEW_BRIDGE=orchestrator)
+│    │    ├── src/pr-gate/orchestrator-reviewer-execution.ts ← opt-in verifier reviewer bridge (PI_PR_REVIEW_BRIDGE=orchestrator)
 │    │    ├── src/pr-gate/review-coordinator.ts ← shared review-start coordinator (/pr-review + pr_review)
 │    │    ├── src/pr-gate/pr-review-tool.ts ← agent-callable pr_review custom tool
 │    │    └── src/pr-gate/reviewer.ts      ← default host reviewer bridge (createReviewerExecution + spawnReviewer)

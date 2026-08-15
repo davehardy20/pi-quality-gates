@@ -208,10 +208,11 @@ function sendPrReviewStatus(
 /**
  * PR reviewer execution bridge. The review is read-only, so the default `host`
  * bridge spawns a headless child Pi that runs validation (e.g. run_typecheck)
- * against the repository checkout, where dependencies already live. The Apple
- * container sandbox is reserved for mutating workers; opt back into the
- * sandboxed orchestrator `pr-reviewer` with PI_PR_REVIEW_BRIDGE=orchestrator
- * once the container reviewer is stable (see mx-87a9dd).
+ * against the repository checkout, where dependencies already live. The
+ * Apple container sandbox is reserved for mutating workers; PI_PR_REVIEW_BRIDGE=orchestrator
+ * opts into a host-side orchestrator verifier child instead (see mx-87a9dd,
+ * .pi-6068 — container reviewer remains out of scope until sandboxed
+ * review execution is real).
  */
 export type PrReviewerBridgeMode = "host" | "orchestrator";
 

@@ -96,9 +96,9 @@ Default linter assignments: `.md` → markdownlint, `.ts/.tsx/.js/.jsx/.mjs/.cjs
 
 No separate config file. The PR gate uses built-in defaults defined in `src/pr-gate/pr-review-config.ts` and `src/pr-gate/index.ts`. The gate is **enabled by default** and gates `push` and `pr_create` actions.
 
-The reviewer bridge defaults to **host** (a read-only headless child Pi runs validation against the repo checkout, where deps live). Set `PI_PR_REVIEW_BRIDGE=orchestrator` to route review through the Apple-container `pr-reviewer` sandbox instead.
+The reviewer bridge defaults to **host** (a read-only headless child Pi runs validation against the repo checkout, where deps live). Setting `PI_PR_REVIEW_BRIDGE=orchestrator` routes the review through a host-side orchestrate `verifier`/`pr-review` child instead; neither bridge runs in a container today.
 
-PR reviewer config (`src/pr-gate/pr-review-config.ts`): model, `timeoutMs: 45 * 60_000` (45 minutes), `maxDiffLines: 4000`, `maxChangedLines: 5000`, and a read-only legacy/injected tool policy. The orchestrator bridge's disposable sandbox prefers custom safe Git/validation tools but permits sandbox-local read-only Git and trusted package-script fallbacks when those tools are unavailable.
+PR reviewer config (`src/pr-gate/pr-review-config.ts`): model, `timeoutMs: 45 * 60_000` (45 minutes), `maxDiffLines: 4000`, `maxChangedLines: 5000`, and a read-only legacy/injected tool policy. The orchestrator bridge's verifier child prefers custom safe Git/validation tools but permits read-only Git and trusted package-script fallbacks when those tools are unavailable.
 
 ### LSP server config
 

@@ -40,7 +40,7 @@ function passReport(): string {
 }
 
 describe("createOrchestratorReviewerExecution", () => {
-	it("requests a sandboxed pr-reviewer orchestrate run and resolves from its tool result", async () => {
+	it("requests a canonical verifier orchestrate run and resolves from its tool result", async () => {
 		const sendUserMessage = vi.fn();
 		const bridge = createOrchestratorReviewerExecution({
 			getActiveTools: () => ["orchestrate"],
@@ -54,15 +54,17 @@ describe("createOrchestratorReviewerExecution", () => {
 		expect(sendUserMessage).toHaveBeenCalledTimes(1);
 		const [instruction, options] = sendUserMessage.mock.calls[0];
 		expect(options).toEqual({ deliverAs: "followUp" });
-		expect(instruction).toContain("category `pr-reviewer`");
+		expect(instruction).toContain("agentType `verifier`");
+		expect(instruction).toContain("profile `pr-review`");
 		expect(instruction).toContain("PR_REVIEW_REQUEST_ID:");
 		expect(instruction).not.toContain("diff --git a/src/a.ts b/src/a.ts");
 		expect(instruction).toContain("Parent diff omitted:");
 		expect(instruction).toContain("git_inspect_safe is optional");
-		expect(instruction).toContain("built-in sandbox-local read-only Git");
-		expect(instruction).toContain(
-			"trusted package scripts inside the disposable sandbox",
-		);
+		expect(instruction).toContain("built-in read-only Git commands");
+		expect(instruction).toContain("trusted package scripts");
+		// Honesty: the orchestrator bridge is a host-side child, never a container.
+		expect(instruction).not.toContain("sandbox");
+		expect(instruction).not.toContain("Apple");
 		expect(instruction).toContain(
 			"Treat the supplied changed-file list as the authoritative filtered review scope",
 		);
@@ -78,7 +80,11 @@ describe("createOrchestratorReviewerExecution", () => {
 
 		const handled = bridge.handleToolResult({
 			toolName: "orchestrate",
-			input: { category: "pr-reviewer", task: `Request ${requestId}` },
+			input: {
+				agentType: "verifier",
+				profile: "pr-review",
+				task: `Request ${requestId}`,
+			},
 			content: [{ type: "text", text: passReport() }],
 			isError: false,
 		});
@@ -87,8 +93,58 @@ describe("createOrchestratorReviewerExecution", () => {
 		const result = await pendingResult;
 		expect(result.exitCode).toBe(0);
 		expect(result.report?.status).toBe("PASS");
-		expect(result.command).toContain("orchestrate category=pr-reviewer");
+		expect(result.command).toContain("agentType=verifier");
+		expect(result.command).toContain("profile=pr-review");
 		expect(bridge.pendingCount()).toBe(0);
+	});
+
+	it("resolves the pending review from a canonical verifier orchestrate input", async () => {
+		const bridge = createOrchestratorReviewerExecution({
+			getActiveTools: () => ["orchestrate"],
+			sendUserMessage: vi.fn(),
+		});
+		const pendingResult = bridge.reviewerExecution.runAttempt(
+			makeAttemptInput(),
+		);
+		const requestId = bridge.getStatus().pending[0]?.requestId;
+
+		const handled = bridge.handleToolResult({
+			toolName: "orchestrate",
+			input: {
+				agentType: "verifier",
+				profile: "pr-review",
+				task: `Request ${requestId}`,
+			},
+			content: [{ type: "text", text: passReport() }],
+			isError: false,
+		});
+
+		expect(handled).toBe(true);
+		const result = await pendingResult;
+		expect(result.exitCode).toBe(0);
+		expect(result.report?.status).toBe("PASS");
+		expect(result.command).toContain("agentType=verifier");
+		expect(result.command).toContain("profile=pr-review");
+		expect(bridge.pendingCount()).toBe(0);
+	});
+
+	it("ignores orchestrate results for non-review canonical pairs", () => {
+		const bridge = createOrchestratorReviewerExecution({
+			getActiveTools: () => ["orchestrate"],
+			sendUserMessage: vi.fn(),
+		});
+		bridge.reviewerExecution.runAttempt(makeAttemptInput());
+
+		const handled = bridge.handleToolResult({
+			toolName: "orchestrate",
+			input: { agentType: "worker", profile: "general", task: "other" },
+			content: [{ type: "text", text: passReport() }],
+			isError: false,
+		});
+
+		expect(handled).toBe(false);
+		expect(bridge.pendingCount()).toBe(1);
+		bridge.dispose("test done");
 	});
 
 	it("resolves the sole pending review from an input-light error result", async () => {
@@ -103,7 +159,7 @@ describe("createOrchestratorReviewerExecution", () => {
 		try {
 			const handled = bridge.handleToolResult({
 				toolName: "orchestrate",
-				input: { category: "pr-reviewer" },
+				input: { agentType: "verifier", profile: "pr-review" },
 				content: [
 					{
 						type: "text",
@@ -135,7 +191,7 @@ describe("createOrchestratorReviewerExecution", () => {
 		try {
 			const handled = bridge.handleToolResult({
 				toolName: "orchestrate",
-				input: { category: "pr-reviewer" },
+				input: { agentType: "verifier", profile: "pr-review" },
 				content: [
 					{
 						type: "text",
@@ -215,7 +271,11 @@ describe("createOrchestratorReviewerExecution", () => {
 
 		bridge.handleToolResult({
 			toolName: "orchestrate",
-			input: { category: "pr-reviewer", task: `Request ${requestId}` },
+			input: {
+				agentType: "verifier",
+				profile: "pr-review",
+				task: `Request ${requestId}`,
+			},
 			content: [
 				{ type: "text", text: "x".repeat(300_000) },
 				{ type: "text", text: passReport() },
@@ -310,7 +370,11 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 
 		const handled = bridge.handleToolResult({
 			toolName: "orchestrate",
-			input: { category: "pr-reviewer", task: `Request ${requestId}` },
+			input: {
+				agentType: "verifier",
+				profile: "pr-review",
+				task: `Request ${requestId}`,
+			},
 			content: [{ type: "text", text: passReportWithPreamble() }],
 			isError: true,
 		});
@@ -337,7 +401,7 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 
 		const handled = bridge.handleToolResult({
 			toolName: "orchestrate",
-			input: { category: "pr-reviewer" },
+			input: { agentType: "verifier", profile: "pr-review" },
 			content: [{ type: "text", text: passReportWithPreamble() }],
 			isError: true,
 		});
@@ -367,7 +431,11 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 
 		const handled = bridge.handleToolResult({
 			toolName: "orchestrate",
-			input: { category: "pr-reviewer", task: `Request ${requestId}` },
+			input: {
+				agentType: "verifier",
+				profile: "pr-review",
+				task: `Request ${requestId}`,
+			},
 			content: [
 				{
 					type: "text",
@@ -433,7 +501,7 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 
 		const uncorrelated = bridge.handleToolResult({
 			toolName: "orchestrate",
-			input: { category: "pr-reviewer" },
+			input: { agentType: "verifier", profile: "pr-review" },
 			content: [{ type: "text", text: passReportWithPreamble() }],
 			isError: false,
 		});
@@ -443,7 +511,11 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 
 		const correlated = bridge.handleToolResult({
 			toolName: "orchestrate",
-			input: { category: "pr-reviewer", task: `Request ${requestId}` },
+			input: {
+				agentType: "verifier",
+				profile: "pr-review",
+				task: `Request ${requestId}`,
+			},
 			content: [{ type: "text", text: passReportWithPreamble() }],
 			isError: false,
 		});
@@ -473,7 +545,7 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 		// Content echoes the request id back (child preamble), input has nothing.
 		const handled = bridge.handleToolResult({
 			toolName: "orchestrate",
-			input: { category: "pr-reviewer" },
+			input: { agentType: "verifier", profile: "pr-review" },
 			content: [
 				{
 					type: "text",
@@ -504,7 +576,11 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 
 		bridge.handleToolResult({
 			toolName: "orchestrate",
-			input: { category: "pr-reviewer", task: `Request ${requestId}` },
+			input: {
+				agentType: "verifier",
+				profile: "pr-review",
+				task: `Request ${requestId}`,
+			},
 			content: [{ type: "text", text: criticalSecurityPassReport() }],
 			isError: false,
 		});
@@ -526,7 +602,7 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 
 		const handled = bridge.handleToolResult({
 			toolName: "orchestrate",
-			input: { category: "pr-reviewer" },
+			input: { agentType: "verifier", profile: "pr-review" },
 			content: [{ type: "text", text: passReportWithPreamble() }],
 			isError: false,
 		});
@@ -562,7 +638,11 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 
 			const handled = bridge.handleToolResult({
 				toolName: "orchestrate",
-				input: { category: "pr-reviewer", task: `Request ${requestId}` },
+				input: {
+					agentType: "verifier",
+					profile: "pr-review",
+					task: `Request ${requestId}`,
+				},
 				content: [{ type: "text", text: passReportWithPreamble() }],
 				isError: false,
 			});
@@ -595,7 +675,11 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 
 			bridge.handleToolResult({
 				toolName: "orchestrate",
-				input: { category: "pr-reviewer", task: `Request ${requestId}` },
+				input: {
+					agentType: "verifier",
+					profile: "pr-review",
+					task: `Request ${requestId}`,
+				},
 				content: [{ type: "text", text: criticalSecurityPassReport() }],
 				isError: false,
 			});
@@ -628,7 +712,7 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 
 		bridge.handleToolResult({
 			toolName: "orchestrate",
-			input: { category: "pr-reviewer" },
+			input: { agentType: "verifier", profile: "pr-review" },
 			content: [{ type: "text", text: issuesReport }],
 			isError: false,
 		});
@@ -659,7 +743,7 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 
 		bridge.handleToolResult({
 			toolName: "orchestrate",
-			input: { category: "pr-reviewer" },
+			input: { agentType: "verifier", profile: "pr-review" },
 			content: [{ type: "text", text: passWithoutTests }],
 			isError: false,
 		});
@@ -682,7 +766,7 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 
 		bridge.handleToolResult({
 			toolName: "orchestrate",
-			input: { category: "pr-reviewer" },
+			input: { agentType: "verifier", profile: "pr-review" },
 			content: [{ type: "text", text: "sure thing, here are my thoughts..." }],
 			isError: false,
 		});
@@ -703,7 +787,7 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 		);
 		bridge.handleToolResult({
 			toolName: "orchestrate",
-			input: { category: "pr-reviewer" },
+			input: { agentType: "verifier", profile: "pr-review" },
 			content: [{ type: "text", text: "container bridge unavailable" }],
 			isError: true,
 		});
@@ -731,7 +815,8 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 		bridge.handleToolResult({
 			toolName: "orchestrate",
 			input: {
-				category: "pr-reviewer",
+				agentType: "verifier",
+				profile: "pr-review",
 				task: `Request ${status.pending[0]?.requestId}`,
 			},
 			content: [{ type: "text", text: passReportWithPreamble() }],

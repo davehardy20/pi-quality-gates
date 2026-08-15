@@ -257,7 +257,11 @@ describe("formatTestExecutionPlan", () => {
 		const formatted = formatTestExecutionPlan(plan);
 		expect(formatted).toContain("typescript");
 		expect(formatted).toContain("repository checkout");
-		expect(formatted).toContain("Apple container via container_safe");
+		expect(formatted).toContain("repository checkout");
+		// Honesty: the host bridge never runs validation in an Apple container.
+		expect(formatted).toContain("host bridge");
+		expect(formatted).not.toContain("Apple container");
+		expect(formatted).not.toContain("PI_PR_REVIEW_BRIDGE");
 		expect(formatted).toContain("run_vitest src/a.test.ts");
 		expect(formatted).toContain("run_typecheck");
 		expect(formatted).toContain("npx vitest run --reporter=dot");

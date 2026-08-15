@@ -107,8 +107,9 @@ export function resolveReviewerModelConfig(
  * PR reviewer configuration.
  *
  * The default `/pr-review` extension path spawns a read-only host child Pi
- * (`src/pr-gate/reviewer.ts`); the sandboxed orchestrator `pr-reviewer` is
- * opt-in via PI_PR_REVIEW_BRIDGE=orchestrator. Model values are populated by
+ * (`src/pr-gate/reviewer.ts`); the orchestrator verifier bridge
+ * (`verifier`/`pr-review` via orchestrate, host-side) is opt-in via
+ * PI_PR_REVIEW_BRIDGE=orchestrator. Model values are populated by
  * `resolvePrReviewConfig()` at review time.
  */
 export const PR_REVIEW_CONFIG: ReviewConfig = {
