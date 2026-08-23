@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
+import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import qualityGatesExtension from "../src/index.js";
 import {
@@ -31,6 +32,7 @@ import {
 	shouldSkip,
 } from "../src/pr-gate/reviewer-skip.js";
 import {
+	isPathMatch,
 	normalizeAndSortPaths,
 	normalizePath,
 	pathsEqual,
@@ -683,6 +685,93 @@ describe("shared: path-utils", () => {
 	it("normalizeAndSortPaths deduplicates and sorts", () => {
 		const result = normalizeAndSortPaths(["/b", "/a", "/b"]);
 		expect(result).toEqual(["/a", "/b"]);
+	});
+
+	it("isPathMatch matches exact paths and directory prefixes", () => {
+		const cwd = fs.realpathSync.native(
+			fs.mkdtempSync(path.join(tmpdir(), "path-match-")),
+		);
+		try {
+			const srcDir = path.join(cwd, "src");
+			const filePath = path.join(srcDir, "index.ts");
+			fs.mkdirSync(srcDir);
+			fs.writeFileSync(filePath, "export {};\n");
+			const realFilePath = fs.realpathSync.native(filePath);
+
+			expect(isPathMatch(realFilePath, filePath, cwd)).toBe(true);
+			expect(isPathMatch(realFilePath, srcDir, cwd)).toBe(true);
+			expect(isPathMatch(realFilePath, `${srcDir}${path.sep}`, cwd)).toBe(true);
+			expect(isPathMatch(realFilePath, path.join(cwd, "other"), cwd)).toBe(
+				false,
+			);
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("isPathMatch resolves relative patterns against cwd", () => {
+		const cwd = fs.realpathSync.native(
+			fs.mkdtempSync(path.join(tmpdir(), "path-match-")),
+		);
+		try {
+			const srcDir = path.join(cwd, "src");
+			const nestedFile = path.join(srcDir, "nested", "index.ts");
+			fs.mkdirSync(path.dirname(nestedFile), { recursive: true });
+			fs.writeFileSync(nestedFile, "export {};\n");
+			const realNestedFile = fs.realpathSync.native(nestedFile);
+
+			expect(isPathMatch(realNestedFile, "src", cwd)).toBe(true);
+			expect(isPathMatch(realNestedFile, "src/nested", cwd)).toBe(true);
+			expect(isPathMatch(realNestedFile, "test", cwd)).toBe(false);
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("isPathMatch supports wildcard patterns for absolute and relative targets", () => {
+		const cwd = fs.realpathSync.native(
+			fs.mkdtempSync(path.join(tmpdir(), "path-match-")),
+		);
+		try {
+			const srcDir = path.join(cwd, "src");
+			const testDir = path.join(cwd, "test");
+			const sourceFile = path.join(srcDir, "index.ts");
+			const testFile = path.join(testDir, "index.test.ts");
+			fs.mkdirSync(srcDir);
+			fs.mkdirSync(testDir);
+			fs.writeFileSync(sourceFile, "export {};\n");
+			fs.writeFileSync(testFile, "test();\n");
+			const realSourceFile = fs.realpathSync.native(sourceFile);
+			const realTestFile = fs.realpathSync.native(testFile);
+
+			expect(isPathMatch(realSourceFile, "src/*.ts", cwd)).toBe(true);
+			expect(isPathMatch(realTestFile, "*.test.ts", cwd)).toBe(true);
+			expect(isPathMatch(realSourceFile, "src/index.?s", cwd)).toBe(true);
+			expect(isPathMatch(realSourceFile, "src/*.js", cwd)).toBe(false);
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("isPathMatch can skip symlink resolution for logical paths", () => {
+		const cwd = fs.realpathSync.native(
+			fs.mkdtempSync(path.join(tmpdir(), "path-match-")),
+		);
+		try {
+			const realDir = path.join(cwd, "real");
+			const linkDir = path.join(cwd, "link");
+			const linkedFile = path.join(linkDir, "index.ts");
+			fs.mkdirSync(realDir);
+			fs.writeFileSync(path.join(realDir, "index.ts"), "export {};\n");
+			fs.symlinkSync(realDir, linkDir, "dir");
+
+			expect(isPathMatch(linkedFile, "link", cwd)).toBe(false);
+			expect(
+				isPathMatch(linkedFile, "link", cwd, { followSymlinks: false }),
+			).toBe(true);
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
 	});
 });
 

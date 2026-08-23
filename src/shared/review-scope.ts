@@ -287,6 +287,48 @@ export async function resolveMergeBase(
  * @param baseRef Optional base ref; defaults to HEAD (working-tree diff).
  * @returns      Total number of added + deleted lines, or -1 on error.
  */
+function countNumstatLine(line: string): number {
+	const [addedText, deletedText] = line.split("\t");
+	const added = Number.parseInt(addedText ?? "", 10);
+	const deleted = Number.parseInt(deletedText ?? "", 10);
+	return (
+		(Number.isNaN(added) ? 0 : added) + (Number.isNaN(deleted) ? 0 : deleted)
+	);
+}
+
+function countNumstatLines(stdout: string): number {
+	return stdout
+		.trim()
+		.split("\n")
+		.reduce((total, line) => total + countNumstatLine(line), 0);
+}
+
+async function isTrackedFile(file: string, cwd: string): Promise<boolean> {
+	const result = await runReadonlyCommand(
+		`git ls-files --error-unmatch ${shellQuote(file)} 2>/dev/null`,
+		cwd,
+	);
+	return result.exitCode === 0;
+}
+
+async function countFileLines(file: string, cwd: string): Promise<number> {
+	const wc = await runReadonlyCommand(`wc -l < ${shellQuote(file)}`, cwd);
+	return wc.exitCode === 0 ? Number.parseInt(wc.stdout.trim(), 10) || 0 : 0;
+}
+
+async function countUntrackedFileLines(
+	files: string[],
+	cwd: string,
+): Promise<number> {
+	let total = 0;
+	for (const file of files) {
+		if (!(await isTrackedFile(file, cwd))) {
+			total += await countFileLines(file, cwd);
+		}
+	}
+	return total;
+}
+
 export async function countDiffLinesFast(
 	files: string[],
 	cwd: string,
@@ -305,35 +347,10 @@ export async function countDiffLinesFast(
 
 	if (result.exitCode !== 0 || !result.stdout.trim()) {
 		// May be all new (untracked) files — fall back to wc -l per file
-		let total = 0;
-		for (const file of files) {
-			const tracked = await runReadonlyCommand(
-				`git ls-files --error-unmatch ${shellQuote(file)} 2>/dev/null`,
-				cwd,
-			);
-			if (tracked.exitCode !== 0) {
-				// Untracked file — count its lines
-				const wc = await runReadonlyCommand(`wc -l < ${shellQuote(file)}`, cwd);
-				if (wc.exitCode === 0 && wc.stdout.trim()) {
-					total += parseInt(wc.stdout.trim(), 10) || 0;
-				}
-			}
-		}
-		return total;
+		return countUntrackedFileLines(files, cwd);
 	}
 
-	// Parse numstat lines: "added\tdeleted\tfilename"
-	let total = 0;
-	for (const line of result.stdout.trim().split("\n")) {
-		const parts = line.split("\t");
-		if (parts.length >= 2) {
-			const added = parseInt(parts[0], 10);
-			const deleted = parseInt(parts[1], 10);
-			if (!Number.isNaN(added)) total += added;
-			if (!Number.isNaN(deleted)) total += deleted;
-		}
-	}
-	return total;
+	return countNumstatLines(result.stdout);
 }
 
 /**
