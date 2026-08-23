@@ -109,6 +109,110 @@ function findBinary(command: string): string | undefined {
 	return undefined;
 }
 
+function tryRustAnalyzerInstall(): string | undefined {
+	if (!isOnPath("rustup")) return undefined;
+
+	try {
+		execSync("rustup component add rust-analyzer", { stdio: "ignore" });
+		return findBinary("rust-analyzer");
+	} catch {
+		return undefined;
+	}
+}
+
+function tryGoPlsInstall(): string | undefined {
+	if (!isOnPath("go")) return undefined;
+
+	try {
+		execSync("go install golang.org/x/tools/gopls@latest", {
+			stdio: "ignore",
+		});
+		return findBinary("gopls");
+	} catch {
+		return undefined;
+	}
+}
+
+function tryGlobalInstall(
+	binaryName: string,
+	installCommand: string[],
+): string | undefined {
+	try {
+		execSync(installCommand.join(" "), { stdio: "ignore", timeout: 60_000 });
+		return findBinary(binaryName);
+	} catch {
+		return undefined;
+	}
+}
+
+function getPackageName(installCommand: string[]): string | undefined {
+	return installCommand.at(-1);
+}
+
+function buildLocalInstallCommand(
+	packageManager: PackageManager,
+	packageName: string,
+): string[] | undefined {
+	switch (packageManager) {
+		case "bun":
+			return ["bun", "add", "-d", packageName];
+		case "pnpm":
+			return ["pnpm", "add", "-D", packageName];
+		case "yarn":
+			return ["yarn", "add", "-D", packageName];
+		case "npm":
+			return ["npm", "install", "-D", packageName];
+		case "unknown":
+			return undefined;
+	}
+}
+
+function findLocalBinary(cwd: string, binaryName: string): string | undefined {
+	const localBin = path.join(cwd, "node_modules", ".bin", binaryName);
+	if (fs.existsSync(localBin)) return localBin;
+	if (!isWindows()) return undefined;
+
+	const localBinCmd = `${localBin}.cmd`;
+	return fs.existsSync(localBinCmd) ? localBinCmd : undefined;
+}
+
+function tryLocalInstall(
+	binaryName: string,
+	installCommand: string[],
+	cwd: string,
+): string | undefined {
+	const packageName = getPackageName(installCommand);
+	if (!packageName) return undefined;
+
+	const localCommand = buildLocalInstallCommand(
+		detectPackageManager(cwd),
+		packageName,
+	);
+	if (!localCommand) return undefined;
+
+	try {
+		execSync(localCommand.join(" "), {
+			cwd,
+			stdio: "ignore",
+			timeout: 60_000,
+		});
+		return findLocalBinary(cwd, binaryName);
+	} catch {
+		return undefined;
+	}
+}
+
+function trySpecialInstall(binaryName: string): string | undefined {
+	switch (binaryName) {
+		case "rust-analyzer":
+			return tryRustAnalyzerInstall();
+		case "gopls":
+			return tryGoPlsInstall();
+		default:
+			return undefined;
+	}
+}
+
 /**
  * Install a language server. Returns the command path if successful.
  */
@@ -117,79 +221,25 @@ export async function installLanguageServer(
 	binaryName: string,
 	cwd: string,
 ): Promise<string | undefined> {
-	// Already installed?
 	const existing = findBinary(binaryName);
 	if (existing) return existing;
 
-	// rust-analyzer: use rustup
-	if (binaryName === "rust-analyzer") {
-		if (isOnPath("rustup")) {
-			try {
-				execSync("rustup component add rust-analyzer", { stdio: "ignore" });
-				const after = findBinary("rust-analyzer");
-				if (after) return after;
-			} catch {
-				/* ignore */
-			}
-		}
-		return undefined;
+	const specialInstall = trySpecialInstall(binaryName);
+	if (
+		specialInstall ||
+		binaryName === "rust-analyzer" ||
+		binaryName === "gopls"
+	) {
+		return specialInstall;
 	}
 
-	// gopls: use go install
-	if (binaryName === "gopls") {
-		if (isOnPath("go")) {
-			try {
-				execSync("go install golang.org/x/tools/gopls@latest", {
-					stdio: "ignore",
-				});
-				const after = findBinary("gopls");
-				if (after) return after;
-			} catch {
-				/* ignore */
-			}
-		}
-		return undefined;
-	}
+	const installCommand = INSTALL_COMMANDS[binaryName];
+	if (!installCommand) return undefined;
 
-	// npm-based servers
-	const installCmd = INSTALL_COMMANDS[binaryName];
-	if (!installCmd) return undefined;
-
-	// Try global install
-	try {
-		execSync(installCmd.join(" "), { stdio: "ignore", timeout: 60_000 });
-		const after = findBinary(binaryName);
-		if (after) return after;
-	} catch {
-		/* ignore */
-	}
-
-	// Try local install in project
-	const pm = detectPackageManager(cwd);
-	if (pm !== "unknown") {
-		const pkgName = installCmd[installCmd.length - 1];
-		const localCmd =
-			pm === "bun"
-				? ["bun", "add", "-d", pkgName]
-				: pm === "pnpm"
-					? ["pnpm", "add", "-D", pkgName]
-					: pm === "yarn"
-						? ["yarn", "add", "-D", pkgName]
-						: ["npm", "install", "-D", pkgName];
-		try {
-			execSync(localCmd.join(" "), { cwd, stdio: "ignore", timeout: 60_000 });
-			const localBin = path.join(cwd, "node_modules", ".bin", binaryName);
-			if (fs.existsSync(localBin)) return localBin;
-			if (isWindows()) {
-				const localBinCmd = `${localBin}.cmd`;
-				if (fs.existsSync(localBinCmd)) return localBinCmd;
-			}
-		} catch {
-			/* ignore */
-		}
-	}
-
-	return undefined;
+	return (
+		tryGlobalInstall(binaryName, installCommand) ??
+		tryLocalInstall(binaryName, installCommand, cwd)
+	);
 }
 
 /**
