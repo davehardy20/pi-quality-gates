@@ -558,6 +558,53 @@ const MAX_REVIEWER_JSON_LINE_CHARS = 1_048_576;
 const MAX_REVIEWER_OUTPUT_CHARS = 262_144;
 const MAX_REVIEWER_STDERR_CHARS = 65_536;
 
+export interface ParsedReviewerStdoutLine {
+  assistantText: string;
+  usage?: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function formatReviewerUsage(usage: Record<string, unknown>): string {
+  const input = typeof usage.input === "number" ? usage.input : 0;
+  const output = typeof usage.output === "number" ? usage.output : 0;
+  const cost = isRecord(usage.cost) ? usage.cost.total : undefined;
+  const total = typeof cost === "number" ? cost.toFixed(4) : 0;
+  return `↑${input} ↓${output} $${total}`;
+}
+
+function collectAssistantText(content: unknown): string {
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((part): part is Record<string, unknown> => isRecord(part))
+    .filter((part) => part.type === "text")
+    .map((part) => (typeof part.text === "string" ? part.text : ""))
+    .join("");
+}
+
+export function parseReviewerStdoutLine(
+  line: string,
+): ParsedReviewerStdoutLine | null {
+  if (!line.trim()) return null;
+  try {
+    const event: unknown = JSON.parse(line);
+    if (!isRecord(event) || event.type !== "message_end") return null;
+    const message = event.message;
+    if (!isRecord(message) || message.role !== "assistant") return null;
+    const parsed: ParsedReviewerStdoutLine = {
+      assistantText: collectAssistantText(message.content),
+    };
+    if (isRecord(message.usage)) {
+      parsed.usage = formatReviewerUsage(message.usage);
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 export function buildReviewerPiArgs(
   config: ReviewConfig,
   promptFile: string,
@@ -673,31 +720,15 @@ export async function spawnReviewer(
         config.timeoutMs,
       );
 
-      const processLine = (line: string) => {
-        if (!line.trim()) return;
-        try {
-          const event = JSON.parse(line);
-          if (
-            event?.type === "message_end" &&
-            event?.message?.role === "assistant"
-          ) {
-            for (const part of event.message.content || []) {
-              if (part.type === "text") output.append(part.text ?? "");
-            }
-            if (output.overflowed()) overflowSources.add("assistant output");
-            if (event.message.usage) {
-              const u = event.message.usage;
-              usage = `↑${u.input || 0} ↓${u.output || 0} $${u.cost?.total?.toFixed(4) || 0}`;
-            }
-          }
-        } catch {
-          // Ignore non-JSON stdout. Structured reviewer output is required.
-        }
-      };
-
       const stdoutLines = createBoundedLineProcessor(
         MAX_REVIEWER_JSON_LINE_CHARS,
-        processLine,
+        (line) => {
+          const parsed = parseReviewerStdoutLine(line);
+          if (!parsed) return;
+          output.append(parsed.assistantText);
+          if (output.overflowed()) overflowSources.add("assistant output");
+          if (parsed.usage) usage = parsed.usage;
+        },
       );
 
       proc.stdout.on("data", (data: Buffer) => {
