@@ -194,13 +194,11 @@ export function resolvePath(
  * The pattern itself is resolved the same way as `targetPath` (tilde,
  * absolute, symlink-followed by default) before comparison.
  */
-export function isPathMatch(
-	targetPath: string,
+function resolveMatchPattern(
 	pattern: string,
 	cwd: string,
-	options?: ResolvePathOptions,
-): boolean {
-	const followSymlinks = options?.followSymlinks ?? true;
+	followSymlinks: boolean,
+): string {
 	let resolvedPattern = pattern.startsWith("~")
 		? path.join(os.homedir(), pattern.slice(1))
 		: pattern;
@@ -209,41 +207,67 @@ export function isPathMatch(
 		resolvedPattern = path.resolve(cwd, resolvedPattern);
 	}
 
-	if (followSymlinks) {
-		try {
-			resolvedPattern = fs.realpathSync.native(resolvedPattern);
-		} catch {
-			// path may not exist; keep resolved value for glob/regex matching
-		}
+	if (!followSymlinks) {
+		return resolvedPattern;
 	}
 
-	const isDirPattern = resolvedPattern.endsWith(path.sep);
-	const normPattern = isDirPattern
-		? resolvedPattern.slice(0, -1)
-		: resolvedPattern;
-	const normTarget = targetPath.endsWith(path.sep)
-		? targetPath.slice(0, -1)
-		: targetPath;
+	try {
+		return fs.realpathSync.native(resolvedPattern);
+	} catch {
+		// path may not exist; keep resolved value for glob/regex matching
+		return resolvedPattern;
+	}
+}
 
-	if (normTarget === normPattern) return true;
-	if (normTarget.startsWith(normPattern + path.sep)) return true;
+function stripTrailingPathSeparator(value: string): string {
+	return value.endsWith(path.sep) ? value.slice(0, -1) : value;
+}
 
-	const relativePath = path.relative(cwd, targetPath);
-	const normRelative = relativePath.endsWith(path.sep)
-		? relativePath.slice(0, -1)
-		: relativePath;
-	if (normRelative === normPattern) return true;
-	if (normRelative.startsWith(normPattern + path.sep)) return true;
+function matchesPathOrDescendant(
+	targetPath: string,
+	patternPath: string,
+): boolean {
+	return (
+		targetPath === patternPath || targetPath.startsWith(patternPath + path.sep)
+	);
+}
 
-	const regexPattern = normPattern
+function wildcardPatternToRegexSource(patternPath: string): string {
+	return patternPath
 		.replace(/[.+^${}()|[\]\\]/g, "\\$&")
 		.replace(/\*/g, ".*")
 		.replace(/\?/g, ".");
+}
 
+function buildPathMatchRegex(patternPath: string): RegExp {
+	const regexPattern = wildcardPatternToRegexSource(patternPath);
 	const sep = path.sep === "\\" ? "\\\\" : "/";
-	const regex = new RegExp(
+	return new RegExp(
 		`^${regexPattern}$|^${regexPattern}${sep}|${sep}${regexPattern}$|${sep}${regexPattern}${sep}`,
 	);
+}
 
+export function isPathMatch(
+	targetPath: string,
+	pattern: string,
+	cwd: string,
+	options?: ResolvePathOptions,
+): boolean {
+	const resolvedPattern = resolveMatchPattern(
+		pattern,
+		cwd,
+		options?.followSymlinks ?? true,
+	);
+	const normPattern = stripTrailingPathSeparator(resolvedPattern);
+	const normTarget = stripTrailingPathSeparator(targetPath);
+
+	if (matchesPathOrDescendant(normTarget, normPattern)) return true;
+
+	const normRelative = stripTrailingPathSeparator(
+		path.relative(cwd, targetPath),
+	);
+	if (matchesPathOrDescendant(normRelative, normPattern)) return true;
+
+	const regex = buildPathMatchRegex(normPattern);
 	return regex.test(normTarget) || regex.test(normRelative);
 }

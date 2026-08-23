@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	capDiff,
+	countDiffLinesFast,
 	gatherDiff,
 	STRUCTURED_HUNK_NEW,
 	STRUCTURED_HUNK_OLD,
@@ -183,6 +184,125 @@ describe("toStructuredHunks", () => {
 		].join("\n");
 		const out = toStructuredHunks(diff);
 		expect(out).toContain("\\ No newline at end of file");
+	});
+});
+
+describe("countDiffLinesFast", () => {
+	function initRepo(cwd: string): void {
+		execFileSync("git", ["init", "-q"], { cwd });
+		execFileSync("git", ["config", "user.email", "t@t.test"], { cwd });
+		execFileSync("git", ["config", "user.name", "Test"], { cwd });
+	}
+
+	it("returns zero when no files are provided", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "rs-count-empty-"));
+		try {
+			initRepo(cwd);
+			writeFileSync(join(cwd, "foo.ts"), "one\ntwo\n");
+			execFileSync("git", ["add", "."], { cwd });
+			execFileSync("git", ["commit", "-q", "-m", "init"], { cwd });
+			writeFileSync(join(cwd, "foo.ts"), "changed\ntwo\n");
+
+			expect(await countDiffLinesFast([], cwd)).toBe(0);
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("counts added and deleted lines for tracked working-tree changes", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "rs-count-tracked-"));
+		try {
+			initRepo(cwd);
+			writeFileSync(
+				join(cwd, "foo.ts"),
+				Array.from({ length: 11 }, (_, index) => `old-${index}\n`).join(""),
+			);
+			execFileSync("git", ["add", "."], { cwd });
+			execFileSync("git", ["commit", "-q", "-m", "init"], { cwd });
+
+			writeFileSync(
+				join(cwd, "foo.ts"),
+				Array.from({ length: 12 }, (_, index) => `new-${index}\n`).join(""),
+			);
+
+			expect(await countDiffLinesFast(["foo.ts"], cwd)).toBe(23);
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("falls back to counting only untracked file lines", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "rs-count-untracked-"));
+		try {
+			initRepo(cwd);
+			writeFileSync(join(cwd, "README.md"), "# test\n");
+			execFileSync("git", ["add", "."], { cwd });
+			execFileSync("git", ["commit", "-q", "-m", "init"], { cwd });
+
+			writeFileSync(join(cwd, "new.ts"), "one\ntwo\nthree\n");
+
+			expect(await countDiffLinesFast(["README.md", "new.ts"], cwd)).toBe(3);
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("counts only requested tracked files", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "rs-count-filtered-"));
+		try {
+			initRepo(cwd);
+			writeFileSync(join(cwd, "foo.ts"), "one\ntwo\n");
+			writeFileSync(join(cwd, "bar.ts"), "alpha\nbeta\n");
+			execFileSync("git", ["add", "."], { cwd });
+			execFileSync("git", ["commit", "-q", "-m", "init"], { cwd });
+
+			writeFileSync(join(cwd, "foo.ts"), "one\nthree\nfour\n");
+			writeFileSync(join(cwd, "bar.ts"), "alpha\ngamma\ndelta\n");
+
+			expect(await countDiffLinesFast(["foo.ts"], cwd)).toBe(3);
+			expect(await countDiffLinesFast(["foo.ts", "bar.ts"], cwd)).toBe(6);
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("counts staged tracked changes against HEAD by default", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "rs-count-staged-"));
+		try {
+			initRepo(cwd);
+			writeFileSync(join(cwd, "foo.ts"), "one\ntwo\n");
+			execFileSync("git", ["add", "."], { cwd });
+			execFileSync("git", ["commit", "-q", "-m", "init"], { cwd });
+
+			writeFileSync(join(cwd, "foo.ts"), "one\nthree\nfour\n");
+			execFileSync("git", ["add", "foo.ts"], { cwd });
+
+			expect(await countDiffLinesFast(["foo.ts"], cwd)).toBe(3);
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("counts changed lines between baseRef and HEAD", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "rs-count-base-"));
+		try {
+			initRepo(cwd);
+			writeFileSync(join(cwd, "foo.ts"), "one\ntwo\n");
+			execFileSync("git", ["add", "."], { cwd });
+			execFileSync("git", ["commit", "-q", "-m", "base"], { cwd });
+			const baseRef = execFileSync("git", ["rev-parse", "HEAD"], {
+				cwd,
+				encoding: "utf8",
+			}).trim();
+
+			writeFileSync(join(cwd, "foo.ts"), "one\nthree\nfour\n");
+			execFileSync("git", ["add", "."], { cwd });
+			execFileSync("git", ["commit", "-q", "-m", "change"], { cwd });
+
+			expect(await countDiffLinesFast(["foo.ts"], cwd, baseRef)).toBe(3);
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
 	});
 });
 
