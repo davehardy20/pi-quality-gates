@@ -10,6 +10,7 @@ import {
 	createBoundedLineProcessor,
 	createBoundedTextCapture,
 	createReviewerExecution,
+	parseReviewerStdoutLine,
 	type ReviewerResult,
 	renderTaskTemplate,
 } from "../src/pr-gate/reviewer.js";
@@ -266,6 +267,68 @@ describe("bounded reviewer output capture", () => {
 		processor.append(`${"x".repeat(100)}\nok\n`);
 		expect(processor.overflowed()).toBe(true);
 		expect(lines).toEqual(["ok"]);
+	});
+});
+
+describe("reviewer stdout line parsing", () => {
+	it("extracts assistant text and usage from message_end JSON", () => {
+		const result = parseReviewerStdoutLine(
+			JSON.stringify({
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "text", text: "## Review Report\n" },
+						{ type: "tool_use", name: "read" },
+						{ type: "text", text: "STATUS: PASS\n" },
+						{ type: "text" },
+					],
+					usage: {
+						input: 12,
+						output: 34,
+						cost: { total: 0.123456 },
+					},
+				},
+			}),
+		);
+
+		expect(result).toEqual({
+			assistantText: "## Review Report\nSTATUS: PASS\n",
+			usage: "↑12 ↓34 $0.1235",
+		});
+	});
+
+	it("uses zero defaults for partial usage objects", () => {
+		const result = parseReviewerStdoutLine(
+			JSON.stringify({
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "ok" }],
+					usage: {},
+				},
+			}),
+		);
+
+		expect(result?.usage).toBe("↑0 ↓0 $0");
+	});
+
+	it("ignores blank, non-json, and non-assistant lines", () => {
+		expect(parseReviewerStdoutLine("   ")).toBeNull();
+		expect(parseReviewerStdoutLine("plain text")).toBeNull();
+		expect(
+			parseReviewerStdoutLine(
+				JSON.stringify({ type: "message_end", message: { role: "user" } }),
+			),
+		).toBeNull();
+		expect(
+			parseReviewerStdoutLine(
+				JSON.stringify({
+					type: "message_delta",
+					message: { role: "assistant" },
+				}),
+			),
+		).toBeNull();
 	});
 });
 
