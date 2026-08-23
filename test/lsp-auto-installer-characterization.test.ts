@@ -11,6 +11,7 @@ let tmpDir: string;
 let binDir: string;
 let projectDir: string;
 let originalPath: string | undefined;
+const describeOnPosix = process.platform === "win32" ? describe.skip : describe;
 
 function makeExecutable(filePath: string, content: string): void {
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -37,26 +38,28 @@ afterEach(() => {
 	fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe("lsp-auto-installer: installLanguageServer characterization", () => {
-	it("returns an existing binary name without installing", async () => {
-		makeExecutable(
-			path.join(binDir, "typescript-language-server"),
-			"#!/bin/sh\n",
-		);
+describeOnPosix(
+	"lsp-auto-installer: installLanguageServer characterization",
+	() => {
+		it("returns an existing binary name without installing", async () => {
+			makeExecutable(
+				path.join(binDir, "typescript-language-server"),
+				"#!/bin/sh\n",
+			);
 
-		await expect(
-			installLanguageServer(
-				"typescript",
-				"typescript-language-server",
-				projectDir,
-			),
-		).resolves.toBe("typescript-language-server");
-	});
+			await expect(
+				installLanguageServer(
+					"typescript",
+					"typescript-language-server",
+					projectDir,
+				),
+			).resolves.toBe("typescript-language-server");
+		});
 
-	it("uses rustup for rust-analyzer and returns the installed binary", async () => {
-		makeExecutable(
-			path.join(binDir, "rustup"),
-			`#!/bin/sh
+		it("uses rustup for rust-analyzer and returns the installed binary", async () => {
+			makeExecutable(
+				path.join(binDir, "rustup"),
+				`#!/bin/sh
 if [ "$1 $2 $3" != "component add rust-analyzer" ]; then
 	exit 9
 fi
@@ -65,17 +68,17 @@ cat > "${path.join(binDir, "rust-analyzer")}" <<'SH'
 SH
 chmod +x "${path.join(binDir, "rust-analyzer")}"
 `,
-		);
+			);
 
-		await expect(
-			installLanguageServer("rust", "rust-analyzer", projectDir),
-		).resolves.toBe("rust-analyzer");
-	});
+			await expect(
+				installLanguageServer("rust", "rust-analyzer", projectDir),
+			).resolves.toBe("rust-analyzer");
+		});
 
-	it("uses go install for gopls and returns the installed binary", async () => {
-		makeExecutable(
-			path.join(binDir, "go"),
-			`#!/bin/sh
+		it("uses go install for gopls and returns the installed binary", async () => {
+			makeExecutable(
+				path.join(binDir, "go"),
+				`#!/bin/sh
 if [ "$1 $2" != "install golang.org/x/tools/gopls@latest" ]; then
 	exit 9
 fi
@@ -84,17 +87,17 @@ cat > "${path.join(binDir, "gopls")}" <<'SH'
 SH
 chmod +x "${path.join(binDir, "gopls")}"
 `,
-		);
+			);
 
-		await expect(
-			installLanguageServer("go", "gopls", projectDir),
-		).resolves.toBe("gopls");
-	});
+			await expect(
+				installLanguageServer("go", "gopls", projectDir),
+			).resolves.toBe("gopls");
+		});
 
-	it("tries npm global install for npm-based language servers", async () => {
-		makeExecutable(
-			path.join(binDir, "npm"),
-			`#!/bin/sh
+		it("tries npm global install for npm-based language servers", async () => {
+			makeExecutable(
+				path.join(binDir, "npm"),
+				`#!/bin/sh
 if [ "$1" = "prefix" ] && [ "$2" = "-g" ]; then
 	printf '%s\n' "${tmpDir}"
 	exit 0
@@ -108,18 +111,18 @@ SH
 fi
 exit 9
 `,
-		);
+			);
 
-		await expect(
-			installLanguageServer("python", "pyright-langserver", projectDir),
-		).resolves.toBe("pyright-langserver");
-	});
+			await expect(
+				installLanguageServer("python", "pyright-langserver", projectDir),
+			).resolves.toBe("pyright-langserver");
+		});
 
-	it("falls back to local project install when global npm install fails", async () => {
-		fs.writeFileSync(path.join(projectDir, "package-lock.json"), "{}\n");
-		makeExecutable(
-			path.join(binDir, "npm"),
-			`#!/bin/sh
+		it("falls back to local project install when global npm install fails", async () => {
+			fs.writeFileSync(path.join(projectDir, "package-lock.json"), "{}\n");
+			makeExecutable(
+				path.join(binDir, "npm"),
+				`#!/bin/sh
 if [ "$1" = "prefix" ] && [ "$2" = "-g" ]; then
 	printf '%s\n' "${tmpDir}"
 	exit 0
@@ -137,24 +140,24 @@ SH
 fi
 exit 9
 `,
-		);
+			);
 
-		await expect(
-			installLanguageServer("python", "pyright-langserver", projectDir),
-		).resolves.toBe(
-			path.join(projectDir, "node_modules", ".bin", "pyright-langserver"),
-		);
-	});
+			await expect(
+				installLanguageServer("python", "pyright-langserver", projectDir),
+			).resolves.toBe(
+				path.join(projectDir, "node_modules", ".bin", "pyright-langserver"),
+			);
+		});
 
-	async function expectLocalInstallCommand(
-		lockFile: string,
-		packageManager: string,
-		expectedArgs: string,
-	): Promise<void> {
-		fs.writeFileSync(path.join(projectDir, lockFile), "\n");
-		makeExecutable(
-			path.join(binDir, "npm"),
-			`#!/bin/sh
+		async function expectLocalInstallCommand(
+			lockFile: string,
+			packageManager: string,
+			expectedArgs: string,
+		): Promise<void> {
+			fs.writeFileSync(path.join(projectDir, lockFile), "\n");
+			makeExecutable(
+				path.join(binDir, "npm"),
+				`#!/bin/sh
 if [ "$1" = "prefix" ] && [ "$2" = "-g" ]; then
 	printf '%s\n' "${tmpDir}"
 	exit 0
@@ -164,10 +167,10 @@ if [ "$1 $2 $3" = "install -g pyright" ]; then
 fi
 exit 9
 `,
-		);
-		makeExecutable(
-			path.join(binDir, packageManager),
-			`#!/bin/sh
+			);
+			makeExecutable(
+				path.join(binDir, packageManager),
+				`#!/bin/sh
 if [ "$*" != "${expectedArgs}" ]; then
 	exit 9
 fi
@@ -177,26 +180,29 @@ cat > node_modules/.bin/pyright-langserver <<'SH'
 SH
 chmod +x node_modules/.bin/pyright-langserver
 `,
+			);
+
+			await expect(
+				installLanguageServer("python", "pyright-langserver", projectDir),
+			).resolves.toBe(
+				path.join(projectDir, "node_modules", ".bin", "pyright-langserver"),
+			);
+		}
+
+		it.each([
+			["bun.lock", "bun", "add -d pyright"],
+			["pnpm-lock.yaml", "pnpm", "add -D pyright"],
+			["yarn.lock", "yarn", "add -D pyright"],
+		])(
+			"uses %s to choose the local install command",
+			expectLocalInstallCommand,
 		);
 
-		await expect(
-			installLanguageServer("python", "pyright-langserver", projectDir),
-		).resolves.toBe(
-			path.join(projectDir, "node_modules", ".bin", "pyright-langserver"),
-		);
-	}
-
-	it.each([
-		["bun.lock", "bun", "add -d pyright"],
-		["pnpm-lock.yaml", "pnpm", "add -D pyright"],
-		["yarn.lock", "yarn", "add -D pyright"],
-	])("uses %s to choose the local install command", expectLocalInstallCommand);
-
-	it("returns undefined when local install does not place the expected binary", async () => {
-		fs.writeFileSync(path.join(projectDir, "package-lock.json"), "{}\n");
-		makeExecutable(
-			path.join(binDir, "npm"),
-			`#!/bin/sh
+		it("returns undefined when local install does not place the expected binary", async () => {
+			fs.writeFileSync(path.join(projectDir, "package-lock.json"), "{}\n");
+			makeExecutable(
+				path.join(binDir, "npm"),
+				`#!/bin/sh
 if [ "$1" = "prefix" ] && [ "$2" = "-g" ]; then
 	printf '%s\n' "${tmpDir}"
 	exit 0
@@ -209,16 +215,17 @@ if [ "$1 $2 $3" = "install -D pyright" ]; then
 fi
 exit 9
 `,
-		);
+			);
 
-		await expect(
-			installLanguageServer("python", "pyright-langserver", projectDir),
-		).resolves.toBeUndefined();
-	});
+			await expect(
+				installLanguageServer("python", "pyright-langserver", projectDir),
+			).resolves.toBeUndefined();
+		});
 
-	it("returns undefined for unsupported missing binaries", async () => {
-		await expect(
-			installLanguageServer("unknown", "missing-language-server", projectDir),
-		).resolves.toBeUndefined();
-	});
-});
+		it("returns undefined for unsupported missing binaries", async () => {
+			await expect(
+				installLanguageServer("unknown", "missing-language-server", projectDir),
+			).resolves.toBeUndefined();
+		});
+	},
+);
