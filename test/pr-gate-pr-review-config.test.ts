@@ -110,10 +110,7 @@ describe("PR reviewer config", () => {
 	});
 
 	it("directs Pi documentation research through the native read tool", () => {
-		for (const promptPath of [
-			"../src/pr-gate/prompts/system.md",
-			"../src/pr-gate/prompts/pr-reviewer-system.md",
-		]) {
+		for (const promptPath of ["../src/pr-gate/prompts/system.md"]) {
 			const prompt = readFileSync(new URL(promptPath, import.meta.url), "utf8");
 			expect(prompt).not.toMatch(/\bpi_docs\b/);
 			expect(prompt).toMatch(/Pi.*documentation.*read/i);

@@ -254,7 +254,6 @@ Located in `src/pr-gate/prompts/`:
 | File | Purpose |
 |---|---|
 | `system.md` | Full system prompt — all 7 review domains inline, test execution instructions, output format |
-| `pr-reviewer-system.md` | PR-specific variant — references shared checklist, host execution policy |
 | `task-template.md` | Task prompt template with `{{TASK}}`, `{{FILES}}`, `{{DIFF}}`, `{{TEST_PLAN}}`, `{{EXTRA_INSTRUCTIONS}}` placeholders |
 
 The 7 review domains (source: `src/shared/review-checklist.md`):
@@ -409,4 +408,3 @@ return even when the HEAD already has a token.
 | `src/pr-gate/pr-review-tool.ts` | Agent-callable `pr_review` custom tool definition |
 | `src/pr-gate/prompts/system.md` | Reviewer system prompt |
 | `src/pr-gate/prompts/task-template.md` | Reviewer task template |
-| `src/pr-gate/prompts/pr-reviewer-system.md` | PR-specific system prompt variant |
