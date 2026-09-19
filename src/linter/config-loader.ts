@@ -5,7 +5,11 @@ import {
 	formatMarkdownlintResults,
 	runMarkdownlint,
 } from "./markdownlint.js";
-import type { LinterConfig, MarkdownlintConfig } from "./types.js";
+import type {
+	CliLinterDefinition,
+	LinterConfig,
+	MarkdownlintConfig,
+} from "./types.js";
 
 export type {
 	ApiLinterDefinition,
@@ -24,6 +28,33 @@ export {
 };
 
 export const MAX_MODIFIED_FILES = 1000;
+
+/**
+ * cppcheck runs without system include paths in the lint sandbox: every
+ * `#include <...>` line reports missingIncludeSystem, and --enable=all emits
+ * an informational checkersReport banner. Both are environmental false
+ * positives that count as findings and latch the findings state (and the
+ * PR-review lint gate) on C-family edit turns.
+ */
+const CPPCHECK_NOISE_SUPPRESSIONS = [
+	"--suppress=missingIncludeSystem",
+	"--suppress=checkersReport",
+] as const;
+
+function cppcheckLinter(std?: string): CliLinterDefinition {
+	return {
+		type: "cli",
+		command: "cppcheck",
+		args: [
+			"--enable=all",
+			...(std ? [std] : []),
+			"--quiet",
+			"--template=gcc",
+			...CPPCHECK_NOISE_SUPPRESSIONS,
+		],
+		name: "cppcheck",
+	};
+}
 
 export const DEFAULT_CONFIG: LinterConfig = {
 	cooldownMs: 15_000,
@@ -58,36 +89,11 @@ export const DEFAULT_CONFIG: LinterConfig = {
 			name: "Ruff",
 		},
 		".go": { type: "api", name: "go" },
-		".c": {
-			type: "cli",
-			command: "cppcheck",
-			args: ["--enable=all", "--std=c11", "--quiet", "--template=gcc"],
-			name: "cppcheck",
-		},
-		".cpp": {
-			type: "cli",
-			command: "cppcheck",
-			args: ["--enable=all", "--std=c++17", "--quiet", "--template=gcc"],
-			name: "cppcheck",
-		},
-		".cc": {
-			type: "cli",
-			command: "cppcheck",
-			args: ["--enable=all", "--std=c++17", "--quiet", "--template=gcc"],
-			name: "cppcheck",
-		},
-		".h": {
-			type: "cli",
-			command: "cppcheck",
-			args: ["--enable=all", "--quiet", "--template=gcc"],
-			name: "cppcheck",
-		},
-		".hpp": {
-			type: "cli",
-			command: "cppcheck",
-			args: ["--enable=all", "--std=c++17", "--quiet", "--template=gcc"],
-			name: "cppcheck",
-		},
+		".c": cppcheckLinter("--std=c11"),
+		".cpp": cppcheckLinter("--std=c++17"),
+		".cc": cppcheckLinter("--std=c++17"),
+		".h": cppcheckLinter(),
+		".hpp": cppcheckLinter("--std=c++17"),
 		".tf": {
 			type: "cli",
 			command: "tflint",

@@ -80,6 +80,8 @@ Exit-code semantics: 0 → `clean`; non-zero → `findings`; spawn error/timeout
 
 **Biome special handling**: `BIOME_ROOT_MARKERS` and `groupFilesByExecutionCwd` ensure Biome runs from the directory containing `biome.json`.
 
+**cppcheck environmental suppressions**: The default C-family args (`.c/.cpp/.cc/.h/.hpp`) append `--suppress=missingIncludeSystem --suppress=checkersReport`. cppcheck runs without system include paths, so every `#include <...>` would otherwise report `missingIncludeSystem`, and `--enable=all` emits an informational `checkersReport` banner; both are environmental false positives that count as findings and latch the findings state (and the PR-review lint gate) on C-file edit turns.
+
 > **Indent note**: This file uses 2-space indent (biome.json override).
 
 ### Markdownlint adapter (`src/linter/adapters/markdownlint.ts`)

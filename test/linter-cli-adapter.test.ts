@@ -223,4 +223,34 @@ describe("linter cli adapter", () => {
       name: "Ruff",
     });
   });
+
+  it("default config suppresses cppcheck environmental noise on C-family files", () => {
+    // cppcheck runs without system include paths in the lint sandbox, so every
+    // `#include <...>` line reports missingIncludeSystem, and --enable=all emits
+    // an informational checkersReport banner the findings parser counts as a
+    // finding. Both are environmental false positives that latch the PR-review
+    // lint gate on C-file edit turns (see .pi-d197 in davehardy20/pi-config).
+    const noiseSuppressions = [
+      "--suppress=missingIncludeSystem",
+      "--suppress=checkersReport",
+    ];
+    const expectedArgs: Record<string, string[]> = {
+      ".c": ["--enable=all", "--std=c11", "--quiet", "--template=gcc"],
+      ".cpp": ["--enable=all", "--std=c++17", "--quiet", "--template=gcc"],
+      ".cc": ["--enable=all", "--std=c++17", "--quiet", "--template=gcc"],
+      ".h": ["--enable=all", "--quiet", "--template=gcc"],
+      ".hpp": ["--enable=all", "--std=c++17", "--quiet", "--template=gcc"],
+    };
+    for (const [ext, baseArgs] of Object.entries(expectedArgs)) {
+      expect(
+        getLinterForFile(`/repo/native/source${ext}`, DEFAULT_CONFIG),
+        ext,
+      ).toEqual({
+        type: "cli",
+        command: "cppcheck",
+        args: [...baseArgs, ...noiseSuppressions],
+        name: "cppcheck",
+      });
+    }
+  });
 });
