@@ -60,6 +60,9 @@ export function parseReviewReport(output: string): ReviewReport | null {
 		let offset = 0;
 		for (const line of output.split("\n")) {
 			if (/^##\s/.test(line)) headingPositions.push(offset);
+			// Same normalization as parseReviewField: candidate STATUS-line
+			// detection must match the field parser used for extraction, or
+			// candidate classification silently desyncs from parsing.
 			const normalized = line.replaceAll("**", "").trim().toUpperCase();
 			if (normalized.startsWith("STATUS:")) statusPositions.push(offset);
 			offset += line.length + 1;

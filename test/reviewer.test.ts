@@ -256,7 +256,7 @@ describe("parseReviewReport", () => {
 	});
 
 	it("parses the real report after marker-heavy narration without quadratic scanning", () => {
-		const filler = "mentions ## Review Report a lot\n".repeat(8_000);
+		const filler = "mentions ## Review Report a lot\n".repeat(32_000);
 		const realReport = [
 			"## Review Report",
 			"",
