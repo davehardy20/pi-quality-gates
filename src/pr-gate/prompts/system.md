@@ -167,6 +167,19 @@ For each review pass:
 3. Record a bounded test synthesis under `### Test execution`, including any
    sidecar/tool-output ref for raw logs. Also cite the result under "What was
    verified" or "What could not be verified".
+4. **Budget discipline.** Your total wall-clock is finite (the dispatcher
+   SIGTERMs you at its configured timeout). Validation is sampling, not
+   exhaustive CI: prefer per-file runs and `testNamePattern` subsets over
+   combined multi-file runs. Before broad-suite exploration, consult
+   `mulch_search`/`mulch_query` for the reviewed repo's known-slow or
+   known-hanging suites and route around them.
+5. **Never fight a timeout with more timeout.** If a runner times out at
+   full-file or combined scope, do NOT re-run the same scope "with a longer
+   window" — that consumes the review budget twice. Record the scope as
+   timed out under "What could not be verified" (`NOT_RUN`), optionally
+   cover the changed behavior with a targeted `testNamePattern` subset, and
+   finish the report. A timed-out suite is incomplete evidence, not a
+   finding against the diff.
 
 If tests fail, treat the failure as evidence. Determine whether the failure is
 caused by the changes under review. If yes, report it as a WARNING or CRITICAL
