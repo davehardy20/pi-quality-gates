@@ -125,6 +125,156 @@ describe("parseReviewReport", () => {
 		expect(report?.confidence).toBe("LOW");
 	});
 
+	it("tolerates narration glued onto the report marker without a newline (concatenated stream parts)", () => {
+		// Reproduces gate parse failures 2026-09-27T12-52-06 / T13-11-37:
+		// reviewer.ts concatenates assistant stream parts with no separator,
+		// so the report block can start mid-line after narration.
+		const output = [
+			"Let me get exact line numbers for the citation.## Review Report",
+			"",
+			"STATUS: PASS",
+			"CONFIDENCE: HIGH",
+			"",
+			"### Findings",
+			"None.",
+			"",
+			"### Test execution",
+			"- **Status:** PASS",
+			"- **Summary:** run_vitest passed",
+			"",
+			"### Summary",
+			"Ready to push.",
+		].join("\n");
+
+		const report = parseReviewReport(output);
+		expect(report).not.toBeNull();
+		expect(report?.status).toBe("PASS");
+		expect(report?.confidence).toBe("HIGH");
+		expect(report?.summary).toBe("Ready to push.");
+	});
+
+	it("fails closed on a prose marker mention with STATUS but no section headings", () => {
+		const output = [
+			"The instructions say to emit a ## Review Report block, so consider this done.",
+			"STATUS: PASS",
+			"That is all the model wrote.",
+		].join("\n");
+
+		expect(parseReviewReport(output)).toBeNull();
+	});
+
+	it("prefers the last marker occurrence when narration quotes the marker", () => {
+		const output = [
+			"The gate parses its `## Review Report` block, so I will follow that shape.",
+			"",
+			"## Review Report",
+			"",
+			"STATUS: ISSUES",
+			"CONFIDENCE: MEDIUM",
+			"",
+			"### Findings",
+			"",
+			"#### [NIT] example finding",
+			"",
+			"### Summary",
+			"Fixable.",
+		].join("\n");
+
+		const report = parseReviewReport(output);
+		expect(report).not.toBeNull();
+		expect(report?.status).toBe("ISSUES");
+		expect(report?.findings).toHaveLength(1);
+	});
+
+	it("uses the real report when a trailing bare marker echo follows it", () => {
+		const output = [
+			"## Review Report",
+			"",
+			"STATUS: PASS",
+			"CONFIDENCE: HIGH",
+			"",
+			"### Findings",
+			"None.",
+			"",
+			"### Summary",
+			"Done.",
+			"",
+			"## Review Report",
+		].join("\n");
+
+		const report = parseReviewReport(output);
+		expect(report).not.toBeNull();
+		expect(report?.status).toBe("PASS");
+	});
+
+	it("fails closed when a complete nested report appears after the real one", () => {
+		const output = [
+			"## Review Report",
+			"",
+			"STATUS: PASS",
+			"CONFIDENCE: HIGH",
+			"",
+			"### Findings",
+			"None.",
+			"",
+			"### Summary",
+			"Done.",
+			"",
+			"## Review Report",
+			"",
+			"STATUS: ISSUES",
+			"CONFIDENCE: LOW",
+			"",
+			"### Findings",
+			"",
+			"#### [NIT] nested quoted finding",
+			"",
+			"### Summary",
+			"Nested.",
+		].join("\n");
+
+		// Two complete candidates = ambiguous; never parse either at the
+		// PASS-token trust boundary.
+		expect(parseReviewReport(output)).toBeNull();
+	});
+
+	it("fails closed on prose marker + STATUS with only a non-Findings section", () => {
+		const output = [
+			"The reviewer should emit a ## Review Report block when done.",
+			"STATUS: PASS",
+			"CONFIDENCE: HIGH",
+			"",
+			"### Test execution",
+			"- **Status:** PASS",
+			"- **Summary:** narrated, not reviewed",
+		].join("\n");
+
+		// A prose marker mention carrying a STATUS line and an unrelated
+		// section must not mint a report: the shape guard requires the
+		// canonical "### Findings" heading.
+		expect(parseReviewReport(output)).toBeNull();
+	});
+
+	it("parses the real report after marker-heavy narration without quadratic scanning", () => {
+		const filler = "mentions ## Review Report a lot\n".repeat(32_000);
+		const realReport = [
+			"## Review Report",
+			"",
+			"STATUS: PASS",
+			"CONFIDENCE: HIGH",
+			"",
+			"### Findings",
+			"None.",
+			"",
+			"### Summary",
+			"Done.",
+		].join("\n");
+
+		const report = parseReviewReport(`${filler}\n${realReport}`);
+		expect(report).not.toBeNull();
+		expect(report?.status).toBe("PASS");
+	});
+
 	it("tolerates preamble/chatter before ## Review Report (orchestrated child output)", () => {
 		const output = [
 			"Sure, here is my review of this change.",

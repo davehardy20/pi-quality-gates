@@ -30,11 +30,72 @@ export function parseReviewReport(output: string): ReviewReport | null {
 	if (!output?.trim()) return null;
 
 	// Find the report block (case-insensitive, allowing leading whitespace)
-	const reportMarker = /^\s*##\s+Review\s+Report\s*$/im;
-	const reportMatch = output.match(reportMarker);
-	if (!reportMatch) return null;
+	// Match the marker anywhere, not only at line start: the host reviewer
+	// concatenates assistant stream parts without separators, so the marker
+	// can glue onto preceding narration ("citation.## Review Report").
+	//
+	// Candidate selection (ambiguity-aware): a marker occurrence is a
+	// complete candidate only when a "STATUS:" field line appears between
+	// it and the next "##" heading (or end of output). Exactly one complete
+	// candidate parses — glued-marker and prose-mention shapes both reduce
+	// to one. Bare echoes without a STATUS line are not candidates, and a
+	// lone echo still fails closed via the section shape guard below. Two or
+	// more complete candidates — a complete nested/quoted report appearing
+	// after the real one — fail closed as ambiguous rather than risk parsing
+	// the wrong source at the PASS-token trust boundary.
+	//
+	// Complexity guard: classify markers against precomputed heading and
+	// STATUS line positions (single pass, binary search per marker) instead
+	// of re-slicing the tail per marker, so marker-heavy child output stays
+	// linear; bail as soon as ambiguity is established.
+	const markerIndices: number[] = [];
+	for (const match of output.matchAll(/##\s+Review\s+Report/gi)) {
+		if (match.index !== undefined) markerIndices.push(match.index);
+	}
+	if (markerIndices.length === 0) return null;
 
-	const reportText = output.slice(reportMatch.index);
+	const headingPositions: number[] = [];
+	const statusPositions: number[] = [];
+	{
+		let offset = 0;
+		for (const line of output.split("\n")) {
+			if (/^##\s/.test(line)) headingPositions.push(offset);
+			// Same normalization as parseReviewField: candidate STATUS-line
+			// detection must match the field parser used for extraction, or
+			// candidate classification silently desyncs from parsing.
+			const normalized = line.replaceAll("**", "").trim().toUpperCase();
+			if (normalized.startsWith("STATUS:")) statusPositions.push(offset);
+			offset += line.length + 1;
+		}
+	}
+
+	const candidateIndices: number[] = [];
+	for (const start of markerIndices) {
+		const headingIdx = firstAtOrAfter(headingPositions, start + 1);
+		const scopeEnd =
+			headingIdx === headingPositions.length
+				? undefined
+				: headingPositions[headingIdx];
+		const statusIdx = firstAtOrAfter(statusPositions, start);
+		const hasStatus =
+			statusIdx < statusPositions.length &&
+			(scopeEnd === undefined || statusPositions[statusIdx] < scopeEnd);
+		if (hasStatus) {
+			candidateIndices.push(start);
+			if (candidateIndices.length > 1) break; // ambiguity established
+		}
+	}
+	if (candidateIndices.length !== 1) return null;
+
+	const reportText = output.slice(candidateIndices[0]);
+
+	// Trust-boundary shape guard: the loosened marker anchor widens what can
+	// reach the PASS-token parser, so require report-shaped structure — the
+	// canonical "### Findings" heading after the selected match. Narration
+	// carrying a prose marker, a stray STATUS line, and unrelated sections
+	// (e.g. only a Test execution block) fails closed here instead of
+	// minting a report.
+	if (!/^###\s+Findings\s*$/im.test(reportText)) return null;
 
 	const statusValue = parseReviewField(reportText, "STATUS");
 	if (!isReviewStatus(statusValue)) return null;
@@ -71,6 +132,18 @@ export function parseReviewReport(output: string): ReviewReport | null {
 		...(testExecution ? { testExecution } : {}),
 		summary,
 	};
+}
+
+/** First index in a sorted ascending array with arr[i] >= target. */
+function firstAtOrAfter(arr: number[], target: number): number {
+	let lo = 0;
+	let hi = arr.length;
+	while (lo < hi) {
+		const mid = (lo + hi) >> 1;
+		if (arr[mid] < target) lo = mid + 1;
+		else hi = mid;
+	}
+	return lo;
 }
 
 function parseReviewField(reportText: string, fieldName: string): string {
