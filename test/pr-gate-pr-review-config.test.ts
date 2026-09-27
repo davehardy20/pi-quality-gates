@@ -145,6 +145,19 @@ describe("PR reviewer config", () => {
 		expect(prompt).toMatch(/enforcement sink/i);
 	});
 
+	it("requires budget discipline and timeout handling in the host reviewer prompt", () => {
+		const prompt = readFileSync(
+			new URL("../src/pr-gate/prompts/system.md", import.meta.url),
+			"utf8",
+		);
+		// Item 4: finite wall-clock (dispatcher SIGTERM) + validation-as-sampling guidance.
+		expect(prompt).toContain("Budget discipline");
+		expect(prompt).toMatch(/SIGTERM/);
+		// Item 5: never re-run a timed-out scope with a longer window; record NOT_RUN instead.
+		expect(prompt).toMatch(/Never fight a timeout with more timeout/);
+		expect(prompt).toMatch(/NOT_RUN/);
+	});
+
 	it("enables the PR-Agent review-quality features by default", () => {
 		// C2 structured diff hunks — labelled-hunk (__new__/__old__) diff format.
 		expect(PR_REVIEW_CONFIG.useStructuredHunks).toBe(true);
