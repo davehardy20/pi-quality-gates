@@ -155,7 +155,9 @@ describe("PR reviewer config", () => {
 		expect(prompt).toMatch(/SIGTERM/);
 		// Item 5: never re-run a timed-out scope with a longer window; record NOT_RUN instead.
 		expect(prompt).toMatch(/Never fight a timeout with more timeout/);
-		expect(prompt).toMatch(/NOT_RUN/);
+		expect(prompt).toMatch(
+			/timed out under "What could not be verified" \(`NOT_RUN`\)/,
+		);
 	});
 
 	it("enables the PR-Agent review-quality features by default", () => {
