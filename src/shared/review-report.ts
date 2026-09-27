@@ -34,13 +34,20 @@ export function parseReviewReport(output: string): ReviewReport | null {
 	// concatenates assistant stream parts without separators, so the marker
 	// can glue onto preceding narration ("citation.## Review Report").
 	// Prefer the LAST occurrence so prose echoes of the marker (e.g. a child
-	// quoting instructions) cannot shadow the actual report; a prose-only
-	// mention still fails closed downstream when no STATUS line follows.
+	// quoting instructions) cannot shadow the actual report; a trailing echo
+	// after a real report fails closed via the shape guard below.
 	const reportMatches = [...output.matchAll(/##\s+Review\s+Report/gi)];
 	const reportMatch = reportMatches.at(-1);
 	if (!reportMatch || reportMatch.index === undefined) return null;
 
 	const reportText = output.slice(reportMatch.index);
+
+	// Trust-boundary shape guard: the loosened marker anchor widens what can
+	// reach the PASS-token parser, so require report-shaped structure — at
+	// least one "###" section heading after the selected match. A prose
+	// marker mention with a stray STATUS line but no section headings fails
+	// closed here instead of minting a report.
+	if (!/^###\s+\S/m.test(reportText)) return null;
 
 	const statusValue = parseReviewField(reportText, "STATUS");
 	if (!isReviewStatus(statusValue)) return null;

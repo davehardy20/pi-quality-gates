@@ -153,6 +153,58 @@ describe("parseReviewReport", () => {
 		expect(report?.summary).toBe("Ready to push.");
 	});
 
+	it("fails closed on a prose marker mention with STATUS but no section headings", () => {
+		const output = [
+			"The instructions say to emit a ## Review Report block, so consider this done.",
+			"STATUS: PASS",
+			"That is all the model wrote.",
+		].join("\n");
+
+		expect(parseReviewReport(output)).toBeNull();
+	});
+
+	it("prefers the last marker occurrence when narration quotes the marker", () => {
+		const output = [
+			"The gate parses its `## Review Report` block, so I will follow that shape.",
+			"",
+			"## Review Report",
+			"",
+			"STATUS: ISSUES",
+			"CONFIDENCE: MEDIUM",
+			"",
+			"### Findings",
+			"",
+			"#### [NIT] example finding",
+			"",
+			"### Summary",
+			"Fixable.",
+		].join("\n");
+
+		const report = parseReviewReport(output);
+		expect(report).not.toBeNull();
+		expect(report?.status).toBe("ISSUES");
+		expect(report?.findings).toHaveLength(1);
+	});
+
+	it("fails closed when a trailing own-line marker echo follows the real report", () => {
+		const output = [
+			"## Review Report",
+			"",
+			"STATUS: PASS",
+			"CONFIDENCE: HIGH",
+			"",
+			"### Findings",
+			"None.",
+			"",
+			"### Summary",
+			"Done.",
+			"",
+			"## Review Report",
+		].join("\n");
+
+		expect(parseReviewReport(output)).toBeNull();
+	});
+
 	it("tolerates preamble/chatter before ## Review Report (orchestrated child output)", () => {
 		const output = [
 			"Sure, here is my review of this change.",
