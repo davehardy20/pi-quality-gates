@@ -125,6 +125,34 @@ describe("parseReviewReport", () => {
 		expect(report?.confidence).toBe("LOW");
 	});
 
+	it("tolerates narration glued onto the report marker without a newline (concatenated stream parts)", () => {
+		// Reproduces gate parse failures 2026-09-27T12-52-06 / T13-11-37:
+		// reviewer.ts concatenates assistant stream parts with no separator,
+		// so the report block can start mid-line after narration.
+		const output = [
+			"Let me get exact line numbers for the citation.## Review Report",
+			"",
+			"STATUS: PASS",
+			"CONFIDENCE: HIGH",
+			"",
+			"### Findings",
+			"None.",
+			"",
+			"### Test execution",
+			"- **Status:** PASS",
+			"- **Summary:** run_vitest passed",
+			"",
+			"### Summary",
+			"Ready to push.",
+		].join("\n");
+
+		const report = parseReviewReport(output);
+		expect(report).not.toBeNull();
+		expect(report?.status).toBe("PASS");
+		expect(report?.confidence).toBe("HIGH");
+		expect(report?.summary).toBe("Ready to push.");
+	});
+
 	it("tolerates preamble/chatter before ## Review Report (orchestrated child output)", () => {
 		const output = [
 			"Sure, here is my review of this change.",

@@ -30,9 +30,15 @@ export function parseReviewReport(output: string): ReviewReport | null {
 	if (!output?.trim()) return null;
 
 	// Find the report block (case-insensitive, allowing leading whitespace)
-	const reportMarker = /^\s*##\s+Review\s+Report\s*$/im;
-	const reportMatch = output.match(reportMarker);
-	if (!reportMatch) return null;
+	// Match the marker anywhere, not only at line start: the host reviewer
+	// concatenates assistant stream parts without separators, so the marker
+	// can glue onto preceding narration ("citation.## Review Report").
+	// Prefer the LAST occurrence so prose echoes of the marker (e.g. a child
+	// quoting instructions) cannot shadow the actual report; a prose-only
+	// mention still fails closed downstream when no STATUS line follows.
+	const reportMatches = [...output.matchAll(/##\s+Review\s+Report/gi)];
+	const reportMatch = reportMatches.at(-1);
+	if (!reportMatch || reportMatch.index === undefined) return null;
 
 	const reportText = output.slice(reportMatch.index);
 
