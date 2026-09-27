@@ -43,27 +43,56 @@ export function parseReviewReport(output: string): ReviewReport | null {
 	// more complete candidates — a complete nested/quoted report appearing
 	// after the real one — fail closed as ambiguous rather than risk parsing
 	// the wrong source at the PASS-token trust boundary.
-	const markerMatches = [...output.matchAll(/##\s+Review\s+Report/gi)];
+	//
+	// Complexity guard: classify markers against precomputed heading and
+	// STATUS line positions (single pass, binary search per marker) instead
+	// of re-slicing the tail per marker, so marker-heavy child output stays
+	// linear; bail as soon as ambiguity is established.
+	const markerIndices: number[] = [];
+	for (const match of output.matchAll(/##\s+Review\s+Report/gi)) {
+		if (match.index !== undefined) markerIndices.push(match.index);
+	}
+	if (markerIndices.length === 0) return null;
+
+	const headingPositions: number[] = [];
+	const statusPositions: number[] = [];
+	{
+		let offset = 0;
+		for (const line of output.split("\n")) {
+			if (/^##\s/.test(line)) headingPositions.push(offset);
+			const normalized = line.replaceAll("**", "").trim().toUpperCase();
+			if (normalized.startsWith("STATUS:")) statusPositions.push(offset);
+			offset += line.length + 1;
+		}
+	}
+
 	const candidateIndices: number[] = [];
-	for (const match of markerMatches) {
-		if (match.index === undefined) continue;
-		const tail = output.slice(match.index + 1);
-		const nextHeading = tail.search(/^##\s/m);
+	for (const start of markerIndices) {
+		const headingIdx = firstAtOrAfter(headingPositions, start + 1);
 		const scopeEnd =
-			nextHeading === -1 ? undefined : match.index + 1 + nextHeading;
-		const scope = output.slice(match.index, scopeEnd);
-		if (hasStatusField(scope)) candidateIndices.push(match.index);
+			headingIdx === headingPositions.length
+				? undefined
+				: headingPositions[headingIdx];
+		const statusIdx = firstAtOrAfter(statusPositions, start);
+		const hasStatus =
+			statusIdx < statusPositions.length &&
+			(scopeEnd === undefined || statusPositions[statusIdx] < scopeEnd);
+		if (hasStatus) {
+			candidateIndices.push(start);
+			if (candidateIndices.length > 1) break; // ambiguity established
+		}
 	}
 	if (candidateIndices.length !== 1) return null;
 
 	const reportText = output.slice(candidateIndices[0]);
 
 	// Trust-boundary shape guard: the loosened marker anchor widens what can
-	// reach the PASS-token parser, so require report-shaped structure — at
-	// least one "###" section heading after the selected match. A prose
-	// marker mention with a stray STATUS line but no section headings fails
-	// closed here instead of minting a report.
-	if (!/^###\s+\S/m.test(reportText)) return null;
+	// reach the PASS-token parser, so require report-shaped structure — the
+	// canonical "### Findings" heading after the selected match. Narration
+	// carrying a prose marker, a stray STATUS line, and unrelated sections
+	// (e.g. only a Test execution block) fails closed here instead of
+	// minting a report.
+	if (!/^###\s+Findings\s*$/im.test(reportText)) return null;
 
 	const statusValue = parseReviewField(reportText, "STATUS");
 	if (!isReviewStatus(statusValue)) return null;
@@ -102,13 +131,16 @@ export function parseReviewReport(output: string): ReviewReport | null {
 	};
 }
 
-/** Same normalization as parseReviewField: bold-stripped, trimmed, uppercased. */
-function hasStatusField(scope: string): boolean {
-	for (const line of scope.split("\n")) {
-		const normalized = line.replaceAll("**", "").trim().toUpperCase();
-		if (normalized.startsWith("STATUS:")) return true;
+/** First index in a sorted ascending array with arr[i] >= target. */
+function firstAtOrAfter(arr: number[], target: number): number {
+	let lo = 0;
+	let hi = arr.length;
+	while (lo < hi) {
+		const mid = (lo + hi) >> 1;
+		if (arr[mid] < target) lo = mid + 1;
+		else hi = mid;
 	}
-	return false;
+	return lo;
 }
 
 function parseReviewField(reportText: string, fieldName: string): string {

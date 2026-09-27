@@ -238,6 +238,43 @@ describe("parseReviewReport", () => {
 		expect(parseReviewReport(output)).toBeNull();
 	});
 
+	it("fails closed on prose marker + STATUS with only a non-Findings section", () => {
+		const output = [
+			"The reviewer should emit a ## Review Report block when done.",
+			"STATUS: PASS",
+			"CONFIDENCE: HIGH",
+			"",
+			"### Test execution",
+			"- **Status:** PASS",
+			"- **Summary:** narrated, not reviewed",
+		].join("\n");
+
+		// A prose marker mention carrying a STATUS line and an unrelated
+		// section must not mint a report: the shape guard requires the
+		// canonical "### Findings" heading.
+		expect(parseReviewReport(output)).toBeNull();
+	});
+
+	it("parses the real report after marker-heavy narration without quadratic scanning", () => {
+		const filler = "mentions ## Review Report a lot\n".repeat(8_000);
+		const realReport = [
+			"## Review Report",
+			"",
+			"STATUS: PASS",
+			"CONFIDENCE: HIGH",
+			"",
+			"### Findings",
+			"None.",
+			"",
+			"### Summary",
+			"Done.",
+		].join("\n");
+
+		const report = parseReviewReport(`${filler}\n${realReport}`);
+		expect(report).not.toBeNull();
+		expect(report?.status).toBe("PASS");
+	});
+
 	it("tolerates preamble/chatter before ## Review Report (orchestrated child output)", () => {
 		const output = [
 			"Sure, here is my review of this change.",
