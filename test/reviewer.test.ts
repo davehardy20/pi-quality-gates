@@ -186,7 +186,7 @@ describe("parseReviewReport", () => {
 		expect(report?.findings).toHaveLength(1);
 	});
 
-	it("fails closed when a trailing own-line marker echo follows the real report", () => {
+	it("uses the real report when a trailing bare marker echo follows it", () => {
 		const output = [
 			"## Review Report",
 			"",
@@ -202,6 +202,39 @@ describe("parseReviewReport", () => {
 			"## Review Report",
 		].join("\n");
 
+		const report = parseReviewReport(output);
+		expect(report).not.toBeNull();
+		expect(report?.status).toBe("PASS");
+	});
+
+	it("fails closed when a complete nested report appears after the real one", () => {
+		const output = [
+			"## Review Report",
+			"",
+			"STATUS: PASS",
+			"CONFIDENCE: HIGH",
+			"",
+			"### Findings",
+			"None.",
+			"",
+			"### Summary",
+			"Done.",
+			"",
+			"## Review Report",
+			"",
+			"STATUS: ISSUES",
+			"CONFIDENCE: LOW",
+			"",
+			"### Findings",
+			"",
+			"#### [NIT] nested quoted finding",
+			"",
+			"### Summary",
+			"Nested.",
+		].join("\n");
+
+		// Two complete candidates = ambiguous; never parse either at the
+		// PASS-token trust boundary.
 		expect(parseReviewReport(output)).toBeNull();
 	});
 

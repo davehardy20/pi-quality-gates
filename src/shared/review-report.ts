@@ -33,14 +33,30 @@ export function parseReviewReport(output: string): ReviewReport | null {
 	// Match the marker anywhere, not only at line start: the host reviewer
 	// concatenates assistant stream parts without separators, so the marker
 	// can glue onto preceding narration ("citation.## Review Report").
-	// Prefer the LAST occurrence so prose echoes of the marker (e.g. a child
-	// quoting instructions) cannot shadow the actual report; a trailing echo
-	// after a real report fails closed via the shape guard below.
-	const reportMatches = [...output.matchAll(/##\s+Review\s+Report/gi)];
-	const reportMatch = reportMatches.at(-1);
-	if (!reportMatch || reportMatch.index === undefined) return null;
+	//
+	// Candidate selection (ambiguity-aware): a marker occurrence is a
+	// complete candidate only when a "STATUS:" field line appears between
+	// it and the next "##" heading (or end of output). Exactly one complete
+	// candidate parses — glued-marker and prose-mention shapes both reduce
+	// to one. Bare echoes without a STATUS line are not candidates, and a
+	// lone echo still fails closed via the section shape guard below. Two or
+	// more complete candidates — a complete nested/quoted report appearing
+	// after the real one — fail closed as ambiguous rather than risk parsing
+	// the wrong source at the PASS-token trust boundary.
+	const markerMatches = [...output.matchAll(/##\s+Review\s+Report/gi)];
+	const candidateIndices: number[] = [];
+	for (const match of markerMatches) {
+		if (match.index === undefined) continue;
+		const tail = output.slice(match.index + 1);
+		const nextHeading = tail.search(/^##\s/m);
+		const scopeEnd =
+			nextHeading === -1 ? undefined : match.index + 1 + nextHeading;
+		const scope = output.slice(match.index, scopeEnd);
+		if (hasStatusField(scope)) candidateIndices.push(match.index);
+	}
+	if (candidateIndices.length !== 1) return null;
 
-	const reportText = output.slice(reportMatch.index);
+	const reportText = output.slice(candidateIndices[0]);
 
 	// Trust-boundary shape guard: the loosened marker anchor widens what can
 	// reach the PASS-token parser, so require report-shaped structure — at
@@ -84,6 +100,15 @@ export function parseReviewReport(output: string): ReviewReport | null {
 		...(testExecution ? { testExecution } : {}),
 		summary,
 	};
+}
+
+/** Same normalization as parseReviewField: bold-stripped, trimmed, uppercased. */
+function hasStatusField(scope: string): boolean {
+	for (const line of scope.split("\n")) {
+		const normalized = line.replaceAll("**", "").trim().toUpperCase();
+		if (normalized.startsWith("STATUS:")) return true;
+	}
+	return false;
 }
 
 function parseReviewField(reportText: string, fieldName: string): string {
