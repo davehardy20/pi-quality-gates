@@ -145,6 +145,20 @@ describe("PR reviewer config", () => {
 		expect(prompt).toMatch(/enforcement sink/i);
 	});
 
+	it("aligns active prompts with scoped validation", () => {
+		for (const name of ["system.md", "task-template.md"]) {
+			const prompt = readFileSync(
+				new URL(`../src/pr-gate/prompts/${name}`, import.meta.url),
+				"utf8",
+			);
+			expect(prompt).toContain("generated Test Execution Plan");
+			expect(prompt).toContain("timeoutMs");
+			expect(prompt).not.toContain("run_biome src test");
+			expect(prompt).toContain("required validation");
+			expect(prompt).toContain("NOT_RUN");
+		}
+	});
+
 	it("requires budget discipline and timeout handling in the host reviewer prompt", () => {
 		const prompt = readFileSync(
 			new URL("../src/pr-gate/prompts/system.md", import.meta.url),

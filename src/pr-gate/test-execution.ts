@@ -24,6 +24,8 @@ export interface RecommendedTestCommand {
 	args: string[];
 	command: string;
 	scope: "targeted" | "broad" | "format-lint" | "typecheck";
+	/** Explicit initial budget; never rely on the safe runner's 60s default. */
+	timeoutMs?: number;
 	/**
 	 * For run_node_test: the `--import` loader spec (e.g. "tsx") to pass for
 	 * `.test.ts` files Node cannot run natively. Omitted for `.test.js`/`.mjs`.
@@ -155,20 +157,87 @@ function command(tool: SafeRunnerTool, args: string[] = []): string {
 	return [tool, ...args].join(" ");
 }
 
+// The safe runners cap execution at five minutes. Choose that bounded
+// budget up front, rather than retrying a timeout with a larger window.
+const REVIEW_VALIDATION_TIMEOUT_MS = 300_000;
+const CODE_EXTENSIONS = new Set([
+	".js",
+	".jsx",
+	".mjs",
+	".cjs",
+	".ts",
+	".tsx",
+	".mts",
+	".cts",
+]);
+
+function existingChangedFiles(files: string[], cwd: string): string[] {
+	const root = fs.realpathSync(cwd);
+	const existing = new Set<string>();
+	for (const file of files) {
+		const hasControls = Array.from(file).some(
+			(char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127,
+		);
+		if (
+			!file ||
+			path.isAbsolute(file) ||
+			/^[A-Za-z]:/.test(file) ||
+			file.includes("\\") ||
+			hasControls ||
+			file.split("/").includes("..")
+		) {
+			throw new Error("PR review changed path is invalid.");
+		}
+		const resolved = path.resolve(root, file);
+		try {
+			const real = fs.realpathSync(resolved);
+			const relative = path.relative(root, real);
+			if (
+				relative === ".." ||
+				relative.startsWith(`..${path.sep}`) ||
+				path.isAbsolute(relative)
+			) {
+				throw new Error("PR review changed path escapes the workspace.");
+			}
+			if (fs.statSync(real).isFile()) {
+				existing.add(path.relative(root, resolved).split(path.sep).join("/"));
+			}
+		} catch (error) {
+			// Deleted paths cannot be executed/linted. Other inspection
+			// failures must not quietly remove validation coverage.
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+		}
+	}
+	return [...existing];
+}
+
 function makePlan(
 	ecosystem: ProjectEcosystem,
 	runnerCommands: RecommendedTestCommand[],
 	discoveryCommand?: string,
 ): TestExecutionPlan {
+	const boundedCommands = runnerCommands.map((cmd) => ({
+		...cmd,
+		timeoutMs: REVIEW_VALIDATION_TIMEOUT_MS,
+	}));
 	return {
 		ecosystem,
-		recommendedCommands: runnerCommands.map((c) => c.command),
-		runnerCommands,
+		recommendedCommands: boundedCommands.map((c) => c.command),
+		runnerCommands: boundedCommands,
 		discoveryCommand,
 		executionSandbox: "repository-checkout",
 		containerTool: "container_safe",
 		resultContract: RESULT_CONTRACT,
 	};
+}
+
+function formatRunnerCommand(cmd: RecommendedTestCommand): string {
+	const params = {
+		...(cmd.args.length > 0 ? { paths: cmd.args } : {}),
+		...(cmd.import ? { import: cmd.import } : {}),
+		timeoutMs: cmd.timeoutMs ?? REVIEW_VALIDATION_TIMEOUT_MS,
+	};
+	return `${cmd.tool} ${JSON.stringify(params)}`;
 }
 
 /**
@@ -188,42 +257,61 @@ export function recommendTestCommands(
 
 	switch (ecosystem) {
 		case "typescript": {
+			const changedFiles = existingChangedFiles(files, cwd);
+			const changedTests = changedFiles.filter(
+				(file) =>
+					isTestFile(file) &&
+					CODE_EXTENSIONS.has(path.extname(file).toLowerCase()),
+			);
+			const lintFiles = changedFiles.filter((file) => {
+				const extension = path.extname(file).toLowerCase();
+				return (
+					CODE_EXTENSIONS.has(extension) ||
+					extension === ".json" ||
+					extension === ".jsonc"
+				);
+			});
 			const framework = detectTypeScriptTestFramework(cwd);
 			const testRunner: SafeRunnerTool =
 				framework === "node-test" ? "run_node_test" : "run_vitest";
 			// Node cannot run .test.ts natively: surface a TS loader (e.g. tsx) for
 			// changed TS test files. Build-then-test projects emit .test.js and get
 			// no loader (detectNodeTestLoader returns undefined).
-			const hasTsTests = testFiles.some((f) => /\.(ts|tsx)$/.test(f));
+			const hasTsTests = changedTests.some((f) =>
+				/\.(?:ts|tsx|mts|cts)$/.test(f),
+			);
 			const loader =
 				framework === "node-test" && hasTsTests
 					? detectNodeTestLoader(cwd)
 					: undefined;
 			const runnerCommands: RecommendedTestCommand[] = [];
-			if (testFiles.length > 0) {
-				const cmdArgs = loader ? ["--import", loader, ...testFiles] : testFiles;
+			for (const file of changedTests) {
+				const fileLoader = /\.(?:ts|tsx|mts|cts)$/.test(file)
+					? loader
+					: undefined;
+				const cmdArgs = fileLoader ? ["--import", fileLoader, file] : [file];
 				runnerCommands.push({
 					tool: testRunner,
-					args: testFiles,
+					args: [file],
 					command: command(testRunner, cmdArgs),
 					scope: "targeted",
-					...(loader ? { import: loader } : {}),
+					...(fileLoader ? { import: fileLoader } : {}),
 				});
 			}
-			runnerCommands.push(
-				{
-					tool: "run_typecheck",
-					args: [],
-					command: command("run_typecheck"),
-					scope: "typecheck",
-				},
-				{
+			runnerCommands.push({
+				tool: "run_typecheck",
+				args: [],
+				command: command("run_typecheck"),
+				scope: "typecheck",
+			});
+			if (lintFiles.length > 0) {
+				runnerCommands.push({
 					tool: "run_biome",
-					args: ["src", "test"],
-					command: command("run_biome", ["src", "test"]),
+					args: lintFiles,
+					command: command("run_biome", lintFiles),
 					scope: "format-lint",
-				},
-			);
+				});
+			}
 			const discovery =
 				framework === "node-test"
 					? loader
@@ -288,10 +376,15 @@ export function formatTestExecutionPlan(plan: TestExecutionPlan): string {
 			"No safe validation runner is available for this project. Mark test execution as NOT_RUN and explain why under What could not be verified.",
 		);
 	} else {
+		const calls =
+			plan.runnerCommands.length > 0
+				? plan.runnerCommands.map(formatRunnerCommand)
+				: plan.recommendedCommands;
 		lines.push(
 			"",
 			"**Recommended commands (run narrowest first):**",
-			...plan.recommendedCommands.map((cmd) => `- ${cmd}`),
+			"Pass JSON as tool arguments, not shell commands. Keep per-file calls separate and lint only the listed paths.",
+			...calls.map((call) => `- ${call}`),
 		);
 	}
 

@@ -88,12 +88,14 @@ function makePassReportWithoutTestExecution(): ReviewReport {
 	return report;
 }
 
-function makePassReportWithFailedTestExecution(): ReviewReport {
+function makePassReportWithFailedTestExecution(
+	status: "FAIL" | "NOT_RUN" = "FAIL",
+): ReviewReport {
 	return {
 		...makePassReport(),
 		testExecution: {
-			status: "FAIL",
-			summary: "container-safe validation failed",
+			status,
+			summary: "required validation failed or remained incomplete",
 		},
 	};
 }
@@ -266,20 +268,24 @@ describe("pr-review dispatch", () => {
 		expect(result.message).toContain("omitted the required");
 	});
 
-	it("blocks PASS reports with failed test execution", async () => {
-		const pi = createMockPi();
-		const dispatch = createPrReviewDispatch(
-			createTestDeps(makePassReportWithFailedTestExecution()),
-		);
-		const input = createInput(pi);
+	it("blocks PASS reports with failed or incomplete validation", async () => {
+		for (const status of ["FAIL", "NOT_RUN"] as const) {
+			const pi = createMockPi();
+			const dispatch = createPrReviewDispatch(
+				createTestDeps(makePassReportWithFailedTestExecution(status)),
+			);
+			const input = createInput(pi);
 
-		const result = await dispatch.dispatch(input);
+			const result = await dispatch.dispatch(input);
 
-		expect(result.stamped).toBe(false);
-		expect(result.blocked).toBe(true);
-		expect(result.report?.status).toBe("CANNOT_REVIEW");
-		expect(input.state.tokens.hasPass(HEAD_SHA)).toBe(false);
-		expect(result.message).toContain("test execution status is FAIL");
+			expect(result.stamped).toBe(false);
+			expect(result.blocked).toBe(true);
+			expect(result.report?.status).toBe("CANNOT_REVIEW");
+			expect(input.state.tokens.hasPass(HEAD_SHA)).toBe(false);
+			expect(result.message).toContain(`test execution status is ${status}`);
+			expect(result.message).toContain("host-checkout safe-runner validation");
+			expect(result.message).not.toContain("container-safe test execution");
+		}
 	});
 
 	it("blocks and sends a fix instruction when review finds issues", async () => {

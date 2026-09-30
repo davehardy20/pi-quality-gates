@@ -861,7 +861,7 @@ export function createPrReviewDispatch(
 					stamped: false,
 					escalated: false,
 					blocked: true,
-					message: `❓ **PR review could not complete** for HEAD ${headSha}: ${testExecutionBlocker}. Re-run /pr-review after the reviewer reports container-safe test execution.\n\n${formatReportForDisplay(report)}`,
+					message: `❓ **PR review could not complete** for HEAD ${headSha}: ${testExecutionBlocker}. Re-run /pr-review after the reviewer reports completed host-checkout safe-runner validation.\n\n${formatReportForDisplay(report)}`,
 				};
 			}
 

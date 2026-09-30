@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { PR_REVIEWER_TOOLS } from "../src/pr-gate/pr-review-config.js";
 import {
 	detectNodeTestLoader,
@@ -14,6 +14,31 @@ import {
 } from "../src/pr-gate/test-execution.js";
 
 const REPO_ROOT = path.resolve(fileURLToPath(import.meta.url), "..", "..");
+const fixtureRoots: string[] = [];
+
+function withTestFiles(root: string, files: string[]): string {
+	if (!fixtureRoots.includes(root)) fixtureRoots.push(root);
+	for (const file of files) {
+		fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+		fs.writeFileSync(path.join(root, file), "");
+	}
+	return root;
+}
+
+function changedFilesFixture(files: string[]): string {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-qg-plan-"));
+	fs.writeFileSync(
+		path.join(root, "package.json"),
+		JSON.stringify({ devDependencies: { vitest: "^3.2.4" } }),
+	);
+	return withTestFiles(root, files);
+}
+
+afterEach(() => {
+	for (const root of fixtureRoots.splice(0)) {
+		fs.rmSync(root, { recursive: true, force: true });
+	}
+});
 
 describe("detectProjectEcosystem", () => {
 	it("detects TypeScript from package.json", () => {
@@ -129,17 +154,17 @@ describe("detectNodeTestLoader", () => {
 });
 
 describe("recommendTestCommands", () => {
-	it("recommends container-safe vitest/typecheck/biome for TypeScript", () => {
-		const plan = recommendTestCommands(
-			["src/a.ts", "src/a.test.ts"],
-			REPO_ROOT,
-		);
+	it("recommends host Vitest, typecheck and scoped lint", () => {
+		const files = ["src/a.ts", "src/a.test.ts"];
+		const plan = recommendTestCommands(files, changedFilesFixture(files));
 		expect(plan.ecosystem).toBe("typescript");
 		expect(plan.executionSandbox).toBe("repository-checkout");
 		expect(plan.containerTool).toBe("container_safe");
 		expect(plan.recommendedCommands).toContain("run_vitest src/a.test.ts");
 		expect(plan.recommendedCommands).toContain("run_typecheck");
-		expect(plan.recommendedCommands).toContain("run_biome src test");
+		expect(
+			plan.runnerCommands.find((cmd) => cmd.tool === "run_biome")?.args,
+		).toEqual(files);
 		expect(plan.runnerCommands.map((cmd) => cmd.tool)).toEqual([
 			"run_vitest",
 			"run_typecheck",
@@ -157,12 +182,15 @@ describe("recommendTestCommands", () => {
 			}),
 		);
 
-		const plan = recommendTestCommands(["src/a.test.ts"], cwd);
+		const plan = recommendTestCommands(
+			["src/a.test.ts"],
+			withTestFiles(cwd, ["src/a.test.ts"]),
+		);
 
 		expect(plan.ecosystem).toBe("typescript");
 		expect(plan.recommendedCommands).toContain("run_node_test src/a.test.ts");
 		expect(plan.recommendedCommands).toContain("run_typecheck");
-		expect(plan.recommendedCommands).toContain("run_biome src test");
+		expect(plan.recommendedCommands).not.toContain("run_biome src test");
 		expect(plan.runnerCommands.map((cmd) => cmd.tool)).toEqual([
 			"run_node_test",
 			"run_typecheck",
@@ -180,7 +208,10 @@ describe("recommendTestCommands", () => {
 				scripts: { test: "node --test" },
 			}),
 		);
-		const plan = recommendTestCommands(["src/a.test.ts"], cwd);
+		const plan = recommendTestCommands(
+			["src/a.test.ts"],
+			withTestFiles(cwd, ["src/a.test.ts"]),
+		);
 		expect(plan.recommendedCommands).toContain(
 			"run_node_test --import tsx src/a.test.ts",
 		);
@@ -199,10 +230,101 @@ describe("recommendTestCommands", () => {
 				scripts: { test: "node --test" },
 			}),
 		);
-		const plan = recommendTestCommands(["build/a.test.js"], cwd);
+		const plan = recommendTestCommands(
+			["build/a.test.js"],
+			withTestFiles(cwd, ["build/a.test.js"]),
+		);
 		expect(plan.recommendedCommands).toContain("run_node_test build/a.test.js");
 		const nodeCmd = plan.runnerCommands.find((c) => c.tool === "run_node_test");
 		expect(nodeCmd?.import).toBeUndefined();
+	});
+
+	it("plans bounded per-file Vitest calls without duplicates", () => {
+		const files = [
+			"test/slow.test.ts",
+			"test/other.test.ts",
+			"agent/worker.ts",
+		];
+		const plan = recommendTestCommands(
+			[...files, files[0]],
+			changedFilesFixture(files),
+		);
+		expect(
+			plan.runnerCommands
+				.filter((cmd) => cmd.tool === "run_vitest")
+				.map((cmd) => cmd.args),
+		).toEqual([[files[0]], [files[1]]]);
+		for (const cmd of plan.runnerCommands) {
+			expect(cmd).toHaveProperty("timeoutMs", 300_000);
+		}
+	});
+
+	it("lints only existing changed supported files", () => {
+		const files = [
+			"agent/worker.ts",
+			"test/worker.test.ts",
+			"config.json",
+			"config.jsonc",
+			"module.mts",
+			"module.cts",
+			"web.jsx",
+			"README.md",
+		];
+		const cwd = changedFilesFixture([...files, "test/unrelated.test.ts"]);
+		const plan = recommendTestCommands([...files, "deleted.ts"], cwd);
+		expect(
+			plan.runnerCommands.find((cmd) => cmd.tool === "run_biome")?.args,
+		).toEqual(files.slice(0, -1));
+		expect(
+			plan.runnerCommands.find((cmd) => cmd.tool === "run_vitest")?.args,
+		).toEqual(["test/worker.test.ts"]);
+	});
+
+	it("does not expand unsupported or deleted-only changes to broad lint", () => {
+		const cwd = changedFilesFixture(["README.md"]);
+		const plan = recommendTestCommands(["README.md", "removed.test.ts"], cwd);
+		expect(plan.runnerCommands.map((cmd) => cmd.tool)).toEqual([
+			"run_typecheck",
+		]);
+	});
+
+	it("rejects symlink escapes in changed files", () => {
+		const outside = changedFilesFixture(["outside.ts"]);
+		const cwd = changedFilesFixture([]);
+		fs.symlinkSync(outside, path.join(cwd, "redirect"), "junction");
+		expect(() => recommendTestCommands(["redirect/outside.ts"], cwd)).toThrow(
+			/escapes the workspace/,
+		);
+	});
+
+	it.each([
+		"../escape.ts",
+		"/outside.ts",
+		"src/../escape.ts",
+		`bad${String.fromCharCode(0)}.ts`,
+		"C:/outside.ts",
+		"dir\\escape.ts",
+	])("rejects unsafe changed path %j", (file) => {
+		const cwd = changedFilesFixture([]);
+		expect(() => recommendTestCommands([file], cwd)).toThrow(/changed.*path/i);
+	});
+
+	it("preserves the Node loader only for each TypeScript test call", () => {
+		const files = ["test/a.test.ts", "test/b.test.mjs"];
+		const cwd = changedFilesFixture(files);
+		fs.writeFileSync(
+			path.join(cwd, "package.json"),
+			JSON.stringify({ scripts: { test: "node --test --import tsx" } }),
+		);
+		const plan = recommendTestCommands(files, cwd);
+		const commands = plan.runnerCommands.filter(
+			(cmd) => cmd.tool === "run_node_test",
+		);
+		expect(commands).toMatchObject([
+			{ args: [files[0]], import: "tsx", timeoutMs: 300_000 },
+			{ args: [files[1]], timeoutMs: 300_000 },
+		]);
+		expect(commands[1].import).toBeUndefined();
 	});
 
 	it("only emits tools granted to the reviewer (node-test path)", () => {
@@ -211,14 +333,18 @@ describe("recommendTestCommands", () => {
 			path.join(cwd, "package.json"),
 			JSON.stringify({ scripts: { test: "node --test" } }),
 		);
-		const plan = recommendTestCommands(["src/a.test.ts"], cwd);
+		const plan = recommendTestCommands(
+			["src/a.test.ts"],
+			withTestFiles(cwd, ["src/a.test.ts"]),
+		);
 		for (const cmd of plan.runnerCommands) {
 			expect(PR_REVIEWER_TOOLS.has(cmd.tool)).toBe(true);
 		}
 	});
 
 	it("only emits tools granted to the reviewer (vitest path)", () => {
-		const plan = recommendTestCommands(["src/a.test.ts"], REPO_ROOT);
+		const files = ["src/a.test.ts"];
+		const plan = recommendTestCommands(files, changedFilesFixture(files));
 		for (const cmd of plan.runnerCommands) {
 			expect(PR_REVIEWER_TOOLS.has(cmd.tool)).toBe(true);
 		}
@@ -244,6 +370,20 @@ describe("recommendTestCommands", () => {
 });
 
 describe("formatTestExecutionPlan", () => {
+	it("renders encoded JSON tool arguments with explicit budgets", () => {
+		const files = ["test/slow case.test.ts", 'src/quote"file.ts'];
+		const plan = recommendTestCommands(files, changedFilesFixture(files));
+		const formatted = formatTestExecutionPlan(plan);
+		const calls = formatted.split("\n").filter((line) => /^- run_/.test(line));
+		expect(calls).toHaveLength(plan.runnerCommands.length);
+		for (const [index, line] of calls.entries()) {
+			const cmd = plan.runnerCommands[index];
+			const args = JSON.parse(line.slice(line.indexOf("{")));
+			expect(args.timeoutMs).toBe(300_000);
+			if (cmd.args.length) expect(args.paths).toEqual(cmd.args);
+		}
+		expect(formatted).toContain("tool arguments");
+	});
 	it("renders the ecosystem and commands", () => {
 		const plan: TestExecutionPlan = {
 			ecosystem: "typescript",

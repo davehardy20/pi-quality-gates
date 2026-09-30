@@ -82,7 +82,8 @@ is blocked because no PASS token exists yet.
 
 `pr_review` resolves synchronously with compact structured state
 (`ReviewKickoffResult` / `PrReviewToolDetails`). It carries **only** status,
-identifying state (head sha, base ref), and a concise message — never the review
+identifying state (head sha, base ref, and epoch-ms `startedAt` when a review
+was kicked off), and a concise message — never the review
 report, diff, or findings (those stay behind the dispatch result + sidecar/report
 hygiene).
 

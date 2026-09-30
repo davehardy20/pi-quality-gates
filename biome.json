@@ -16,6 +16,7 @@
 	"overrides": [
 		{
 			"includes": [
+				"openwiki/.last-update.json",
 				"src/linter/adapters/cli.ts",
 				"src/pr-gate/gate-decision.ts",
 				"src/pr-gate/pass-token-store.ts",
