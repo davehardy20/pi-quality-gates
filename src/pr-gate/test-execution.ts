@@ -122,15 +122,17 @@ export function detectTypeScriptTestFramework(
 const IMPORT_SPEC_PATTERN = /--import[=\s]+([^\s]+)/;
 
 /**
- * Detect the TypeScript loader to pass to `run_node_test` for `.test.ts` files
- * Node cannot run natively. Returns the loader spec (e.g. "tsx") when the test
- * script uses `--import <spec>` (space or `=` form), or infers `"tsx"` when
- * `tsx` is a devDependency. Returns `undefined` for plain JS/MJS test files,
- * for `ts-node` projects (which register via `--loader ts-node/esm`, not
- * `--import`), or when no loader is configured (e.g. build-then-test projects
- * that emit `.test.js`).
+ * Detect the project runtime import to preserve on every `run_node_test`
+ * call. JavaScript tests can import loader-dependent modules transitively.
+ * Returns the script's `--import <spec>` (space or `=` form), or optionally
+ * infers `"tsx"` when it is a devDependency. Does not infer `ts-node`, which uses
+ * `--loader ts-node/esm`, or invent an import for projects with no configured
+ * or inferred runtime (e.g. plain build-then-test projects).
  */
-export function detectNodeTestLoader(cwd: string): string | undefined {
+export function detectNodeTestLoader(
+	cwd: string,
+	inferTsx = true,
+): string | undefined {
 	const pkg = readPackageJson(cwd);
 	if (!pkg) return undefined;
 	const testScript = pkg.scripts?.test ?? "";
@@ -139,7 +141,7 @@ export function detectNodeTestLoader(cwd: string): string | undefined {
 	const dev = pkg.devDependencies ?? {};
 	// Only tsx can be confidently surfaced for `--import`; ts-node registers via
 	// `--loader ts-node/esm` (a different mechanism), so it is not inferred here.
-	if (dev.tsx) return "tsx";
+	if (inferTsx && dev.tsx) return "tsx";
 	return undefined;
 }
 
@@ -274,28 +276,25 @@ export function recommendTestCommands(
 			const framework = detectTypeScriptTestFramework(cwd);
 			const testRunner: SafeRunnerTool =
 				framework === "node-test" ? "run_node_test" : "run_vitest";
-			// Node cannot run .test.ts natively: surface a TS loader (e.g. tsx) for
-			// changed TS test files. Build-then-test projects emit .test.js and get
-			// no loader (detectNodeTestLoader returns undefined).
-			const hasTsTests = changedTests.some((f) =>
-				/\.(?:ts|tsx|mts|cts)$/.test(f),
+			// Explicit imports belong to the Node process, regardless of test
+			// suffix. Only infer a dependency-based runtime when TS tests changed;
+			// all per-file calls then inherit that same project runtime.
+			const hasTsTests = changedTests.some((file) =>
+				/\.(?:ts|tsx|mts|cts)$/.test(file),
 			);
 			const loader =
-				framework === "node-test" && hasTsTests
-					? detectNodeTestLoader(cwd)
+				framework === "node-test"
+					? detectNodeTestLoader(cwd, hasTsTests)
 					: undefined;
 			const runnerCommands: RecommendedTestCommand[] = [];
 			for (const file of changedTests) {
-				const fileLoader = /\.(?:ts|tsx|mts|cts)$/.test(file)
-					? loader
-					: undefined;
-				const cmdArgs = fileLoader ? ["--import", fileLoader, file] : [file];
+				const cmdArgs = loader ? ["--import", loader, file] : [file];
 				runnerCommands.push({
 					tool: testRunner,
 					args: [file],
 					command: command(testRunner, cmdArgs),
 					scope: "targeted",
-					...(fileLoader ? { import: fileLoader } : {}),
+					...(loader ? { import: loader } : {}),
 				});
 			}
 			runnerCommands.push({
@@ -315,7 +314,7 @@ export function recommendTestCommands(
 			const discovery =
 				framework === "node-test"
 					? loader
-						? `node --test --import ${loader} -- runs .test.ts via the ${loader} loader`
+						? `node --test --import ${loader} -- preserves the project runtime on each test call`
 						: "node --test -- discovers *.test.* / node:test files"
 					: "run_vitest -- test discovery handled by Vitest project config";
 			return makePlan("typescript", runnerCommands, discovery);

@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -221,7 +222,7 @@ describe("recommendTestCommands", () => {
 		expect(plan.discoveryCommand).toContain("--import tsx");
 	});
 
-	it("omits the loader for .test.js files (build-then-test)", () => {
+	it("does not infer tsx for compiled JS-only suites", () => {
 		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-qg-loader-js-"));
 		fs.writeFileSync(
 			path.join(cwd, "package.json"),
@@ -309,7 +310,7 @@ describe("recommendTestCommands", () => {
 		expect(() => recommendTestCommands([file], cwd)).toThrow(/changed.*path/i);
 	});
 
-	it("preserves the Node loader only for each TypeScript test call", () => {
+	it("preserves project Node imports on every per-file call", () => {
 		const files = ["test/a.test.ts", "test/b.test.mjs"];
 		const cwd = changedFilesFixture(files);
 		fs.writeFileSync(
@@ -322,9 +323,108 @@ describe("recommendTestCommands", () => {
 		);
 		expect(commands).toMatchObject([
 			{ args: [files[0]], import: "tsx", timeoutMs: 300_000 },
-			{ args: [files[1]], timeoutMs: 300_000 },
+			{ args: [files[1]], import: "tsx", timeoutMs: 300_000 },
 		]);
-		expect(commands[1].import).toBeUndefined();
+		const calls = formatTestExecutionPlan(plan)
+			.split("\n")
+			.filter((line) => line.startsWith("- run_node_test "));
+		for (const call of calls) {
+			expect(JSON.parse(call.slice(call.indexOf("{"))).import).toBe("tsx");
+		}
+	});
+
+	it("preserves inferred tsx across mixed per-file Node calls", () => {
+		const files = ["test/a.test.ts", "test/b.test.mjs"];
+		const cwd = changedFilesFixture(files);
+		fs.writeFileSync(
+			path.join(cwd, "package.json"),
+			JSON.stringify({
+				scripts: { test: "node --test" },
+				devDependencies: { tsx: "^4.0.0" },
+			}),
+		);
+		const commands = recommendTestCommands(files, cwd).runnerCommands.filter(
+			(cmd) => cmd.tool === "run_node_test",
+		);
+		expect(commands).toHaveLength(2);
+		expect(commands.map((cmd) => cmd.import)).toEqual(["tsx", "tsx"]);
+	});
+
+	it("executes a JS-only test importing loader-dependent code", () => {
+		const file = "test/loader.test.mjs";
+		const cwd = changedFilesFixture([
+			file,
+			"src/value.fixture",
+			"register.mjs",
+			"hooks.mjs",
+		]);
+		fs.writeFileSync(
+			path.join(cwd, "package.json"),
+			JSON.stringify({
+				type: "module",
+				scripts: { test: "node --test --import ./register.mjs" },
+			}),
+		);
+		fs.writeFileSync(
+			path.join(cwd, "register.mjs"),
+			'import { register } from "node:module";\nregister("./hooks.mjs", import.meta.url);\n',
+		);
+		fs.writeFileSync(
+			path.join(cwd, "hooks.mjs"),
+			[
+				'import { readFile } from "node:fs/promises";',
+				"export async function load(url, context, nextLoad) {",
+				'  if (url.endsWith(".fixture")) {',
+				'    return { format: "module", shortCircuit: true,',
+				'      source: await readFile(new URL(url), "utf8") };',
+				"  }",
+				"  return nextLoad(url, context);",
+				"}",
+			].join("\n"),
+		);
+		fs.writeFileSync(
+			path.join(cwd, "src/value.fixture"),
+			"export const value = 42;\n",
+		);
+		fs.writeFileSync(
+			path.join(cwd, file),
+			[
+				'import { strictEqual } from "node:assert";',
+				'import { test } from "node:test";',
+				'import { value } from "../src/value.fixture";',
+				'test("transitive loader dependency", () => strictEqual(value, 42));',
+			].join("\n"),
+		);
+		const plan = recommendTestCommands([file], cwd);
+		const commands = plan.runnerCommands.filter(
+			(cmd) => cmd.tool === "run_node_test",
+		);
+		expect(commands).toHaveLength(1);
+		const cmd = commands[0];
+		const options = {
+			cwd,
+			encoding: "utf8" as const,
+			env: { NODE_OPTIONS: "", NODE_PATH: "" },
+			timeout: 5_000,
+			maxBuffer: 64 * 1024,
+		};
+		// Execute the generated structured arguments, never the display string.
+		const result = spawnSync(
+			process.execPath,
+			["--test", ...(cmd.import ? ["--import", cmd.import] : []), ...cmd.args],
+			options,
+		);
+		expect(result.status, result.stdout + result.stderr).toBe(0);
+		// Negative control: native JS execution cannot load this dependency.
+		const withoutImport = spawnSync(
+			process.execPath,
+			["--test", ...cmd.args],
+			options,
+		);
+		expect(withoutImport.status).toBe(1);
+		expect(withoutImport.stdout + withoutImport.stderr).toContain(
+			"ERR_UNKNOWN_FILE_EXTENSION",
+		);
 	});
 
 	it("only emits tools granted to the reviewer (node-test path)", () => {
