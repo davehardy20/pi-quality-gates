@@ -260,6 +260,101 @@ describe("recommendTestCommands", () => {
 		}
 	});
 
+	it("selects Vitest entry basenames, not nested helpers or test-like paths", () => {
+		const entries = [
+			"src/tests/worker.test.ts",
+			"src/tests/worker.spec.mts",
+			"src/tests/helpers/nested.test.ts",
+		];
+		const helpers = [
+			"src/tests/helpers/setup.ts",
+			"src/tests/fixtures/data.mjs",
+			"src/tests/worker.test.fixture.ts",
+			"src/worker.spec.helpers.ts",
+			"src/test-like.test.directory/helper.ts",
+			"src/test-worker.js",
+			"src/worker_test.js",
+		];
+		const files = [...helpers, ...entries];
+		const plan = recommendTestCommands(files, changedFilesFixture(files));
+		expect(
+			plan.runnerCommands
+				.filter((cmd) => cmd.tool === "run_vitest")
+				.map((cmd) => cmd.args),
+		).toEqual(entries.map((entry) => [entry]));
+		expect(
+			plan.runnerCommands.find((cmd) => cmd.tool === "run_biome")?.args,
+		).toEqual(files);
+		const tools = plan.runnerCommands.map((cmd) => cmd.tool);
+		expect(tools).toContain("run_typecheck");
+	});
+
+	it("keeps Node entry conventions and imports without directory helpers", () => {
+		const entries = [
+			"src/tests/test-worker.ts",
+			"src/worker-test.mjs",
+			"src/worker_test.cjs",
+			"src/test.js",
+			"src/worker.test.ts",
+			"src/worker.spec.mjs",
+		];
+		const helpers = [
+			"src/tests/helpers/setup.ts",
+			"src/tests/worker.test.fixture.ts",
+			"src/test-like.test.directory/helper.ts",
+		];
+		const files = [...helpers, ...entries];
+		const cwd = changedFilesFixture(files);
+		fs.writeFileSync(
+			path.join(cwd, "package.json"),
+			JSON.stringify({ scripts: { test: "node --test --import tsx" } }),
+		);
+		const plan = recommendTestCommands(files, cwd);
+		const calls = plan.runnerCommands.filter(
+			(cmd) => cmd.tool === "run_node_test",
+		);
+		expect(calls.map((cmd) => cmd.args)).toEqual(
+			entries.map((entry) => [entry]),
+		);
+		expect(calls.every((cmd) => cmd.import === "tsx")).toBe(true);
+		expect(
+			plan.runnerCommands.find((cmd) => cmd.tool === "run_biome")?.args,
+		).toEqual(files);
+	});
+
+	it("does not infer a Node loader from changed TS helpers", () => {
+		const files = ["src/tests/helpers/setup.ts", "src/worker.test.js"];
+		const cwd = changedFilesFixture(files);
+		fs.writeFileSync(
+			path.join(cwd, "package.json"),
+			JSON.stringify({
+				scripts: { test: "node --test" },
+				devDependencies: { tsx: "^4.0.0" },
+			}),
+		);
+		const plan = recommendTestCommands(files, cwd);
+		const calls = plan.runnerCommands.filter(
+			(cmd) => cmd.tool === "run_node_test",
+		);
+		expect(calls).toHaveLength(1);
+		expect(calls[0].args).toEqual([files[1]]);
+		expect(calls[0].import).toBeUndefined();
+	});
+
+	it("preserves Vitest entry suffixes across supported JS/TS extensions", () => {
+		const extensions = ["js", "jsx", "mjs", "cjs", "ts", "tsx", "mts", "cts"];
+		const files = extensions.flatMap((ext) => [
+			`src/worker.test.${ext}`,
+			`src/worker.spec.${ext}`,
+		]);
+		const plan = recommendTestCommands(files, changedFilesFixture(files));
+		expect(
+			plan.runnerCommands
+				.filter((cmd) => cmd.tool === "run_vitest")
+				.map((cmd) => cmd.args),
+		).toEqual(files.map((file) => [file]));
+	});
+
 	it("lints only existing changed supported files", () => {
 		const files = [
 			"agent/worker.ts",

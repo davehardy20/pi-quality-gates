@@ -174,6 +174,27 @@ const CODE_EXTENSIONS = new Set([
 	".cts",
 ]);
 
+/**
+ * Conservative entry basenames, not directory membership or a marker anywhere
+ * in a path. Project-specific discovery must be inspected separately; never
+ * evaluate untrusted runner configuration in the planner.
+ */
+function isJavaScriptTestEntry(
+	file: string,
+	framework: TypeScriptTestFramework,
+): boolean {
+	const extension = path.extname(file);
+	if (!CODE_EXTENSIONS.has(extension)) return false;
+	const name = path.basename(file, extension);
+	// Vitest's default test/spec suffixes, also valid explicit Node entries.
+	if (/\.(?:test|spec)$/.test(name)) return true;
+	// Node's additional marked names. Deliberately omit directory-only discovery.
+	return (
+		framework === "node-test" &&
+		(name === "test" || name.startsWith("test-") || /[-_]test$/.test(name))
+	);
+}
+
 function existingChangedFiles(files: string[], cwd: string): string[] {
 	const root = fs.realpathSync(cwd);
 	const existing = new Set<string>();
@@ -261,10 +282,9 @@ export function recommendTestCommands(
 	switch (ecosystem) {
 		case "typescript": {
 			const changedFiles = existingChangedFiles(files, cwd);
-			const changedTests = changedFiles.filter(
-				(file) =>
-					isTestFile(file) &&
-					CODE_EXTENSIONS.has(path.extname(file).toLowerCase()),
+			const framework = detectTypeScriptTestFramework(cwd);
+			const changedTests = changedFiles.filter((file) =>
+				isJavaScriptTestEntry(file, framework),
 			);
 			const lintFiles = changedFiles.filter((file) => {
 				const extension = path.extname(file).toLowerCase();
@@ -274,7 +294,6 @@ export function recommendTestCommands(
 					extension === ".jsonc"
 				);
 			});
-			const framework = detectTypeScriptTestFramework(cwd);
 			const testRunner: SafeRunnerTool =
 				framework === "node-test" ? "run_node_test" : "run_vitest";
 			// Explicit imports belong to the Node process, regardless of test
@@ -318,7 +337,14 @@ export function recommendTestCommands(
 						? `node --test --import ${loader} -- preserves the project runtime on each test call`
 						: "node --test -- discovers *.test.* / node:test files"
 					: "run_vitest -- test discovery handled by Vitest project config";
-			return makePlan("typescript", runnerCommands, discovery);
+			return makePlan(
+				"typescript",
+				runnerCommands,
+				`${discovery}. Filename selection is conservative; inspect project ` +
+					"configuration and relevant tests for helper/source changes. Run " +
+					"additional relevant entries with safe runners, including custom " +
+					"configured tests; do not execute config or package scripts directly.",
+			);
 		}
 		case "python": {
 			const runnerCommands: RecommendedTestCommand[] = [];
