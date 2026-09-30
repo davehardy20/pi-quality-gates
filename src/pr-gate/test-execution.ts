@@ -27,8 +27,9 @@ export interface RecommendedTestCommand {
 	/** Explicit initial budget; never rely on the safe runner's 60s default. */
 	timeoutMs?: number;
 	/**
-	 * For run_node_test: the `--import` loader spec (e.g. "tsx") to pass for
-	 * `.test.ts` files Node cannot run natively. Omitted for `.test.js`/`.mjs`.
+	 * For run_node_test: the project `--import` runtime (e.g. "tsx"),
+	 * preserved on each call, including JS/MJS tests with transitive loader
+	 * dependencies. Omitted when no configured or inferred import is needed.
 	 */
 	import?: string;
 }
@@ -41,8 +42,8 @@ export interface TestExecutionPlan {
 	runnerCommands: RecommendedTestCommand[];
 	discoveryCommand?: string;
 	/**
-	 * Where the plan executes. Always the repository checkout on the host
-	 * bridge (the reviewer never runs in an Apple container).
+	 * Where the plan executes. Both reviewer bridges validate the repository
+	 * checkout on the host, never in an Apple container.
 	 */
 	executionSandbox: "repository-checkout";
 	/** Retained for schema compatibility; no container bridge is wired. */
@@ -365,7 +366,7 @@ export function recommendTestCommands(
 export function formatTestExecutionPlan(plan: TestExecutionPlan): string {
 	const lines = [
 		`**Ecosystem:** ${plan.ecosystem}`,
-		`**Execution:** safe validation runners (run_*) on the host against the repository checkout (host bridge only)`,
+		`**Execution:** safe validation runners (run_*) on the host against the repository checkout`,
 		`**Result contract:** ${plan.resultContract}`,
 	];
 

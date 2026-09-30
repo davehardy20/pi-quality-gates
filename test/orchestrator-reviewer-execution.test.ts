@@ -1,8 +1,15 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createOrchestratorReviewerExecution } from "../src/pr-gate/orchestrator-reviewer-execution.js";
 import { createPassTokenStore } from "../src/pr-gate/pass-token-store.js";
 import { PR_REVIEW_CONFIG } from "../src/pr-gate/pr-review-config.js";
 import type { ReviewerAttemptInput } from "../src/pr-gate/reviewer.js";
+import {
+	formatTestExecutionPlan,
+	recommendTestCommands,
+} from "../src/pr-gate/test-execution.js";
 
 function makeAttemptInput(): ReviewerAttemptInput {
 	return {
@@ -238,7 +245,8 @@ describe("createOrchestratorReviewerExecution", () => {
 		const input = makeAttemptInput();
 		input.task = "task".repeat(10_000);
 		input.diff = `FULL_DIFF_SENTINEL${"d".repeat(2_000_000)}`;
-		input.testPlan = "test".repeat(10_000);
+		// Executable instructions are not truncatable metadata; keep this
+		// fixture's plan bounded while testing task/file/diff summaries.
 		input.files = Array.from(
 			{ length: 100 },
 			(_, i) => `src/${i}-${"p".repeat(500)}.ts`,
@@ -252,6 +260,103 @@ describe("createOrchestratorReviewerExecution", () => {
 		expect(instruction).toContain("68 more file(s) omitted");
 		bridge.dispose();
 		expect((await pending).stderr).toContain("session shut down");
+	});
+
+	it("fails closed when a generated plan exceeds the relay budget", async () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "qg-relay-plan-"));
+		const sendUserMessage = vi.fn();
+		const tokens = createPassTokenStore();
+		const headSha = "deadcafe".repeat(5);
+		const bridge = createOrchestratorReviewerExecution(
+			{ getActiveTools: () => ["orchestrate"], sendUserMessage },
+			{ tokens, resolveHeadSha: () => headSha },
+		);
+		try {
+			fs.writeFileSync(
+				path.join(cwd, "package.json"),
+				JSON.stringify({ devDependencies: { vitest: "^3.2.4" } }),
+			);
+			fs.mkdirSync(path.join(cwd, "test"));
+			const files = Array.from(
+				{ length: 30 },
+				(_, i) => `test/${"required-behavior-".repeat(4)}${i}.test.ts`,
+			);
+			for (const file of files) {
+				fs.writeFileSync(path.join(cwd, file), "export {};\n");
+			}
+			const testPlan = formatTestExecutionPlan(
+				recommendTestCommands(files, cwd),
+			);
+			// Reproduce required typecheck/lint falling beyond the old prefix.
+			expect(testPlan.indexOf("run_typecheck")).toBeGreaterThan(4_000);
+			expect(testPlan.indexOf("run_biome")).toBeGreaterThan(4_000);
+			const input = { ...makeAttemptInput(), cwd, files, headSha, testPlan };
+			const pending = bridge.reviewerExecution.runAttempt(input);
+			expect(sendUserMessage).not.toHaveBeenCalled();
+			expect(bridge.pendingCount()).toBe(0);
+			const result = await pending;
+			expect(result.report).toBeNull();
+			expect(result.exitCode).toBe(1);
+			expect(result.timedOut).toBe(false);
+			expect(result.stderr).toContain("required test execution plan");
+			expect(result.stderr).toContain("relay budget");
+			expect(bridge.getStatus().lastDiagnostic?.kind).toBe("error");
+			const justOverBudget = await bridge.reviewerExecution.runAttempt({
+				...input,
+				testPlan: "p".repeat(4_001),
+			});
+			expect(justOverBudget.report).toBeNull();
+			expect(justOverBudget.stderr).toContain("4001 > 4000");
+			expect(sendUserMessage).not.toHaveBeenCalled();
+			expect(bridge.pendingCount()).toBe(0);
+			// Refusal must not register a request that could stamp a late PASS.
+			expect(
+				bridge.handleToolResult({
+					toolName: "orchestrate",
+					input: {
+						agentType: "verifier",
+						profile: "pr-review",
+						task: "PR_REVIEW_REQUEST_ID: pr-review-rejected-budget",
+					},
+					content: [{ type: "text", text: passReport() }],
+				}),
+			).toBe(false);
+			expect(tokens.hasPass(headSha)).toBe(false);
+		} finally {
+			bridge.dispose();
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("relays a boundary-size test plan without truncation", async () => {
+		const sendUserMessage = vi.fn();
+		const bridge = createOrchestratorReviewerExecution({
+			getActiveTools: () => ["orchestrate"],
+			sendUserMessage,
+		});
+		try {
+			const input = makeAttemptInput();
+			const tail = "\nREQUIRED_FINAL_CHECK";
+			input.testPlan = "p".repeat(4_000 - tail.length) + tail;
+			const pending = bridge.reviewerExecution.runAttempt(input);
+			const instruction = String(sendUserMessage.mock.calls[0]?.[0]);
+			expect(instruction).toContain(input.testPlan);
+			expect(instruction).not.toContain("[truncated");
+			const requestId = bridge.getStatus().pending[0]?.requestId;
+			expect(requestId).toBeDefined();
+			bridge.handleToolResult({
+				toolName: "orchestrate",
+				input: {
+					agentType: "verifier",
+					profile: "pr-review",
+					task: `Request ${requestId}`,
+				},
+				content: [{ type: "text", text: passReport() }],
+			});
+			expect((await pending).report?.status).toBe("PASS");
+		} finally {
+			bridge.dispose();
+		}
 	});
 
 	it("fails closed and retains bounded tail evidence for oversized tool output", async () => {

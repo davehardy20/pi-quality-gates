@@ -177,8 +177,10 @@ function renderParentInstruction(input: {
 		"Changed files (bounded summary):",
 		...(fileLines.length > 0 ? fileLines : ["(no changed files)"]),
 		"",
-		"Test execution plan (bounded metadata):",
-		truncateMetadata(input.testPlan, MAX_PARENT_TEST_PLAN_CHARS),
+		"Test execution plan (complete required instructions):",
+		// runAttempt refuses plans that exceed the relay budget. Required
+		// validation instructions must never be truncated like display metadata.
+		input.testPlan || "(not provided)",
 		"",
 		"Reviewer instructions:",
 		"- Inspect the current repository and compare the stated base ref with HEAD directly.",
@@ -429,6 +431,22 @@ export function createOrchestratorReviewerExecution(
 					);
 				}
 
+				const testPlan = (input.testPlan ?? "").trim();
+				if (testPlan.length > MAX_PARENT_TEST_PLAN_CHARS) {
+					const reason =
+						"PR review gate: required test execution plan exceeds orchestrator " +
+						`relay budget (${testPlan.length} > ${MAX_PARENT_TEST_PLAN_CHARS} characters). ` +
+						"No reviewer was started. Split the PR or use a bridge that relays " +
+						"the complete plan; required checks must not be dropped.";
+					recordDiagnostic({
+						requestId: null,
+						headSha: input.headSha || null,
+						kind: "error",
+						detail: reason,
+					});
+					return unavailableResult(reason);
+				}
+
 				const requestId = createRequestId();
 				const command = `orchestrate agentType=verifier profile=pr-review requestId=${requestId}`;
 				const headSha = input.headSha || resolveHeadSha() || "";
@@ -437,7 +455,7 @@ export function createOrchestratorReviewerExecution(
 					task: input.task,
 					files: input.files,
 					diff: input.diff,
-					testPlan: input.testPlan,
+					testPlan,
 					baseRef: input.baseRef,
 					headSha,
 					respectGitignore:
