@@ -157,13 +157,16 @@ For each review pass:
 
 1. Detect the project ecosystem from manifest files (`package.json`,
    `pyproject.toml`, `Cargo.toml`, `go.mod`).
-2. Run the narrowest relevant safe validation runner first, then broader
-   checks against the repository checkout. For example:
-   - TypeScript (vitest): `run_vitest <changed-test-files>` → `run_typecheck` → `run_biome src test`
-   - TypeScript (`node --test`): `run_node_test <changed-test-files>` → `run_typecheck` → `run_biome src test`
-   - Python: `run_pytest <changed-test-files>` → `run_pytest`
-   - Rust: `run_cargo_test`
-   - Go: `run_pytest` / `go test` equivalent
+2. Follow the generated Test Execution Plan, narrowest first, against the
+   repository checkout. Its JSON values are tool arguments, not shell
+   commands. Pass the explicit `timeoutMs` on the INITIAL call rather than
+   inheriting a runner's shorter default. Keep listed per-file test calls
+   separate; preserve any Node `import` loader; lint only listed changed
+   supported files, not an assumed `src`/`test` directory tree. Keep the
+   planned whole-project typecheck. Do not silently omit relevant tests:
+   inspect nearby tests when no changed test file covers changed behavior.
+   Broader exploration is additional evidence, not a replacement for the
+   generated required validation. Never run discovery hints as host scripts.
 3. Record a bounded test synthesis under `### Test execution`, including any
    sidecar/tool-output ref for raw logs. Also cite the result under "What was
    verified" or "What could not be verified".
@@ -179,7 +182,12 @@ For each review pass:
    timed out under "What could not be verified" (`NOT_RUN`), optionally
    cover the changed behavior with a targeted `testNamePattern` subset, and
    finish the report. A timed-out suite is incomplete evidence, not a
-   finding against the diff.
+   finding against the diff. A passing subset does NOT repair a timed-out
+   required validation call: report required execution as `NOT_RUN` when
+   incomplete/unavailable, or `FAIL` when an executed required check fails.
+   Only mark it `PASS` when all required validation completed successfully;
+   disclose broader/live checks not completed without claiming CI or live
+   readiness. Ensure each initial timeout fits your remaining review budget.
 
 If tests fail, treat the failure as evidence. Determine whether the failure is
 caused by the changes under review. If yes, report it as a WARNING or CRITICAL

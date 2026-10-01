@@ -10,7 +10,10 @@ npm run lint        # biome check src test — lint/format gate (same as CI & /p
 npm run test        # vitest run — run all tests once (CI mode)
 npm run test:watch  # vitest — watch mode
 npm run build       # tsc -p tsconfig.build.json → dist/
+npm run mutation    # stryker run — mutation testing (see below)
 ```
+
+**Stryker mutation testing**: `stryker.config.json` runs the Vitest runner against `src/**/*.ts` (per-test coverage analysis, thresholds 60/80, no `break`). It is expensive (full suite per mutant) — run it locally for targeted CRAP-risk work, not on every change.
 
 Formatting/linting is via Biome (config in `/biome.json`); the `npm run lint` script runs `biome check src test` — the same gate CI and `/pr-review` use.
 
@@ -63,6 +66,7 @@ Files with 2-space indent (biome.json override):
 | `test/post-turn-linter-coverage.test.ts` | Unit/integration | Verifies the orchestrator reports actual checked and skipped files instead of counting every queued path as checked. |
 | `test/post-turn-linter-fix-prompt.test.ts` | Unit/integration | Verifies fix prompt instructs agent to continue active task. Uses `createLinterOrchestrator` with fully-mocked deps. Simulates full lifecycle: `initialize` → `onToolExecutionEnd` → `onTurnEnd`. |
 | `test/sidecar.test.ts` | Integration | Secret redaction, sidecar write with metadata, recovery modes (metadata/preview/slice/full), session ID derivation, recovery arg parsing, env-var sidecar directory. Real filesystem I/O. |
+| `test/lsp-auto-installer-characterization.test.ts` | Characterization | `installLanguageServer` observable fallback chain: existing binary, rustup for rust-analyzer, `go install` for gopls, npm global install, local project install (lockfile-detected package manager: bun/pnpm/yarn/npm), undefined on unsupported/failed. Skipped on Windows; controls `PATH` with temp dirs and fake executables. |
 
 ### PR gate tests
 

@@ -796,6 +796,22 @@ export function createPrReviewDispatch(
 					message: `PR review gate: worktree changed during review of HEAD ${headSha}. The result was not applied; re-run /pr-review with a clean worktree.`,
 				};
 			}
+			// A preflight refusal is not child output and cannot establish a PASS,
+			// even if an execution adapter supplies a contradictory report.
+			if (childOutput.testPlanBudgetExceeded) {
+				return {
+					report: null,
+					stamped: false,
+					escalated: false,
+					blocked: true,
+					message: [
+						`\`/pr-review\` could not start because the required test execution plan exceeded the orchestrator relay budget (HEAD ${headSha}).`,
+						childOutput.rawOutput,
+						"No reviewer was started. Required checks must not be truncated or skipped.",
+						"Split the PR into complete reviewable slices, or explicitly configure a bridge that can relay the complete plan. Re-run /pr-review for the exact HEAD before pushing.",
+					].join("\n\n"),
+				};
+			}
 			const report = childOutput.report;
 
 			if (!report) {
@@ -861,7 +877,7 @@ export function createPrReviewDispatch(
 					stamped: false,
 					escalated: false,
 					blocked: true,
-					message: `❓ **PR review could not complete** for HEAD ${headSha}: ${testExecutionBlocker}. Re-run /pr-review after the reviewer reports container-safe test execution.\n\n${formatReportForDisplay(report)}`,
+					message: `❓ **PR review could not complete** for HEAD ${headSha}: ${testExecutionBlocker}. Re-run /pr-review after the reviewer reports completed host-checkout safe-runner validation.\n\n${formatReportForDisplay(report)}`,
 				};
 			}
 

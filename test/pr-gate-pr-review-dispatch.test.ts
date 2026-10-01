@@ -1,9 +1,13 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 import { createPrGateState, resolveHeadSha } from "../src/pr-gate/index.js";
+import { createOrchestratorReviewerExecution } from "../src/pr-gate/orchestrator-reviewer-execution.js";
 import {
 	PR_REVIEW_CONFIG,
 	resolvePrReviewConfig,
@@ -88,12 +92,14 @@ function makePassReportWithoutTestExecution(): ReviewReport {
 	return report;
 }
 
-function makePassReportWithFailedTestExecution(): ReviewReport {
+function makePassReportWithFailedTestExecution(
+	status: "FAIL" | "NOT_RUN" = "FAIL",
+): ReviewReport {
 	return {
 		...makePassReport(),
 		testExecution: {
-			status: "FAIL",
-			summary: "container-safe validation failed",
+			status,
+			summary: "required validation failed or remained incomplete",
 		},
 	};
 }
@@ -266,20 +272,24 @@ describe("pr-review dispatch", () => {
 		expect(result.message).toContain("omitted the required");
 	});
 
-	it("blocks PASS reports with failed test execution", async () => {
-		const pi = createMockPi();
-		const dispatch = createPrReviewDispatch(
-			createTestDeps(makePassReportWithFailedTestExecution()),
-		);
-		const input = createInput(pi);
+	it("blocks PASS reports with failed or incomplete validation", async () => {
+		for (const status of ["FAIL", "NOT_RUN"] as const) {
+			const pi = createMockPi();
+			const dispatch = createPrReviewDispatch(
+				createTestDeps(makePassReportWithFailedTestExecution(status)),
+			);
+			const input = createInput(pi);
 
-		const result = await dispatch.dispatch(input);
+			const result = await dispatch.dispatch(input);
 
-		expect(result.stamped).toBe(false);
-		expect(result.blocked).toBe(true);
-		expect(result.report?.status).toBe("CANNOT_REVIEW");
-		expect(input.state.tokens.hasPass(HEAD_SHA)).toBe(false);
-		expect(result.message).toContain("test execution status is FAIL");
+			expect(result.stamped).toBe(false);
+			expect(result.blocked).toBe(true);
+			expect(result.report?.status).toBe("CANNOT_REVIEW");
+			expect(input.state.tokens.hasPass(HEAD_SHA)).toBe(false);
+			expect(result.message).toContain(`test execution status is ${status}`);
+			expect(result.message).toContain("host-checkout safe-runner validation");
+			expect(result.message).not.toContain("container-safe test execution");
+		}
 	});
 
 	it("blocks and sends a fix instruction when review finds issues", async () => {
@@ -422,6 +432,107 @@ describe("pr-review dispatch", () => {
 		expect(result.stamped).toBe(false);
 		expect(result.report).toBeNull();
 		expect(result.message).toContain("could not parse review report");
+	});
+
+	it("reports actual bridge plan refusal rather than a child parse failure", async () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "qg-dispatch-plan-"));
+		const pi = createMockPi();
+		const state = createPrGateState();
+		const bridge = createOrchestratorReviewerExecution(
+			{
+				getActiveTools: () => ["orchestrate"],
+				sendUserMessage: pi.sendUserMessage,
+			},
+			{ tokens: state.tokens, resolveHeadSha: () => HEAD_SHA },
+		);
+		try {
+			fs.writeFileSync(
+				path.join(cwd, "package.json"),
+				JSON.stringify({ devDependencies: { vitest: "^3.2.4" } }),
+			);
+			fs.mkdirSync(path.join(cwd, "test"));
+			const files = Array.from(
+				{ length: 30 },
+				(_, i) => `test/${"required-behavior-".repeat(4)}${i}.test.ts`,
+			);
+			for (const file of files) {
+				fs.writeFileSync(path.join(cwd, file), "export {};\n");
+			}
+			const dispatch = createPrReviewDispatch({
+				...createTestDeps(null),
+				listChangedFiles: async () => files,
+				reviewerExecution: bridge.reviewerExecution,
+			});
+			const ctx = { ...createMockContext(), cwd };
+			const result = await dispatch.dispatch(createInput(pi, { ctx, state }));
+			expect(result.blocked).toBe(true);
+			expect(result.stamped).toBe(false);
+			expect(result.report).toBeNull();
+			expect(result.message).toContain("test execution plan");
+			expect(result.message).toContain("relay budget");
+			expect(result.message).toContain("4000");
+			expect(result.message).toContain("No reviewer was started");
+			expect(result.message).toContain("Split the PR");
+			expect(result.message).not.toContain("could not parse");
+			expect(result.message).not.toContain("sidecar");
+			expect(result.message).not.toContain("maxReviewerPromptChars");
+			expect(pi.userMessages).toEqual([]);
+			expect(bridge.pendingCount()).toBe(0);
+			expect(state.tokens.hasPass(HEAD_SHA)).toBe(false);
+		} finally {
+			bridge.dispose();
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("blocks a plan-budget refusal even with a contradictory PASS report", async () => {
+		const pi = createMockPi();
+		const execution = createMockReviewerExecution(makePassReport());
+		vi.mocked(execution.runAttempt).mockResolvedValue({
+			report: makePassReport(),
+			rawOutput: "Required test execution plan exceeded relay budget.",
+			exitCode: 1,
+			timedOut: false,
+			stderr: "budget",
+			command: "orchestrate",
+			testPlanBudgetExceeded: true,
+		});
+		const dispatch = createPrReviewDispatch({
+			...createTestDeps(null),
+			reviewerExecution: execution,
+		});
+		const input = createInput(pi);
+		const result = await dispatch.dispatch(input);
+		expect(result.blocked).toBe(true);
+		expect(result.report).toBeNull();
+		expect(result.stamped).toBe(false);
+		expect(input.state.tokens.hasPass(HEAD_SHA)).toBe(false);
+		expect(result.message).toContain("relay budget");
+	});
+
+	it("keeps the host prompt-budget refusal distinct from relay refusal", async () => {
+		const pi = createMockPi();
+		const execution = createMockReviewerExecution(null);
+		vi.mocked(execution.runAttempt).mockResolvedValue({
+			report: null,
+			rawOutput: "Rendered prompt exceeded its limit.",
+			exitCode: 1,
+			timedOut: false,
+			stderr: "budget",
+			command: "host",
+			promptBudgetExceeded: true,
+		});
+		const dispatch = createPrReviewDispatch({
+			...createTestDeps(null),
+			reviewerExecution: execution,
+		});
+		const input = createInput(pi);
+		const result = await dispatch.dispatch(input);
+		expect(result.blocked).toBe(true);
+		expect(input.state.tokens.hasPass(HEAD_SHA)).toBe(false);
+		expect(result.message).toContain("reviewer prompt exceeded");
+		expect(result.message).toContain("maxReviewerPromptChars");
+		expect(result.message).not.toContain("orchestrator relay budget");
 	});
 
 	it("fails closed when no reviewer execution bridge is configured", async () => {

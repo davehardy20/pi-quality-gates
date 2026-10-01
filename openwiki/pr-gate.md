@@ -147,7 +147,9 @@ materialization. Both bridges delegate report parsing to the shared parser in
 Legacy direct child capture is also pre-close bounded: 1,048,576 characters per JSON line, 262,144 characters of assistant output, and 65,536 characters of stderr. Overflow produces a parse-failure sidecar and cannot stamp PASS.
 
 **Report parsing** (`parseReviewReport`, in `src/shared/review-report.ts`):
-- Finds `## Review Report` marker (regex, case-insensitive).
+- Finds `## Review Report` marker occurrences anywhere (case-insensitive). The host reviewer concatenates assistant stream parts without separators, so the marker can glue onto preceding narration (`citation.## Review Report`) — line-start anchoring lost valid reports.
+- Ambiguity-aware candidate selection: a marker occurrence is a complete candidate only when a `STATUS:` field line appears between it and the next `##` heading. Exactly one complete candidate parses; zero (prose mention, bare echo) or ≥2 (a complete nested/quoted report) fail closed. Marker classification is a linear scan over precomputed heading/STATUS positions.
+- Shape guard: the selected match must be followed by a canonical `### Findings` heading — narration with a prose marker, a stray `STATUS` line, and unrelated sections fails closed instead of minting a report.
 - Extracts `STATUS:`, `CONFIDENCE:` fields.
 - Parses `#### [SEVERITY] title` finding blocks → extracts File, Category, Rule, Issue, Evidence, Suggestion, and the optional Effort estimate (minutes; `Finding.effort` is `number | null | undefined`).
 - Parses bullet-list sections: "What was verified", "What could not be verified".
@@ -171,7 +173,7 @@ tool allowlist and blocklist.
 - `maxReviewerPromptChars: 100_000` (optional; `0` or negative disables the guard). Fail-closed prompt budget: an over-budget rendered task prompt never spawns the reviewer child — dispatch surfaces a blocked prompt-budget scope-reduction message instead. Evidence is never auto-trimmed to fit (a PASS must be based on the full diff).
 - Tool policy intentionally excludes host publishing and durable state mutation
 
-**`PR_REVIEWER_FORBIDDEN_TOOLS`**: bash, git_safe, gh_safe, write/edit-style
+**`PR_REVIEWER_FORBIDDEN_TOOLS`**: bash, `container_safe` (host-only reviewer — the container bridge is revoked, and the blocklist fails closed on accidental re-grant via `assertPrReviewerToolPolicy()`), git_safe, gh_safe, write/edit-style
 mutation tools, and all mulch/seeds mutating tools. This allowlist protects
 legacy/dependency-injected reviewer execution.
 
@@ -210,6 +212,15 @@ forbidden tool appears in `PR_REVIEW_CONFIG.tools`.
 runs the safe validation runners (e.g. `run_typecheck`) against the repository
 checkout; the `orchestrator` bridge runs them through its host-side orchestrate
 verifier child (no container is involved).
+
+**Reviewer budget discipline** (prompt items 4–5 in `system.md`): the reviewer's
+wall-clock is finite — the dispatcher SIGTERMs the child at `timeoutMs`, so
+validation is sampling, not exhaustive CI (prefer per-file runs and
+`testNamePattern` subsets). A runner that times out at full-file/combined scope
+must never be re-run "with a longer window"; the scope is recorded as timed out
+under "What could not be verified" (`NOT_RUN`), optionally covered by a targeted
+subset. A timed-out suite is incomplete evidence, not a finding against the
+diff.
 
 **Mandatory test execution**: A review report that says PASS but omits `### Test execution` or reports `FAIL`/`NOT_RUN` is overridden to `CANNOT_REVIEW` and blocked (enforced in `pr-review-dispatch.ts`).
 
@@ -313,7 +324,8 @@ Completion depends on the configured reviewer bridge:
 
 **Kickoff states** (`ReviewKickoffStatus`): `started` | `already-passed` |
 `in-progress` | `blocked` | `disabled`. The result carries only status,
-identifying state (head sha, base ref), and a concise message — never bulky
+identifying state (head sha, base ref, epoch-ms `startedAt` when a review was
+kicked off), and a concise message — never bulky
 report/diff/findings content (kept behind the dispatch result + sidecar
 hygiene).
 
@@ -375,7 +387,7 @@ return even when the HEAD already has a token.
 - **Linter not clean**: Review blocked by `isLinterClean`. Fix linter findings first.
 - **Diff too large**: Diffs exceeding `maxChangedLines` (5000) are rejected before review. Use `.pi/reviewer.skip` to exclude files.
 - **PARTIAL review (truncated diff)**: The text-diff path caps the diff at `maxDiffLines` (4000). A PASS on a truncated diff is an effective **PARTIAL** and blocks publish (`ReviewReport.diffCoverage.truncated`). Split the PR (or raise the cap deliberately) and re-review for full coverage.
-- **Report parse failure**: Child Pi output without `## Review Report` marker → sidecar written to `~/.pi/reviewer-failures/`. Check the sidecar for raw output.
+- **Report parse failure**: Child Pi output without a parseable `## Review Report` block → sidecar written to `~/.pi/reviewer-failures/`. Check the sidecar for raw output. `classifyReviewerFailure` (`src/pr-gate/reviewer.ts`) matches known stderr signatures (e.g. pi-compact-plus stale-extension-context crashes during auto-compaction in the ephemeral reviewer child) and appends an actionable remediation hint to the blocked message — additive only; the verdict stays fail-closed. The child sets `COMPACT_PLUS_DISABLE_AUTO_COMPACTION=true` as the kill switch.
 - **Test execution missing**: Report says PASS but no `### Test execution` section → overridden to `CANNOT_REVIEW`. Ensure the reviewer runs test commands.
 - **Base ref not found**: If `origin/master` doesn't exist, falls back through the chain. Verify the base ref exists.
 - **Reviewer prompt exceeded safety budget**: The rendered task prompt exceeded `maxReviewerPromptChars` (default 100000), so the reviewer child was never spawned. The blocked message from dispatch asks you to reduce scope — split unrelated/generated changes out, narrow the base ref for incremental re-review, or shrink large generated docs/fixtures — then re-run `/pr-review`. Do not raise the knob to bypass the guard. Setting it to `0` or negative disables it (not recommended).

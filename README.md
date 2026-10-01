@@ -34,6 +34,15 @@ gate that blocks unsafe publishing until changes are reviewed.
   `run_biome`, etc.) against the repository checkout; the orchestrator bridge runs
   a host-side orchestrate verifier child (no container). Publishing and
   durable state mutation stay denied on both paths
+- Validation plans run existing changed JS/TS test files individually with
+  explicit five-minute initial budgets, retain whole-project typecheck, and
+  lint only existing changed JS/TS/JSON/JSONC files. Failed or incomplete
+  required checks still block PASS; this is not full CI or live-readiness proof
+- Per-file test selection uses runner-specific entry basenames, never directory
+  membership alone. Helpers stay linted; inspect configured and relevant tests
+  separately.
+- The orchestrator bridge refuses required plans over 4,000 characters rather
+  than silently truncating checks. Split the PR or use a complete-plan bridge.
 - On CRITICAL security findings the gate escalates for a human acknowledgement
 - `/pr-review` — Run a PR review for the current HEAD (optional base ref arg)
 - `pr_review` (LLM tool) — Agent-callable review request; asynchronous kickoff,

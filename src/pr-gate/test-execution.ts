@@ -24,9 +24,12 @@ export interface RecommendedTestCommand {
 	args: string[];
 	command: string;
 	scope: "targeted" | "broad" | "format-lint" | "typecheck";
+	/** Explicit initial budget; never rely on the safe runner's 60s default. */
+	timeoutMs?: number;
 	/**
-	 * For run_node_test: the `--import` loader spec (e.g. "tsx") to pass for
-	 * `.test.ts` files Node cannot run natively. Omitted for `.test.js`/`.mjs`.
+	 * For run_node_test: the project `--import` runtime (e.g. "tsx"),
+	 * preserved on each call, including JS/MJS tests with transitive loader
+	 * dependencies. Omitted when no configured or inferred import is needed.
 	 */
 	import?: string;
 }
@@ -39,8 +42,8 @@ export interface TestExecutionPlan {
 	runnerCommands: RecommendedTestCommand[];
 	discoveryCommand?: string;
 	/**
-	 * Where the plan executes. Always the repository checkout on the host
-	 * bridge (the reviewer never runs in an Apple container).
+	 * Where the plan executes. Both reviewer bridges validate the repository
+	 * checkout on the host, never in an Apple container.
 	 */
 	executionSandbox: "repository-checkout";
 	/** Retained for schema compatibility; no container bridge is wired. */
@@ -120,15 +123,17 @@ export function detectTypeScriptTestFramework(
 const IMPORT_SPEC_PATTERN = /--import[=\s]+([^\s]+)/;
 
 /**
- * Detect the TypeScript loader to pass to `run_node_test` for `.test.ts` files
- * Node cannot run natively. Returns the loader spec (e.g. "tsx") when the test
- * script uses `--import <spec>` (space or `=` form), or infers `"tsx"` when
- * `tsx` is a devDependency. Returns `undefined` for plain JS/MJS test files,
- * for `ts-node` projects (which register via `--loader ts-node/esm`, not
- * `--import`), or when no loader is configured (e.g. build-then-test projects
- * that emit `.test.js`).
+ * Detect the project runtime import to preserve on every `run_node_test`
+ * call. JavaScript tests can import loader-dependent modules transitively.
+ * Returns the script's `--import <spec>` (space or `=` form), or optionally
+ * infers `"tsx"` when it is a devDependency. Does not infer `ts-node`, which uses
+ * `--loader ts-node/esm`, or invent an import for projects with no configured
+ * or inferred runtime (e.g. plain build-then-test projects).
  */
-export function detectNodeTestLoader(cwd: string): string | undefined {
+export function detectNodeTestLoader(
+	cwd: string,
+	inferTsx = true,
+): string | undefined {
 	const pkg = readPackageJson(cwd);
 	if (!pkg) return undefined;
 	const testScript = pkg.scripts?.test ?? "";
@@ -137,7 +142,7 @@ export function detectNodeTestLoader(cwd: string): string | undefined {
 	const dev = pkg.devDependencies ?? {};
 	// Only tsx can be confidently surfaced for `--import`; ts-node registers via
 	// `--loader ts-node/esm` (a different mechanism), so it is not inferred here.
-	if (dev.tsx) return "tsx";
+	if (inferTsx && dev.tsx) return "tsx";
 	return undefined;
 }
 
@@ -155,20 +160,108 @@ function command(tool: SafeRunnerTool, args: string[] = []): string {
 	return [tool, ...args].join(" ");
 }
 
+// The safe runners cap execution at five minutes. Choose that bounded
+// budget up front, rather than retrying a timeout with a larger window.
+const REVIEW_VALIDATION_TIMEOUT_MS = 300_000;
+const CODE_EXTENSIONS = new Set([
+	".js",
+	".jsx",
+	".mjs",
+	".cjs",
+	".ts",
+	".tsx",
+	".mts",
+	".cts",
+]);
+
+/**
+ * Conservative entry basenames, not directory membership or a marker anywhere
+ * in a path. Project-specific discovery must be inspected separately; never
+ * evaluate untrusted runner configuration in the planner.
+ */
+function isJavaScriptTestEntry(
+	file: string,
+	framework: TypeScriptTestFramework,
+): boolean {
+	const extension = path.extname(file);
+	if (!CODE_EXTENSIONS.has(extension)) return false;
+	const name = path.basename(file, extension);
+	// Vitest's default test/spec suffixes, also valid explicit Node entries.
+	if (/\.(?:test|spec)$/.test(name)) return true;
+	// Node's additional marked names. Deliberately omit directory-only discovery.
+	return (
+		framework === "node-test" &&
+		(name === "test" || name.startsWith("test-") || /[-_]test$/.test(name))
+	);
+}
+
+function existingChangedFiles(files: string[], cwd: string): string[] {
+	const root = fs.realpathSync(cwd);
+	const existing = new Set<string>();
+	for (const file of files) {
+		const hasControls = Array.from(file).some(
+			(char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127,
+		);
+		if (
+			!file ||
+			path.isAbsolute(file) ||
+			/^[A-Za-z]:/.test(file) ||
+			file.includes("\\") ||
+			hasControls ||
+			file.split("/").includes("..")
+		) {
+			throw new Error("PR review changed path is invalid.");
+		}
+		const resolved = path.resolve(root, file);
+		try {
+			const real = fs.realpathSync(resolved);
+			const relative = path.relative(root, real);
+			if (
+				relative === ".." ||
+				relative.startsWith(`..${path.sep}`) ||
+				path.isAbsolute(relative)
+			) {
+				throw new Error("PR review changed path escapes the workspace.");
+			}
+			if (fs.statSync(real).isFile()) {
+				existing.add(path.relative(root, resolved).split(path.sep).join("/"));
+			}
+		} catch (error) {
+			// Deleted paths cannot be executed/linted. Other inspection
+			// failures must not quietly remove validation coverage.
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+		}
+	}
+	return [...existing];
+}
+
 function makePlan(
 	ecosystem: ProjectEcosystem,
 	runnerCommands: RecommendedTestCommand[],
 	discoveryCommand?: string,
 ): TestExecutionPlan {
+	const boundedCommands = runnerCommands.map((cmd) => ({
+		...cmd,
+		timeoutMs: REVIEW_VALIDATION_TIMEOUT_MS,
+	}));
 	return {
 		ecosystem,
-		recommendedCommands: runnerCommands.map((c) => c.command),
-		runnerCommands,
+		recommendedCommands: boundedCommands.map((c) => c.command),
+		runnerCommands: boundedCommands,
 		discoveryCommand,
 		executionSandbox: "repository-checkout",
 		containerTool: "container_safe",
 		resultContract: RESULT_CONTRACT,
 	};
+}
+
+function formatRunnerCommand(cmd: RecommendedTestCommand): string {
+	const params = {
+		...(cmd.args.length > 0 ? { paths: cmd.args } : {}),
+		...(cmd.import ? { import: cmd.import } : {}),
+		timeoutMs: cmd.timeoutMs ?? REVIEW_VALIDATION_TIMEOUT_MS,
+	};
+	return `${cmd.tool} ${JSON.stringify(params)}`;
 }
 
 /**
@@ -188,49 +281,70 @@ export function recommendTestCommands(
 
 	switch (ecosystem) {
 		case "typescript": {
+			const changedFiles = existingChangedFiles(files, cwd);
 			const framework = detectTypeScriptTestFramework(cwd);
+			const changedTests = changedFiles.filter((file) =>
+				isJavaScriptTestEntry(file, framework),
+			);
+			const lintFiles = changedFiles.filter((file) => {
+				const extension = path.extname(file).toLowerCase();
+				return (
+					CODE_EXTENSIONS.has(extension) ||
+					extension === ".json" ||
+					extension === ".jsonc"
+				);
+			});
 			const testRunner: SafeRunnerTool =
 				framework === "node-test" ? "run_node_test" : "run_vitest";
-			// Node cannot run .test.ts natively: surface a TS loader (e.g. tsx) for
-			// changed TS test files. Build-then-test projects emit .test.js and get
-			// no loader (detectNodeTestLoader returns undefined).
-			const hasTsTests = testFiles.some((f) => /\.(ts|tsx)$/.test(f));
+			// Explicit imports belong to the Node process, regardless of test
+			// suffix. Only infer a dependency-based runtime when TS tests changed;
+			// all per-file calls then inherit that same project runtime.
+			const hasTsTests = changedTests.some((file) =>
+				/\.(?:ts|tsx|mts|cts)$/.test(file),
+			);
 			const loader =
-				framework === "node-test" && hasTsTests
-					? detectNodeTestLoader(cwd)
+				framework === "node-test"
+					? detectNodeTestLoader(cwd, hasTsTests)
 					: undefined;
 			const runnerCommands: RecommendedTestCommand[] = [];
-			if (testFiles.length > 0) {
-				const cmdArgs = loader ? ["--import", loader, ...testFiles] : testFiles;
+			for (const file of changedTests) {
+				const cmdArgs = loader ? ["--import", loader, file] : [file];
 				runnerCommands.push({
 					tool: testRunner,
-					args: testFiles,
+					args: [file],
 					command: command(testRunner, cmdArgs),
 					scope: "targeted",
 					...(loader ? { import: loader } : {}),
 				});
 			}
-			runnerCommands.push(
-				{
-					tool: "run_typecheck",
-					args: [],
-					command: command("run_typecheck"),
-					scope: "typecheck",
-				},
-				{
+			runnerCommands.push({
+				tool: "run_typecheck",
+				args: [],
+				command: command("run_typecheck"),
+				scope: "typecheck",
+			});
+			if (lintFiles.length > 0) {
+				runnerCommands.push({
 					tool: "run_biome",
-					args: ["src", "test"],
-					command: command("run_biome", ["src", "test"]),
+					args: lintFiles,
+					command: command("run_biome", lintFiles),
 					scope: "format-lint",
-				},
-			);
+				});
+			}
 			const discovery =
 				framework === "node-test"
 					? loader
-						? `node --test --import ${loader} -- runs .test.ts via the ${loader} loader`
+						? `node --test --import ${loader} -- preserves the project runtime on each test call`
 						: "node --test -- discovers *.test.* / node:test files"
 					: "run_vitest -- test discovery handled by Vitest project config";
-			return makePlan("typescript", runnerCommands, discovery);
+			return makePlan(
+				"typescript",
+				runnerCommands,
+				`${discovery}. Filename selection is conservative; inspect project ` +
+					"configuration and relevant tests for helper/source changes. Run " +
+					"additional relevant entries with safe runners, including custom " +
+					"configured tests; do not execute config or package scripts directly.",
+			);
 		}
 		case "python": {
 			const runnerCommands: RecommendedTestCommand[] = [];
@@ -278,7 +392,7 @@ export function recommendTestCommands(
 export function formatTestExecutionPlan(plan: TestExecutionPlan): string {
 	const lines = [
 		`**Ecosystem:** ${plan.ecosystem}`,
-		`**Execution:** safe validation runners (run_*) on the host against the repository checkout (host bridge only)`,
+		`**Execution:** safe validation runners (run_*) on the host against the repository checkout`,
 		`**Result contract:** ${plan.resultContract}`,
 	];
 
@@ -288,10 +402,15 @@ export function formatTestExecutionPlan(plan: TestExecutionPlan): string {
 			"No safe validation runner is available for this project. Mark test execution as NOT_RUN and explain why under What could not be verified.",
 		);
 	} else {
+		const calls =
+			plan.runnerCommands.length > 0
+				? plan.runnerCommands.map(formatRunnerCommand)
+				: plan.recommendedCommands;
 		lines.push(
 			"",
 			"**Recommended commands (run narrowest first):**",
-			...plan.recommendedCommands.map((cmd) => `- ${cmd}`),
+			"Pass JSON as tool arguments, not shell commands. Keep per-file calls separate and lint only the listed paths.",
+			...calls.map((call) => `- ${call}`),
 		);
 	}
 
