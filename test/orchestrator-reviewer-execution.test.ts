@@ -298,6 +298,8 @@ describe("createOrchestratorReviewerExecution", () => {
 			expect(result.report).toBeNull();
 			expect(result.exitCode).toBe(1);
 			expect(result.timedOut).toBe(false);
+			expect(result.testPlanBudgetExceeded).toBe(true);
+			expect(result.promptBudgetExceeded).not.toBe(true);
 			expect(result.stderr).toContain("required test execution plan");
 			expect(result.stderr).toContain("relay budget");
 			expect(bridge.getStatus().lastDiagnostic?.kind).toBe("error");
@@ -306,6 +308,7 @@ describe("createOrchestratorReviewerExecution", () => {
 				testPlan: "p".repeat(4_001),
 			});
 			expect(justOverBudget.report).toBeNull();
+			expect(justOverBudget.testPlanBudgetExceeded).toBe(true);
 			expect(justOverBudget.stderr).toContain("4001 > 4000");
 			expect(sendUserMessage).not.toHaveBeenCalled();
 			expect(bridge.pendingCount()).toBe(0);

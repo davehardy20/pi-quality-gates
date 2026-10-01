@@ -444,7 +444,7 @@ export function createOrchestratorReviewerExecution(
 						kind: "error",
 						detail: reason,
 					});
-					return unavailableResult(reason);
+					return { ...unavailableResult(reason), testPlanBudgetExceeded: true };
 				}
 
 				const requestId = createRequestId();

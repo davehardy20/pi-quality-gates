@@ -51,6 +51,9 @@ export interface ReviewerResult {
   /** True when the rendered task prompt exceeded maxReviewerPromptChars and
    * the reviewer child was never spawned (fail-closed budget guard). */
   promptBudgetExceeded?: boolean;
+  /** True when the required test plan exceeded the orchestrator relay budget.
+   * No reviewer was started; this is a preflight refusal, not a parse failure. */
+  testPlanBudgetExceeded?: boolean;
 }
 
 // ── Constants ────────────────────────────────────────────────────────────────
