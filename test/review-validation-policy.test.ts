@@ -77,6 +77,21 @@ describe("trusted review validation policy", () => {
 		expect(policy.validationMaxTimeoutMs).toBe(1_200_000);
 	});
 
+	it("preserves reserved filename keys as data, without inherited budgets", () => {
+		const root = fixture();
+		fs.writeFileSync(path.join(root, "__proto__"), "");
+		const files = JSON.parse('{"__proto__":1200000}');
+		const policy = parseReviewValidationPolicy(
+			review({ repoOverrides: { [root]: files } }),
+		);
+		expect(
+			Object.getOwnPropertyDescriptor(policy.repoOverrides[root], "__proto__")
+				?.value,
+		).toBe(1_200_000);
+		expect(policy.repoOverrides[root].constructor).toBeUndefined();
+		expect(Object.getPrototypeOf(policy.repoOverrides[root])).toBeNull();
+	});
+
 	it.each([
 		null,
 		[],

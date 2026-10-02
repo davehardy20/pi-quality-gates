@@ -108,7 +108,8 @@ export function parseReviewValidationPolicy(
 			!bounded(maxReviewerTimeoutMs, REVIEW_HARD_MAX_MS)
 		)
 			invalid();
-		const repoOverrides: ReviewValidationPolicy["repoOverrides"] = {};
+		const repoOverrides: ReviewValidationPolicy["repoOverrides"] =
+			Object.create(null);
 		for (const [root, files] of Object.entries(block(review.repoOverrides))) {
 			if (!record(files)) invalid();
 			// Validate roots even for empty maps (no dormant unsafe policy).
@@ -120,7 +121,7 @@ export function parseReviewValidationPolicy(
 				!fs.statSync(root).isDirectory()
 			)
 				invalid();
-			const budgets: Record<string, number> = {};
+			const budgets: Record<string, number> = Object.create(null);
 			for (const [file, value] of Object.entries(files)) {
 				validateOverride(root, file);
 				if (!bounded(value, ceiling)) invalid();
