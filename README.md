@@ -117,19 +117,16 @@ review requests. `/pr-review` prepares a PR diff and runs the configured
 reviewer bridge to produce the `## Review Report`, stamping a PASS token before
 publishing. The default host bridge spawns a read-only headless child Pi; set
 `PI_PR_REVIEW_BRIDGE=orchestrator` to route the review through a host-side
-orchestrate `verifier`/`pr-review` child (no container is involved on either
-bridge today).
+orchestrate `verifier`/`pr-review` child when a trusted execution-deadline
+adapter is available (no container is involved on either bridge).
 There is no separate reviewer config file; PR review uses built-in diff limits
 and the reviewer tool policy.
 
-#### Validation-budget foundations (not yet wired)
+#### Trusted validation budgets
 
-This prerequisite slice adds trusted policy and monotonic-deadline APIs/tests
-only. Existing review execution is unchanged: fixed 300000-ms validation calls
-and the built-in 45-minute reviewer timeout. A separate consumer PR will connect
-these APIs; do not apply the following policy or retry the sandbox harness yet.
-
-The proposed user-global `~/.pi/agent/settings.json` block is:
+Only user-global `~/.pi/agent/settings.json` is read for validation policy;
+merged Pi settings, project settings and repository policy cannot relax it.
+Example (configuration only; this does not establish harness completion):
 
 ```json
 {
@@ -148,29 +145,57 @@ The proposed user-global `~/.pi/agent/settings.json` block is:
 }
 ```
 
-`src/shared/review-validation-policy.ts` reads only the user-global file, never
-merged/project settings or repository policy. Missing file/block/fields default;
-null, unknown policy keys, invalid integers, nonregular/oversized settings and
-unsafe paths fail closed with content-free errors. The read is bounded to 1 MiB,
-same-UID owned, without symlink components and with descriptor identity checks.
-Unrelated settings are neither returned nor modified; never commit this file.
+Defaults: five minutes per required call, ten minutes review overhead, two hours
+maximum parent review. The existing 45-minute reviewer timeout is a floor.
+Parent budget is `max(floor, sum(all required call budgets) + overhead)`;
+one 20-minute and seven five-minute calls require 65 minutes with default
+overhead. The safe-tools 30-minute per-call ceiling is **not** a parent ceiling.
+One monotonic deadline includes preparation, primary/fallback attempts and
+retries on the host and compatible orchestrator bridges; no attempt resets it.
+Late/timeout PASS cannot stamp. Final HEAD/worktree checks and both PASS sinks
+recheck the deadline; only dispatch grants authorization.
+New explicit review requests (after a fix) start a new deadline.
 
-Call budgets must be safe integer milliseconds, at least 1000 and at most the
-same file's authoritative `safeTools.validation.maxTimeoutMs` (default and
-immutable ceiling 1800000). Its default is also checked. Incompatible review
-budgets refuse, never clamp. Override keys are exact canonical absolute roots
-and normalized relative existing files, not globs, traversal or symlink aliases.
-All configured overrides are validated, including other repositories.
+The currently loaded orchestrator has no scoped cancellation/retry-deadline API.
+Orchestrator review therefore **refuses before dispatch** unless the trusted
+extension owner injects `orchestratorDeadlineAdapter` (protocol
+`review-deadline-v1`) into `PrGateExtensionDeps`. It is not a JSON setting and
+cannot come from repository policy. Mere `orchestrate` tool availability is not
+proof of execution control. Use the default host bridge meanwhile.
 
-The pure parent-budget API computes `max(existing reviewer floor, sum(each
-required call once) + overhead)`. Defaults are 300000 per call, 600000 overhead,
-and 7200000 parent maximum. One 20-minute and seven five-minute calls therefore
-require 65 minutes with default overhead, not a 30-minute parent cap. Parent
-maximum is independently bounded to 24 hours; excessive plans refuse without
-removing checks. `src/shared/review-deadline.ts` provides one monotonic deadline
-for preparation and successive attempts. Consumer integration, runtime reload,
-actual settings application and complete-harness retry remain separate steps.
-Progress/timeout alone never establishes completion or live readiness.
+The adapter must register the correlated request before dispatch, call
+`beforeAttempt()` before every child spawn/fallback/retry, use that returned
+remaining budget and supplied AbortSignal, reject unregistered requests, and
+synchronously revoke retries/terminate its owned child on `cancel()`. `dispose()`
+releases registration after completion/cancellation. The bridge owns the shared
+deadline and abort controller, cancels at expiry/shutdown/abort, and fails closed
+on adapter errors. Runtime integration remains a separate, explicitly authorized
+handoff; no orchestrator source is changed here.
+
+Call budgets must be safe integer milliseconds, at least 1000 and no greater
+than the effective `safeTools.validation.maxTimeoutMs` in that same global file
+(default/hard ceiling 1800000). Its `defaultTimeoutMs` is also validated against
+that ceiling; incompatibility refuses before reviewer dispatch, never clamps.
+Review overhead accepts 0–86400000; parent maximum accepts 1000–86400000
+(24-hour immutable ceiling). Excessive complete plans refuse without dropping
+checks. Generic safe-tool limits remain unchanged.
+
+Override keys must be exact canonical absolute directory roots and exact
+normalized relative existing file paths, not globs/aliases, traversal, controls
+or symlinks. Overrides apply to targeted single-file validation calls; project
+typecheck, scoped lint and broad discovery calls retain the explicit default.
+All overrides are checked, including those for other repositories. Only absent
+settings/blocks/fields default; null, unknown policy fields, invalid integers,
+malformed/oversized/nonregular settings or unsafe paths fail closed with
+content-free errors. Global settings are bounded to 1 MiB, same-UID owned, with
+no symlink path components and descriptor identity checks around the read.
+Preserve unrelated settings; never commit this user-owned file.
+
+Required whole-file tests, project typecheck, scoped lint, imports/helpers and
+complete-plan relay remain mandatory. Report trusted runner requested/effective/
+elapsed budgets and bounded progress when available; otherwise say unknown.
+Progress or timeout alone never proves completion; FAIL/NOT_RUN/missing evidence
+remains blocking. Do not substitute harness subsets for the complete harness.
 
 ## Notes
 

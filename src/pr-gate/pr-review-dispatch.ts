@@ -1,11 +1,16 @@
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { performance } from "node:perf_hooks";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import type { ReviewConfig } from "../shared/review-config.js";
+import {
+	createReviewDeadline,
+	reviewDeadlineDiagnostic,
+} from "../shared/review-deadline.js";
 import { formatReportForDisplay } from "../shared/review-report.js";
 import {
 	applyDiffFilters,
@@ -18,6 +23,10 @@ import {
 import { hasCriticalSecurityFinding } from "../shared/review-severity.js";
 import type { ReviewReport } from "../shared/review-types.js";
 import { diffCoveragePercent } from "../shared/review-types.js";
+import {
+	loadReviewValidationPolicy,
+	reviewerTimeoutForPlan,
+} from "../shared/review-validation-policy.js";
 import { decidePushGate } from "./gate-decision.js";
 import type { PassTokenStore } from "./pass-token-store.js";
 import {
@@ -29,6 +38,7 @@ import {
 	createBoundedTextCapture,
 	type ReviewerExecution,
 	type ReviewerResult,
+	reviewDeadlineExceeded,
 } from "./reviewer.js";
 import {
 	DEFAULT_EXTRA_INSTRUCTIONS_PATH,
@@ -184,6 +194,9 @@ export interface PrReviewDispatchDeps {
 	reviewConfig?: ReviewConfig;
 	/** Resolve the runtime default config when no explicit override is injected. */
 	resolveReviewConfig?: (ctx: ExtensionContext) => ReviewConfig;
+	loadReviewValidationPolicy?: typeof loadReviewValidationPolicy;
+	/** Internal monotonic fake-clock seam. */
+	now?: () => number;
 	/**
 	 * Git ref verifier used by incremental review to confirm the last-PASS
 	 * sha still resolves before scoping to it. Defaults to `git rev-parse
@@ -593,6 +606,11 @@ export function createPrReviewDispatch(
 		input: PrReviewDispatchInput,
 		reviewedHeadSha: string,
 	): Promise<ReviewerResult> {
+		const now = deps.now ?? (() => performance.now());
+		const startedAt = now();
+		const policy = (
+			deps.loadReviewValidationPolicy ?? loadReviewValidationPolicy
+		)();
 		const { ctx, baseRef: explicitBaseRef } = input;
 		const cwd = ctx.cwd;
 		const config =
@@ -646,6 +664,15 @@ export function createPrReviewDispatch(
 			);
 		}
 
+		const plan = recommendTestCommands(changedFiles, cwd, policy);
+		const timeoutMs = reviewerTimeoutForPlan(
+			plan.runnerCommands,
+			policy,
+			config.timeoutMs,
+		);
+		const deadline = createReviewDeadline(timeoutMs, now, startedAt);
+		if (deadline.remainingMs() <= 0) return reviewDeadlineExceeded(deadline);
+
 		const gathered = deps.reviewerExecution.inspectRepositoryDirectly
 			? undefined
 			: await deps.gatherDiff(
@@ -672,9 +699,7 @@ export function createPrReviewDispatch(
 			"Review the current HEAD diff before push.";
 		const task = truncateReviewDiagnostic(extractedTask, 8_000);
 
-		const testPlan = formatTestExecutionPlan(
-			recommendTestCommands(changedFiles, cwd),
-		);
+		const testPlan = formatTestExecutionPlan(plan);
 
 		const currentHeadSha = deps.getHeadSha(cwd);
 		if (currentHeadSha !== reviewedHeadSha) {
@@ -690,11 +715,14 @@ export function createPrReviewDispatch(
 			log,
 			extraInstructionsState,
 		);
-		const reviewConfig: ReviewConfig = extraInstructions
-			? { ...config, extraInstructions }
-			: config;
+		const reviewConfig: ReviewConfig = {
+			...config,
+			timeoutMs,
+			...(extraInstructions ? { extraInstructions } : {}),
+		};
+		if (deadline.remainingMs() <= 0) return reviewDeadlineExceeded(deadline);
 
-		return deps.reviewerExecution.runAttempt({
+		const result = await deps.reviewerExecution.runAttempt({
 			task,
 			files: changedFiles,
 			cwd,
@@ -706,7 +734,16 @@ export function createPrReviewDispatch(
 			testPlan,
 			headSha: reviewedHeadSha,
 			signal: input.signal,
+			deadline,
 		});
+		// A bridge must not turn a late/timeout report into PASS evidence.
+		if (deadline.remainingMs() <= 0)
+			return reviewDeadlineExceeded(deadline, result);
+		return {
+			...result,
+			report: result.timedOut ? null : result.report,
+			reviewDeadline: deadline,
+		};
 	}
 
 	async function dispatch(
@@ -796,6 +833,24 @@ export function createPrReviewDispatch(
 					message: `PR review gate: worktree changed during review of HEAD ${headSha}. The result was not applied; re-run /pr-review with a clean worktree.`,
 				};
 			}
+			const deadlineBlocker = (): PrReviewDispatchResult | null => {
+				const deadline = childOutput.reviewDeadline;
+				if (deadline && deadline.remainingMs() > 0) return null;
+				return {
+					report: null,
+					stamped: false,
+					escalated: false,
+					blocked: true,
+					message: deadline
+						? reviewDeadlineDiagnostic(deadline)
+						: "PR review has no trusted authorization deadline; PASS refused.",
+				};
+			};
+			// Final Git checks can consume the last remaining time.
+			if (childOutput.report) {
+				const expired = deadlineBlocker();
+				if (expired) return expired;
+			}
 			// A preflight refusal is not child output and cannot establish a PASS,
 			// even if an execution adapter supplies a contradictory report.
 			if (childOutput.testPlanBudgetExceeded) {
@@ -813,6 +868,22 @@ export function createPrReviewDispatch(
 				};
 			}
 			const report = childOutput.report;
+
+			if (!report && childOutput.timedOut) {
+				return {
+					report: null,
+					stamped: false,
+					escalated: false,
+					blocked: true,
+					message: [
+						`PR review timed out for HEAD ${headSha}; required validation remains incomplete. No PASS was stamped.`,
+						formatUnparseableReviewerOutput(childOutput),
+						...(childOutput.sidecarPath
+							? [`Sidecar: ${childOutput.sidecarPath}`]
+							: []),
+					].join("\n\n"),
+				};
+			}
 
 			if (!report) {
 				// Fail-closed prompt-budget guard: the reviewer was never spawned
@@ -891,6 +962,8 @@ export function createPrReviewDispatch(
 						message: `🟡 **PR review PARTIAL** for HEAD ${headSha}: the diff was truncated (${report.diffCoverage.omittedLines} lines omitted, ${diffCoveragePercent(report.diffCoverage)}% reviewed, cap ${report.diffCoverage.maxLines}). A full PASS requires the complete diff; push is blocked.\n\n${formatReportForDisplay(report)}`,
 					};
 				}
+				const expired = deadlineBlocker();
+				if (expired) return expired;
 				const decision = decidePushGate({
 					action: "push",
 					headSha,
@@ -923,6 +996,8 @@ export function createPrReviewDispatch(
 			// a NIT-only ISSUES report can qualify. Let the pure gate core decide
 			// (and stamp) so there is one source of truth for auto-PASS.
 			if (state.config.autoPassOnNitOnly === true) {
+				const expired = deadlineBlocker();
+				if (expired) return expired;
 				const autoDecision = decidePushGate({
 					action: "push",
 					headSha,

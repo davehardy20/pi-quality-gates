@@ -11,6 +11,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ReviewConfig } from "../shared/review-config.js";
+import {
+  createReviewDeadline,
+  type ReviewDeadline,
+  reviewDeadlineDiagnostic,
+} from "../shared/review-deadline.js";
 import { parseReviewReport } from "../shared/review-report.js";
 import { type DiffFilterOptions, gatherDiff } from "../shared/review-scope.js";
 import { hasFindingsAboveThreshold } from "../shared/review-severity.js";
@@ -37,6 +42,8 @@ export type {
 } from "../shared/review-types.js";
 
 export interface ReviewerResult {
+  /** Internal authorization deadline, never authored by a reviewer. */
+  reviewDeadline?: ReviewDeadline;
   report: ReviewReport | null;
   rawOutput: string;
   exitCode: number;
@@ -78,9 +85,11 @@ export interface ReviewerAttemptInput {
   /** Base ref for repository-direct review execution. */
   baseRef?: string;
   signal?: AbortSignal;
+  /** One monotonic deadline from dispatch entry; shared by every attempt. */
+  deadline?: ReviewDeadline;
   /**
-   * Optional HEAD sha this review covers. The orchestrator bridge uses it to
-   * stamp the exact-HEAD PASS token directly from an observed report.
+   * Optional HEAD sha for bridge correlation and diagnostic evidence.
+   * Dispatch alone authorizes the exact-HEAD PASS after its final guards.
    */
   headSha?: string;
 }
@@ -179,6 +188,8 @@ export interface ReviewerExecutionDependencies {
   renderTaskTemplate?: typeof renderTaskTemplate;
   spawnReviewer?: typeof spawnReviewer;
   getPromptsDir: () => string;
+  /** Internal monotonic fake-clock seam. */
+  now?: () => number;
 }
 
 // ── Context Gathering ────────────────────────────────────────────────────────
@@ -295,6 +306,9 @@ export function createReviewerExecution(
 ): ReviewerExecution {
   return {
     async runAttempt(input: ReviewerAttemptInput): Promise<ReviewerResult> {
+      const deadline =
+        input.deadline ??
+        createReviewDeadline(input.config.timeoutMs, deps.now);
       const promptsDir = deps.getPromptsDir();
       const rawSystemPrompt = (deps.readSystemPrompt ?? readSystemPrompt)(
         promptsDir,
@@ -360,15 +374,25 @@ export function createReviewerExecution(
         result.report && coverage
           ? { ...result, report: { ...result.report, diffCoverage: coverage } }
           : result;
-      const primaryResult = stampCoverage(
-        await spawn(
+      const runModel = async (
+        model: string | null,
+      ): Promise<ReviewerResult> => {
+        const remaining = deadline.remainingMs();
+        if (remaining <= 0) return reviewDeadlineExceeded(deadline);
+        const result = await spawn(
           taskPrompt,
           systemPrompt,
-          input.config,
+          { ...input.config, model, timeoutMs: remaining },
           input.cwd,
           input.signal,
-        ),
-      );
+          deadline,
+        );
+        if (deadline.remainingMs() <= 0) {
+          return reviewDeadlineExceeded(deadline, result);
+        }
+        return stampCoverage(result);
+      };
+      const primaryResult = await runModel(input.config.model);
       if (primaryResult.report || !isEmptyModelFailure(primaryResult)) {
         return primaryResult;
       }
@@ -378,21 +402,31 @@ export function createReviewerExecution(
       // review report or a non-empty failure. Returns the primary failure if
       // every fallback is also an empty-output model failure.
       for (const fallbackModel of input.config.fallbackModels ?? []) {
-        const fallbackResult = stampCoverage(
-          await spawn(
-            taskPrompt,
-            systemPrompt,
-            { ...input.config, model: fallbackModel },
-            input.cwd,
-            input.signal,
-          ),
-        );
+        const fallbackResult = await runModel(fallbackModel);
         if (fallbackResult.report || !isEmptyModelFailure(fallbackResult)) {
           return fallbackResult;
         }
       }
       return primaryResult;
     },
+  };
+}
+
+export function reviewDeadlineExceeded(
+  deadline: ReviewDeadline,
+  previous?: ReviewerResult,
+): ReviewerResult {
+  const diagnostic = reviewDeadlineDiagnostic(deadline);
+  return {
+    ...previous,
+    report: null,
+    rawOutput: previous?.rawOutput
+      ? `${diagnostic}\n${previous.rawOutput}`
+      : diagnostic,
+    exitCode: 1,
+    timedOut: true,
+    stderr: previous?.stderr ? `${diagnostic}\n${previous.stderr}` : diagnostic,
+    command: previous?.command ?? "(overall review deadline exhausted)",
   };
 }
 
@@ -640,7 +674,10 @@ export async function spawnReviewer(
   config: ReviewConfig,
   cwd: string,
   signal?: AbortSignal,
+  deadline: ReviewDeadline = createReviewDeadline(config.timeoutMs),
+  spawnProcess: typeof spawn = spawn,
 ): Promise<ReviewerResult> {
+  if (deadline.remainingMs() <= 0) return reviewDeadlineExceeded(deadline);
   const tmpDir = await fs.promises.mkdtemp(
     path.join(os.tmpdir(), "pi-reviewer-"),
   );
@@ -673,6 +710,7 @@ export async function spawnReviewer(
 
     const invocation = getPiInvocation(piArgs);
 
+    if (deadline.remainingMs() <= 0) return reviewDeadlineExceeded(deadline);
     return await new Promise<ReviewerResult>((resolve) => {
       const output = createBoundedTextCapture(MAX_REVIEWER_OUTPUT_CHARS);
       const stderr = createBoundedTextCapture(MAX_REVIEWER_STDERR_CHARS);
@@ -685,7 +723,7 @@ export async function spawnReviewer(
       let killTimer: ReturnType<typeof setTimeout> | undefined;
       let onAbort: (() => void) | undefined;
 
-      const proc = spawn(invocation.command, invocation.args, {
+      const proc = spawnProcess(invocation.command, invocation.args, {
         cwd,
         shell: false,
         stdio: ["ignore", "pipe", "pipe"],
@@ -720,7 +758,7 @@ export async function spawnReviewer(
 
       timeoutId = setTimeout(
         () => requestTermination("timeout"),
-        config.timeoutMs,
+        deadline.remainingMs(),
       );
 
       const stdoutLines = createBoundedLineProcessor(
@@ -762,7 +800,11 @@ export async function spawnReviewer(
           ? `${overflowNote}\n${capturedOutput}`
           : capturedOutput;
         // Any overflow fails closed: a partial report cannot stamp a PASS token.
-        const report = outputOverflowed ? null : parseReviewReport(rawOutput);
+        if (deadline.remainingMs() <= 0) timedOut = true;
+        const report =
+          outputOverflowed || timedOut || signal?.aborted
+            ? null
+            : parseReviewReport(rawOutput);
         let sidecarPath: string | undefined;
         if (!report) {
           try {

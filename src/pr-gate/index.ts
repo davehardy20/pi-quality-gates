@@ -26,6 +26,7 @@ import type {
 import { decidePushGate } from "./gate-decision.js";
 import {
 	createOrchestratorReviewerExecution,
+	type OrchestratorReviewDeadlineAdapter,
 	type OrchestratorReviewerExecutionBridge,
 } from "./orchestrator-reviewer-execution.js";
 import {
@@ -94,47 +95,6 @@ export function createPrGateState(
 		tokens: createPassTokenStore(),
 		config: { ...DEFAULT_PR_GATE_CONFIG, ...config },
 	};
-}
-
-export interface StampFromReviewInput {
-	/** HEAD sha the review covered. */
-	headSha: string;
-	/** The review report status. Only "PASS" stamps. */
-	reportStatus: "PASS" | "ISSUES" | "CANNOT_REVIEW";
-	/** Optional summary from the report. */
-	summary?: string;
-}
-
-/**
- * Stamp a PASS token from a review result. Called by the observation path
- * (the tool_result hook on the review orchestrator call) — NOT by the veto
- * hook. Returns true if a token was stamped.
- */
-export function stampPassFromReview(
-	state: PrGateState,
-	input: StampFromReviewInput,
-): boolean {
-	if (input.reportStatus !== "PASS") return false;
-	// Re-use decidePushGate's stamping path by feeding it a PASS report-shaped
-	// input. This keeps a single source of truth for "what stamps a token".
-	const before = state.tokens.size;
-	decidePushGate({
-		action: "push",
-		headSha: input.headSha,
-		baseSha: "unknown",
-		tokens: state.tokens,
-		// Minimal report stub: decidePushGate only reads .status for the PASS
-		// branch (no security findings here).
-		reviewReport: {
-			status: "PASS",
-			confidence: "HIGH",
-			findings: [],
-			verified: [],
-			unverifiable: [],
-			summary: input.summary ?? "",
-		},
-	});
-	return state.tokens.size > before;
 }
 
 interface ReviewerBridgeStatus {
@@ -239,6 +199,8 @@ export interface PrGateExtensionDeps {
 	 * mutating workers).
 	 */
 	reviewerBridgeMode?: PrReviewerBridgeMode;
+	/** Trusted owner-only execution capability; never loaded from repo settings. */
+	orchestratorDeadlineAdapter?: OrchestratorReviewDeadlineAdapter;
 }
 
 export default function prGateExtension(
@@ -270,7 +232,7 @@ export default function prGateExtension(
 	let orchestratorReviewer: OrchestratorReviewerExecutionBridge | undefined;
 	if (bridgeMode === "orchestrator") {
 		orchestratorReviewer = createOrchestratorReviewerExecution(pi, {
-			tokens: state.tokens,
+			deadlineAdapter: deps.orchestratorDeadlineAdapter,
 			resolveHeadSha: () => resolveHead(process.cwd()),
 		});
 	}
@@ -279,7 +241,8 @@ export default function prGateExtension(
 		: createReviewerExecution({ getPromptsDir });
 
 	// The orchestrator bridge is async: it routes review through a follow-up
-	// `orchestrate` call and stamps PASS from the observed tool_result. The host
+	// `orchestrate` call and resolves a correlated tool_result. Dispatch alone
+	// authorizes PASS after final checkout and deadline guards. The host
 	// bridge spawns a headless child Pi directly and returns its report, so it
 	// needs no tool_result listener.
 	if (orchestratorReviewer) {

@@ -52,7 +52,9 @@ export interface ReviewConfig {
 	autoFixThreshold: AutoFixThreshold;
 	/** Max tokens for the reviewer child */
 	maxTokens: number;
-	/** Timeout for the reviewer child in ms */
+	/** Reviewer timeout floor in ms. Dispatch raises it to the complete trusted
+	 * validation-plan sum plus overhead, subject to the global parent cap.
+	 * Every child/fallback consumes one shared monotonic review deadline. */
 	timeoutMs: number;
 	/** Tools available to the reviewer child */
 	tools: string[];

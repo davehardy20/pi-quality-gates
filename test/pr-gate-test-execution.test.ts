@@ -6,13 +6,26 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { PR_REVIEWER_TOOLS } from "../src/pr-gate/pr-review-config.js";
 import {
+	recommendTestCommands as buildTestPlan,
 	detectNodeTestLoader,
 	detectProjectEcosystem,
 	detectTypeScriptTestFramework,
 	formatTestExecutionPlan,
-	recommendTestCommands,
 	type TestExecutionPlan,
 } from "../src/pr-gate/test-execution.js";
+import {
+	parseReviewValidationPolicy,
+	reviewerTimeoutForPlan,
+} from "../src/shared/review-validation-policy.js";
+
+// Planner unit fixtures must never consult Dave's live global settings.
+function recommendTestCommands(
+	files: string[],
+	cwd: string,
+	policy = parseReviewValidationPolicy({}),
+): TestExecutionPlan {
+	return buildTestPlan(files, cwd, policy);
+}
 
 const REPO_ROOT = path.resolve(fileURLToPath(import.meta.url), "..", "..");
 const fixtureRoots: string[] = [];
@@ -39,6 +52,100 @@ afterEach(() => {
 	for (const root of fixtureRoots.splice(0)) {
 		fs.rmSync(root, { recursive: true, force: true });
 	}
+});
+
+describe("trusted per-file validation budgets", () => {
+	it("preserves distinct Python file budgets and the broad suite call", () => {
+		const files = [
+			"pkg/tests/test_slow.py",
+			"pkg/tests/test_other.py",
+			"pkg/tests/test_fast.py",
+			"pkg/helper.py",
+		];
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-qg-python-plan-"));
+		fs.writeFileSync(path.join(root, "pyproject.toml"), "");
+		const cwd = fs.realpathSync(withTestFiles(root, files));
+		const policy = parseReviewValidationPolicy({
+			qualityGates: {
+				reviewValidation: {
+					repoOverrides: {
+						[cwd]: {
+							[files[0]]: 1_200_000,
+							[files[1]]: 900_000,
+						},
+					},
+				},
+			},
+		});
+		const plan = recommendTestCommands([...files, files[0]], cwd, policy);
+		expect(plan.ecosystem).toBe("python");
+		expect(plan.runnerCommands.map((call) => call.tool)).toEqual([
+			"run_pytest",
+			"run_pytest",
+			"run_pytest",
+			"run_pytest",
+		]);
+		expect(plan.runnerCommands.map((call) => call.args)).toEqual([
+			[files[0]],
+			[files[1]],
+			[files[2]],
+			[],
+		]);
+		expect(plan.runnerCommands.map((call) => call.scope)).toEqual([
+			"targeted",
+			"targeted",
+			"targeted",
+			"broad",
+		]);
+		expect(plan.runnerCommands.map((call) => call.timeoutMs)).toEqual([
+			1_200_000, 900_000, 300_000, 300_000,
+		]);
+		expect(plan.recommendedCommands).toEqual([
+			`run_pytest ${files[0]}`,
+			`run_pytest ${files[1]}`,
+			`run_pytest ${files[2]}`,
+			"run_pytest",
+		]);
+		expect(reviewerTimeoutForPlan(plan.runnerCommands, policy, 2_700_000)).toBe(
+			3_300_000,
+		);
+		const rendered = formatTestExecutionPlan(plan);
+		expect(rendered).toContain(
+			`run_pytest {"paths":["${files[0]}"],"timeoutMs":1200000}`,
+		);
+		expect(rendered).toContain(
+			`run_pytest {"paths":["${files[1]}"],"timeoutMs":900000}`,
+		);
+		expect(rendered).toContain('run_pytest {"timeoutMs":300000}');
+	});
+
+	it("applies exact repo+file override without shortening calls or lint scope", () => {
+		const files = ["test/slow.test.ts", "test/fast.test.ts", "src/helper.ts"];
+		const cwd = fs.realpathSync(changedFilesFixture(files));
+		const policy = parseReviewValidationPolicy({
+			qualityGates: {
+				reviewValidation: {
+					repoOverrides: { [cwd]: { "test/slow.test.ts": 1_200_000 } },
+				},
+			},
+		});
+		const plan = recommendTestCommands(files, cwd, policy);
+		expect(plan.runnerCommands.map((call) => call.timeoutMs)).toEqual([
+			1_200_000, 300_000, 300_000, 300_000,
+		]);
+		expect(plan.runnerCommands[0].args).toEqual(["test/slow.test.ts"]);
+		expect(plan.runnerCommands.at(-1)?.args).toEqual(files);
+		const other = changedFilesFixture(files);
+		expect(
+			recommendTestCommands(files, other, policy).runnerCommands[0].timeoutMs,
+		).toBe(300_000);
+		const rendered = formatTestExecutionPlan(plan);
+		expect(rendered).toContain('"timeoutMs":1200000');
+		expect(rendered).toContain("requested/effective/elapsed");
+		expect(rendered).toContain("bounded redacted progress");
+		expect(rendered).toContain("unknown");
+		expect(rendered).toContain("every required call");
+	});
 });
 
 describe("detectProjectEcosystem", () => {

@@ -2,7 +2,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { createOrchestratorReviewerExecution } from "../src/pr-gate/orchestrator-reviewer-execution.js";
+import {
+	createOrchestratorReviewerExecution as createBridge,
+	type OrchestratorReviewDeadlineAdapter,
+} from "../src/pr-gate/orchestrator-reviewer-execution.js";
 import { createPassTokenStore } from "../src/pr-gate/pass-token-store.js";
 import { PR_REVIEW_CONFIG } from "../src/pr-gate/pr-review-config.js";
 import type { ReviewerAttemptInput } from "../src/pr-gate/reviewer.js";
@@ -10,6 +13,23 @@ import {
 	formatTestExecutionPlan,
 	recommendTestCommands,
 } from "../src/pr-gate/test-execution.js";
+import { createReviewDeadline } from "../src/shared/review-deadline.js";
+import { parseReviewValidationPolicy } from "../src/shared/review-validation-policy.js";
+
+// Existing transport tests use an explicit trusted adapter fixture. Production
+// has no adapter by default and must never dispatch an uncontrolled reviewer.
+function createOrchestratorReviewerExecution(
+	pi: Parameters<typeof createBridge>[0],
+	options: Parameters<typeof createBridge>[1] = {},
+) {
+	return createBridge(pi, {
+		deadlineAdapter: {
+			protocol: "review-deadline-v1",
+			register: () => ({ cancel: () => {}, dispose: () => {} }),
+		},
+		...options,
+	});
+}
 
 function makeAttemptInput(): ReviewerAttemptInput {
 	return {
@@ -47,6 +67,285 @@ function passReport(): string {
 }
 
 describe("createOrchestratorReviewerExecution", () => {
+	it("refuses before dispatch without a trusted execution deadline adapter", async () => {
+		const sendUserMessage = vi.fn();
+		const bridge = createBridge({
+			getActiveTools: () => ["orchestrate"],
+			sendUserMessage,
+		});
+		const result = await bridge.reviewerExecution.runAttempt(
+			makeAttemptInput(),
+		);
+		expect(result.report).toBeNull();
+		expect(result.stderr).toMatch(/trusted.*deadline.*adapter/);
+		expect(sendUserMessage).not.toHaveBeenCalled();
+		expect(bridge.pendingCount()).toBe(0);
+		expect(bridge.getStatus().lastDiagnostic?.kind).toBe("error");
+	});
+
+	for (const phase of ["protocol", "register", "cancel", "dispose"]) {
+		it(`refuses adapter ${phase} errors safely`, async () => {
+			const sendUserMessage = vi.fn();
+			const bridge = createBridge(
+				{ getActiveTools: () => ["orchestrate"], sendUserMessage },
+				{
+					deadlineAdapter: {
+						protocol:
+							phase === "protocol"
+								? ("unknown" as never)
+								: "review-deadline-v1",
+						register: () => {
+							if (phase === "register") throw new Error("private-adapter-data");
+							return {
+								cancel: () => {
+									if (phase === "cancel")
+										throw new Error("private-adapter-data");
+								},
+								dispose: () => {
+									if (phase === "dispose")
+										throw new Error("private-adapter-data");
+								},
+							};
+						},
+					},
+				},
+			);
+			const pending = bridge.reviewerExecution.runAttempt(makeAttemptInput());
+			if (phase === "cancel" || phase === "dispose") {
+				const requestId = bridge.getStatus().pending[0].requestId;
+				bridge.handleToolResult({
+					toolName: "orchestrate",
+					input: {
+						agentType: "verifier",
+						profile: "pr-review",
+						task: `Request ${requestId}`,
+					},
+					content: [{ type: "text", text: passReport() }],
+				});
+			} else {
+				expect(sendUserMessage).not.toHaveBeenCalled();
+			}
+			const result = await pending;
+			expect(result.report).toBeNull();
+			expect(result.stderr).toContain("adapter");
+			expect(result.stderr).not.toContain("private-adapter-data");
+			expect(bridge.pendingCount()).toBe(0);
+			expect(bridge.getStatus().lastDiagnostic?.kind).toBe("error");
+			bridge.dispose();
+		});
+	}
+
+	it("refuses before dispatch if trusted registration exhausts the deadline", async () => {
+		let now = 0;
+		const sendUserMessage = vi.fn();
+		const cancel = vi.fn();
+		const dispose = vi.fn();
+		const bridge = createBridge(
+			{ getActiveTools: () => ["orchestrate"], sendUserMessage },
+			{
+				deadlineAdapter: {
+					protocol: "review-deadline-v1",
+					register: () => {
+						now = 1_000;
+						return { cancel, dispose };
+					},
+				},
+			},
+		);
+		const result = await bridge.reviewerExecution.runAttempt({
+			...makeAttemptInput(),
+			deadline: createReviewDeadline(1_000, () => now),
+		});
+		expect(result.timedOut).toBe(true);
+		expect(cancel).toHaveBeenCalledOnce();
+		expect(dispose).toHaveBeenCalledOnce();
+		expect(sendUserMessage).not.toHaveBeenCalled();
+		expect(bridge.pendingCount()).toBe(0);
+	});
+
+	it("cancels the owned active child and refuses another attempt at expiry", async () => {
+		vi.useFakeTimers();
+		try {
+			let now = 0;
+			let beforeAttempt!: () => number;
+			let signal!: AbortSignal;
+			const killChild = vi.fn();
+			const dispose = vi.fn();
+			const bridge = createBridge(
+				{ getActiveTools: () => ["orchestrate"], sendUserMessage: vi.fn() },
+				{
+					deadlineAdapter: {
+						protocol: "review-deadline-v1",
+						register: (request) => {
+							beforeAttempt = request.beforeAttempt;
+							signal = request.signal;
+							return { cancel: killChild, dispose };
+						},
+					},
+				},
+			);
+			const pending = bridge.reviewerExecution.runAttempt({
+				...makeAttemptInput(),
+				deadline: createReviewDeadline(1_000, () => now),
+			});
+			expect(beforeAttempt()).toBe(1_000);
+			now = 1_000;
+			await vi.advanceTimersByTimeAsync(1_000);
+			expect((await pending).timedOut).toBe(true);
+			expect(signal.aborted).toBe(true);
+			expect(killChild).toHaveBeenCalledOnce();
+			expect(dispose).toHaveBeenCalledOnce();
+			expect(() => beforeAttempt()).toThrow(/deadline/);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("uses the shared remaining deadline for a long plan and refuses exhausted dispatch", async () => {
+		vi.useFakeTimers();
+		try {
+			let now = 100;
+			const sendUserMessage = vi.fn();
+			const bridge = createOrchestratorReviewerExecution({
+				getActiveTools: () => ["orchestrate"],
+				sendUserMessage,
+			});
+			const input = {
+				...makeAttemptInput(),
+				config: { ...PR_REVIEW_CONFIG, timeoutMs: 3_900_000 },
+				deadline: createReviewDeadline(3_900_000, () => now, 0),
+			};
+			const pending = bridge.reviewerExecution.runAttempt(input);
+			await vi.advanceTimersByTimeAsync(3_899_899);
+			expect(bridge.pendingCount()).toBe(1);
+			now = 3_900_000;
+			await vi.advanceTimersByTimeAsync(1);
+			expect((await pending).timedOut).toBe(true);
+			expect(bridge.pendingCount()).toBe(0);
+			expect(sendUserMessage).toHaveBeenCalledOnce();
+			expect((await bridge.reviewerExecution.runAttempt(input)).timedOut).toBe(
+				true,
+			);
+			expect(sendUserMessage).toHaveBeenCalledOnce();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("retains request command evidence when a result arrives after expiry", async () => {
+		vi.useFakeTimers();
+		try {
+			let now = 0;
+			const bridge = createOrchestratorReviewerExecution({
+				getActiveTools: () => ["orchestrate"],
+				sendUserMessage: vi.fn(),
+			});
+			const pending = bridge.reviewerExecution.runAttempt({
+				...makeAttemptInput(),
+				deadline: createReviewDeadline(1_000, () => now),
+			});
+			const requestId = bridge.getStatus().pending[0].requestId;
+			now = 1_000;
+			bridge.handleToolResult({
+				toolName: "orchestrate",
+				input: {
+					agentType: "verifier",
+					profile: "pr-review",
+					task: `Request ${requestId}`,
+				},
+				content: [{ type: "text", text: passReport() }],
+			});
+			const result = await pending;
+			expect(result.report).toBeNull();
+			expect(result.timedOut).toBe(true);
+			expect(result.command).toBe(
+				`orchestrate agentType=verifier profile=pr-review requestId=${requestId}`,
+			);
+			expect(bridge.pendingCount()).toBe(0);
+			expect(vi.getTimerCount()).toBe(0);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	for (const cleanupFailure of ["none", "cancel", "dispose"]) {
+		it(`cleans dispatch exceptions immediately with ${cleanupFailure} cleanup failure`, async () => {
+			vi.useFakeTimers();
+			try {
+				const controller = new AbortController();
+				const removeListener = vi.spyOn(
+					controller.signal,
+					"removeEventListener",
+				);
+				const cancel = vi.fn(() => {
+					if (cleanupFailure === "cancel")
+						throw new Error("private-cancel-data");
+				});
+				const dispose = vi.fn(() => {
+					if (cleanupFailure === "dispose")
+						throw new Error("private-dispose-data");
+				});
+				let request!: Parameters<
+					OrchestratorReviewDeadlineAdapter["register"]
+				>[0];
+				const bridge = createBridge(
+					{
+						getActiveTools: () => ["orchestrate"],
+						sendUserMessage: () => {
+							throw new Error("private-dispatch-data");
+						},
+					},
+					{
+						deadlineAdapter: {
+							protocol: "review-deadline-v1",
+							register: (registered) => {
+								request = registered;
+								return { cancel, dispose };
+							},
+						},
+					},
+				);
+				const result = await bridge.reviewerExecution.runAttempt({
+					...makeAttemptInput(),
+					signal: controller.signal,
+				});
+				expect(result.report).toBeNull();
+				expect(result.exitCode).toBe(1);
+				expect(result.stderr).toContain("dispatch failed");
+				expect(JSON.stringify(result)).not.toContain("private-");
+				expect(result.command).toContain(request.requestId);
+				expect(request.signal.aborted).toBe(true);
+				expect(() => request.beforeAttempt()).toThrow(/cancelled/);
+				expect(cancel).toHaveBeenCalledOnce();
+				expect(dispose).toHaveBeenCalledOnce();
+				expect(removeListener).toHaveBeenCalledWith(
+					"abort",
+					expect.any(Function),
+				);
+				expect(bridge.pendingCount()).toBe(0);
+				expect(vi.getTimerCount()).toBe(0);
+				expect(bridge.getStatus().lastDiagnostic?.kind).toBe("error");
+				expect(
+					bridge.handleToolResult({
+						toolName: "orchestrate",
+						input: {
+							agentType: "verifier",
+							profile: "pr-review",
+							task: request.requestId,
+						},
+						content: [{ type: "text", text: passReport() }],
+					}),
+				).toBe(false);
+				controller.abort();
+				bridge.dispose();
+				expect(cancel).toHaveBeenCalledOnce();
+				expect(dispose).toHaveBeenCalledOnce();
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+	}
+
 	it("requests a canonical verifier orchestrate run and resolves from its tool result", async () => {
 		const sendUserMessage = vi.fn();
 		const bridge = createOrchestratorReviewerExecution({
@@ -285,7 +584,8 @@ describe("createOrchestratorReviewerExecution", () => {
 				fs.writeFileSync(path.join(cwd, file), "export {};\n");
 			}
 			const testPlan = formatTestExecutionPlan(
-				recommendTestCommands(files, cwd),
+				// Transport fixtures do not read live user-global validation policy.
+				recommendTestCommands(files, cwd, parseReviewValidationPolicy({})),
 			);
 			// Reproduce required typecheck/lint falling beyond the old prefix.
 			expect(testPlan.indexOf("run_typecheck")).toBeGreaterThan(4_000);
@@ -421,7 +721,7 @@ describe("createOrchestratorReviewerExecution", () => {
 	});
 });
 
-describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
+describe("orchestrator exact-HEAD correlation", () => {
 	function makeAttemptInput(headSha?: string): ReviewerAttemptInput {
 		return {
 			task: "Review this change",
@@ -461,7 +761,7 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 		].join("\n");
 	}
 
-	it("stamps an exact-HEAD PASS parsed from a correlated error result", async () => {
+	it("returns exact-HEAD PASS from a correlated error without granting authority", async () => {
 		const tokens = createPassTokenStore();
 		const headSha = "0b1b2c3d".repeat(5);
 		const sendUserMessage = vi.fn();
@@ -492,7 +792,7 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 		const result = await pending;
 		expect(result.report?.status).toBe("PASS");
 		expect(result.exitCode).toBe(1);
-		expect(tokens.hasPass(headSha)).toBe(true);
+		expect(tokens.hasPass(headSha)).toBe(false);
 		expect(bridge.getStatus().lastDiagnostic?.kind).toBe("parsed-pass");
 	});
 
@@ -630,7 +930,7 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 		});
 		expect(correlated).toBe(true);
 		await pendingResult;
-		expect(tokens.hasPass(headSha)).toBe(true);
+		expect(tokens.hasPass(headSha)).toBe(false);
 		expect(bridge.pendingCount()).toBe(0);
 	});
 
@@ -665,7 +965,7 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 		});
 		expect(handled).toBe(true);
 		await pendingResult;
-		expect(tokens.hasPass(headSha)).toBe(true);
+		expect(tokens.hasPass(headSha)).toBe(false);
 	});
 
 	it("does not stamp a correlated PASS with a CRITICAL security finding", async () => {
@@ -723,7 +1023,7 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 		);
 	});
 
-	it("stamps a late PASS only when it echoes a known timed-out request id", async () => {
+	it("rejects late PASS for a known timed-out request without trusting current HEAD", async () => {
 		vi.useFakeTimers();
 		try {
 			const tokens = createPassTokenStore();
@@ -756,7 +1056,7 @@ describe("createOrchestratorReviewerExecution exact-HEAD PASS stamping", () => {
 				isError: false,
 			});
 			expect(handled).toBe(false);
-			expect(tokens.hasPass(headSha)).toBe(true);
+			expect(tokens.hasPass(headSha)).toBe(false);
 			expect(tokens.hasPass("different-current-head")).toBe(false);
 		} finally {
 			vi.useRealTimers();

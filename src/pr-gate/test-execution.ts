@@ -1,5 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import {
+	loadReviewValidationPolicy,
+	type ReviewValidationPolicy,
+} from "../shared/review-validation-policy.js";
 
 /**
  * Supported project ecosystems for review-time validation planning.
@@ -53,7 +57,7 @@ export interface TestExecutionPlan {
 }
 
 const RESULT_CONTRACT =
-	"Record a bounded PASS/FAIL/NOT_RUN summary and any tool sidecar ref under the Review Report test-execution section; do not paste raw logs.";
+	"For every required call, record bounded PASS/FAIL/NOT_RUN, requested/effective/elapsed budgets (ms), bounded redacted progress and any tool sidecar ref under Test execution. Use trusted runner evidence only; absent values are unknown. Progress/timeout is not completion; incomplete required calls remain FAIL/NOT_RUN. Do not paste raw logs.";
 
 /**
  * Detect the project ecosystem by looking for well-known manifest files.
@@ -160,8 +164,8 @@ function command(tool: SafeRunnerTool, args: string[] = []): string {
 	return [tool, ...args].join(" ");
 }
 
-// The safe runners cap execution at five minutes. Choose that bounded
-// budget up front, rather than retrying a timeout with a larger window.
+// Explicit default; the trusted global policy wrapper assigns final budgets.
+// Never retry a timeout by silently enlarging a required call.
 const REVIEW_VALIDATION_TIMEOUT_MS = 300_000;
 const CODE_EXTENSIONS = new Set([
 	".js",
@@ -275,7 +279,31 @@ function formatRunnerCommand(cmd: RecommendedTestCommand): string {
 export function recommendTestCommands(
 	files: string[],
 	cwd: string,
+	policy: ReviewValidationPolicy = loadReviewValidationPolicy(),
 ): TestExecutionPlan {
+	const plan = buildTestCommands(files, cwd);
+	const overrides = Object.keys(policy.repoOverrides).length
+		? policy.repoOverrides[fs.realpathSync(cwd)]
+		: undefined;
+	plan.runnerCommands = plan.runnerCommands.map((call) => {
+		const timeoutMs =
+			call.scope === "targeted" && call.args.length === 1
+				? (overrides?.[call.args[0]] ?? policy.defaultTimeoutMs)
+				: policy.defaultTimeoutMs;
+		if (
+			!Number.isSafeInteger(timeoutMs) ||
+			timeoutMs < 1_000 ||
+			timeoutMs > policy.validationMaxTimeoutMs
+		)
+			throw new Error(
+				"Review validation budget exceeds trusted runner ceiling.",
+			);
+		return { ...call, timeoutMs };
+	});
+	return plan;
+}
+
+function buildTestCommands(files: string[], cwd: string): TestExecutionPlan {
 	const ecosystem = detectProjectEcosystem(cwd);
 	const testFiles = files.filter(isTestFile);
 
@@ -348,11 +376,12 @@ export function recommendTestCommands(
 		}
 		case "python": {
 			const runnerCommands: RecommendedTestCommand[] = [];
-			if (testFiles.length > 0) {
+			// One whole-file call per entry keeps trusted file budgets meaningful.
+			for (const file of new Set(testFiles)) {
 				runnerCommands.push({
 					tool: "run_pytest",
-					args: testFiles,
-					command: command("run_pytest", testFiles),
+					args: [file],
+					command: command("run_pytest", [file]),
 					scope: "targeted",
 				});
 			}

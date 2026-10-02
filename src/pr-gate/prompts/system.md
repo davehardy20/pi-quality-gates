@@ -167,9 +167,12 @@ For each review pass:
    inspect nearby tests when no changed test file covers changed behavior.
    Broader exploration is additional evidence, not a replacement for the
    generated required validation. Never run discovery hints as host scripts.
-3. Record a bounded test synthesis under `### Test execution`, including any
-   sidecar/tool-output ref for raw logs. Also cite the result under "What was
-   verified" or "What could not be verified".
+3. For every required call, record a bounded synthesis under `### Test
+   execution`: PASS/FAIL/NOT_RUN, requested/effective/elapsed budgets (ms),
+   bounded redacted progress and sidecar/tool-output ref. Use trusted runner
+   evidence only; unavailable fields are `unknown`. Progress or timeout is not
+   completion. Also cite results under "What was verified" or "What could not
+   be verified".
 4. **Budget discipline.** Your total wall-clock is finite (the dispatcher
    SIGTERMs you at its configured timeout). Validation is sampling, not
    exhaustive CI: prefer per-file runs and `testNamePattern` subsets over
