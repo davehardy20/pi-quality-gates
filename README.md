@@ -122,6 +122,56 @@ bridge today).
 There is no separate reviewer config file; PR review uses built-in diff limits
 and the reviewer tool policy.
 
+#### Validation-budget foundations (not yet wired)
+
+This prerequisite slice adds trusted policy and monotonic-deadline APIs/tests
+only. Existing review execution is unchanged: fixed 300000-ms validation calls
+and the built-in 45-minute reviewer timeout. A separate consumer PR will connect
+these APIs; do not apply the following policy or retry the sandbox harness yet.
+
+The proposed user-global `~/.pi/agent/settings.json` block is:
+
+```json
+{
+  "qualityGates": {
+    "reviewValidation": {
+      "defaultTimeoutMs": 300000,
+      "repoOverrides": {
+        "/Users/dave/.pi": {
+          "test/apple-container-integrated-canary-harness.test.ts": 1200000
+        }
+      },
+      "reviewOverheadMs": 600000,
+      "maxReviewerTimeoutMs": 7200000
+    }
+  }
+}
+```
+
+`src/shared/review-validation-policy.ts` reads only the user-global file, never
+merged/project settings or repository policy. Missing file/block/fields default;
+null, unknown policy keys, invalid integers, nonregular/oversized settings and
+unsafe paths fail closed with content-free errors. The read is bounded to 1 MiB,
+same-UID owned, without symlink components and with descriptor identity checks.
+Unrelated settings are neither returned nor modified; never commit this file.
+
+Call budgets must be safe integer milliseconds, at least 1000 and at most the
+same file's authoritative `safeTools.validation.maxTimeoutMs` (default and
+immutable ceiling 1800000). Its default is also checked. Incompatible review
+budgets refuse, never clamp. Override keys are exact canonical absolute roots
+and normalized relative existing files, not globs, traversal or symlink aliases.
+All configured overrides are validated, including other repositories.
+
+The pure parent-budget API computes `max(existing reviewer floor, sum(each
+required call once) + overhead)`. Defaults are 300000 per call, 600000 overhead,
+and 7200000 parent maximum. One 20-minute and seven five-minute calls therefore
+require 65 minutes with default overhead, not a 30-minute parent cap. Parent
+maximum is independently bounded to 24 hours; excessive plans refuse without
+removing checks. `src/shared/review-deadline.ts` provides one monotonic deadline
+for preparation and successive attempts. Consumer integration, runtime reload,
+actual settings application and complete-harness retry remain separate steps.
+Progress/timeout alone never establishes completion or live readiness.
+
 ## Notes
 
 - `/pr-review` runs the configured reviewer bridge (default host child Pi; the
