@@ -376,11 +376,12 @@ function buildTestCommands(files: string[], cwd: string): TestExecutionPlan {
 		}
 		case "python": {
 			const runnerCommands: RecommendedTestCommand[] = [];
-			if (testFiles.length > 0) {
+			// One whole-file call per entry keeps trusted file budgets meaningful.
+			for (const file of new Set(testFiles)) {
 				runnerCommands.push({
 					tool: "run_pytest",
-					args: testFiles,
-					command: command("run_pytest", testFiles),
+					args: [file],
+					command: command("run_pytest", [file]),
 					scope: "targeted",
 				});
 			}
