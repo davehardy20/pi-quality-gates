@@ -23,6 +23,7 @@ import type {
 	ReviewerResult,
 } from "../src/pr-gate/reviewer.js";
 import type { ReviewReport } from "../src/shared/review-types.js";
+import { parseReviewValidationPolicy } from "../src/shared/review-validation-policy.js";
 
 const HEAD_SHA = "abc123def456";
 const BASE_REF = "origin/master";
@@ -169,6 +170,7 @@ function createTestDeps(
 	return {
 		getHeadSha: () => HEAD_SHA,
 		getBaseRef: () => BASE_REF,
+		loadReviewValidationPolicy: () => parseReviewValidationPolicy({}),
 		isWorktreeClean: () => true,
 		listChangedFiles: async () => ["src/a.ts", "src/b.ts"],
 		applyDiffFilters: async (files) => files,
@@ -195,6 +197,182 @@ function createInput(
 }
 
 describe("pr-review dispatch", () => {
+	it("relays eight complete calls with a 55-minute sum plus overhead and one entry deadline", async () => {
+		const cwd = fs.realpathSync(
+			fs.mkdtempSync(path.join(os.tmpdir(), "qg-dispatch-budget-")),
+		);
+		try {
+			const files = Array.from({ length: 6 }, (_, i) => `test/t${i}.test.ts`);
+			fs.mkdirSync(path.join(cwd, "test"));
+			for (const file of files) fs.writeFileSync(path.join(cwd, file), "");
+			fs.writeFileSync(path.join(cwd, "package.json"), "{}");
+			const policy = parseReviewValidationPolicy({
+				qualityGates: {
+					reviewValidation: {
+						repoOverrides: { [cwd]: { [files[0]]: 1_200_000 } },
+					},
+				},
+			});
+			for (const max of [7_200_000, 3_000_000]) {
+				let now = 0;
+				const reviewer = createMockReviewerExecution(makePassReport());
+				const dispatch = createPrReviewDispatch({
+					...createTestDeps(makePassReport()),
+					now: () => now,
+					listChangedFiles: async () => {
+						now = 100;
+						return files;
+					},
+					loadReviewValidationPolicy: () => ({
+						...policy,
+						maxReviewerTimeoutMs: max,
+					}),
+					reviewerExecution: reviewer,
+				});
+				const input = createInput(createMockPi());
+				input.ctx = { ...input.ctx, cwd };
+				const result = await dispatch.dispatch(input);
+				if (max === 3_000_000) {
+					expect(result.blocked).toBe(true);
+					expect(result.message).toMatch(/required 3900000.*3000000/);
+					expect(reviewer.runAttempt).not.toHaveBeenCalled();
+					expect(input.state.tokens.hasPass(HEAD_SHA)).toBe(false);
+				} else {
+					const attempt = vi.mocked(reviewer.runAttempt).mock.calls[0][0];
+					expect(attempt.config.timeoutMs).toBe(3_900_000);
+					expect(attempt.deadline?.remainingMs()).toBe(3_899_900);
+					expect(attempt.testPlan?.match(/timeoutMs/g)).toHaveLength(8);
+					expect(attempt.testPlan).toContain('"timeoutMs":1200000');
+				}
+			}
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("never grants an early orchestrator token when final checkout integrity fails", async () => {
+		const pi = createMockPi();
+		let instruction = "";
+		let ready!: () => void;
+		const requested = new Promise<void>((resolve) => {
+			ready = resolve;
+		});
+		pi.sendUserMessage = (message) => {
+			if (typeof message !== "string")
+				throw new Error("Expected text request.");
+			instruction = message;
+			ready();
+		};
+		const input = createInput(pi);
+		const bridge = createOrchestratorReviewerExecution(
+			{
+				getActiveTools: () => ["orchestrate"],
+				sendUserMessage: pi.sendUserMessage,
+			},
+			{
+				tokens: input.state.tokens,
+				deadlineAdapter: {
+					protocol: "review-deadline-v1",
+					register: () => ({ cancel: () => {}, dispose: () => {} }),
+				},
+			},
+		);
+		let checks = 0;
+		const dispatch = createPrReviewDispatch({
+			...createTestDeps(null),
+			isWorktreeClean: () => ++checks === 1,
+			reviewerExecution: bridge.reviewerExecution,
+		});
+		const pending = dispatch.dispatch(input);
+		await requested;
+		const requestId = instruction.match(
+			/PR_REVIEW_REQUEST_ID: (pr-review-[^\n]+)/,
+		)?.[1];
+		bridge.handleToolResult({
+			toolName: "orchestrate",
+			input: {
+				agentType: "verifier",
+				profile: "pr-review",
+				task: `Request ${requestId}`,
+			},
+			content: [
+				{
+					type: "text",
+					text: "## Review Report\nSTATUS: PASS\nCONFIDENCE: HIGH\n### Findings\nNone.\n### Test execution\n- **Status:** PASS\n- **Summary:** passed\n### Summary\npassed",
+				},
+			],
+		});
+		expect(input.state.tokens.hasPass(HEAD_SHA)).toBe(false);
+		expect((await pending).blocked).toBe(true);
+		expect(input.state.tokens.hasPass(HEAD_SHA)).toBe(false);
+		bridge.dispose();
+	});
+
+	it("refuses authorization when final integrity checks consume the deadline", async () => {
+		for (const report of [
+			makePassReport(),
+			{
+				...makeIssuesReport(),
+				testExecution: { status: "PASS" as const, summary: "passed" },
+				findings: makeIssuesReport().findings.map((finding) => ({
+					...finding,
+					severity: "NIT" as const,
+				})),
+			},
+		]) {
+			let now = 0;
+			let checks = 0;
+			const dispatch = createPrReviewDispatch({
+				...createTestDeps(report),
+				now: () => now,
+				isWorktreeClean: () => {
+					if (++checks === 2) now = PR_REVIEW_CONFIG.timeoutMs;
+					return true;
+				},
+			});
+			const input = createInput(createMockPi());
+			input.state.config.autoPassOnNitOnly = true;
+			const result = await dispatch.dispatch(input);
+			expect(result.blocked).toBe(true);
+			expect(result.message).toMatch(/deadline exhausted/);
+			expect(input.state.tokens.hasPass(HEAD_SHA)).toBe(false);
+		}
+	});
+
+	it("classifies timeout as incomplete validation rather than a parser failure", async () => {
+		const reviewer = createMockReviewerExecution(null);
+		vi.mocked(reviewer.runAttempt).mockResolvedValue({
+			report: null,
+			rawOutput: "Runner progress is incomplete.",
+			exitCode: 1,
+			timedOut: true,
+			stderr: "Timed out.",
+			command: "reviewer",
+		});
+		const dispatch = createPrReviewDispatch({
+			...createTestDeps(null),
+			reviewerExecution: reviewer,
+		});
+		const result = await dispatch.dispatch(createInput(createMockPi()));
+		expect(result.blocked).toBe(true);
+		expect(result.message).toContain("timed out");
+		expect(result.message).toContain("incomplete");
+		expect(result.message).not.toContain("could not parse");
+	});
+
+	it("refuses malformed global policy before reviewer dispatch", async () => {
+		const reviewer = createMockReviewerExecution(makePassReport());
+		const dispatch = createPrReviewDispatch({
+			...createTestDeps(makePassReport()),
+			loadReviewValidationPolicy: () => parseReviewValidationPolicy(null),
+			reviewerExecution: reviewer,
+		});
+		const input = createInput(createMockPi());
+		expect((await dispatch.dispatch(input)).blocked).toBe(true);
+		expect(reviewer.runAttempt).not.toHaveBeenCalled();
+		expect(input.state.tokens.hasPass(HEAD_SHA)).toBe(false);
+	});
+
 	it("stamps a PASS token and allows push when review passes", async () => {
 		const pi = createMockPi();
 		const dispatch = createPrReviewDispatch(createTestDeps(makePassReport()));
@@ -460,6 +638,11 @@ describe("pr-review dispatch", () => {
 			}
 			const dispatch = createPrReviewDispatch({
 				...createTestDeps(null),
+				// Isolate the relay guard from the independent parent-deadline cap.
+				loadReviewValidationPolicy: () => ({
+					...parseReviewValidationPolicy({}),
+					maxReviewerTimeoutMs: 86_400_000,
+				}),
 				listChangedFiles: async () => files,
 				reviewerExecution: bridge.reviewerExecution,
 			});

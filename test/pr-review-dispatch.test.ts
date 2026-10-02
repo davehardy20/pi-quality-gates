@@ -15,10 +15,20 @@ import type {
 import { describe, expect, it, vi } from "vitest";
 import { createPassTokenStore } from "../src/pr-gate/pass-token-store.js";
 import {
-	createPrReviewDispatch,
+	createPrReviewDispatch as buildDispatch,
 	defaultIsWorktreeClean,
 	resolveDefaultBaseRef,
 } from "../src/pr-gate/pr-review-dispatch.js";
+import { parseReviewValidationPolicy } from "../src/shared/review-validation-policy.js";
+
+function createPrReviewDispatch(
+	deps: Parameters<typeof buildDispatch>[0] = {},
+) {
+	return buildDispatch({
+		loadReviewValidationPolicy: () => parseReviewValidationPolicy({}),
+		...deps,
+	});
+}
 
 describe("createPrReviewDispatch", () => {
 	it("surfaces a sidecar path when the reviewer returns unparsable output", async () => {

@@ -1,11 +1,17 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+	createReviewDeadline,
+	type ReviewDeadline,
+} from "../shared/review-deadline.js";
 import { parseReviewReport } from "../shared/review-report.js";
 import { hasCriticalSecurityFinding } from "../shared/review-severity.js";
-import type { ReviewReport } from "../shared/review-types.js";
-import type { PassToken, PassTokenStore } from "./pass-token-store.js";
+import type { PassTokenStore } from "./pass-token-store.js";
 import { getPassBlockingTestExecutionReason } from "./pr-review-dispatch.js";
 import type { ReviewerExecution, ReviewerResult } from "./reviewer.js";
-import { createBoundedTextCapture } from "./reviewer.js";
+import {
+	createBoundedTextCapture,
+	reviewDeadlineExceeded,
+} from "./reviewer.js";
 
 interface TextContentLike {
 	type?: string;
@@ -23,10 +29,18 @@ interface PendingReview {
 	resolve: (result: ReviewerResult) => void;
 	timer: ReturnType<typeof setTimeout>;
 	command: string;
-	/** HEAD sha this review covers, for exact-HEAD PASS stamping. */
+	/** HEAD sha for correlation; dispatch alone authorizes PASS. */
 	headSha: string;
 	/** Whether this pending entry has already been resolved. */
 	resolved: boolean;
+	cleanup: () => boolean;
+}
+
+interface KnownReview {
+	headSha: string;
+	deadline: ReviewDeadline;
+	expired: boolean;
+	signal?: AbortSignal;
 }
 
 export interface OrchestratorReviewerExecutionBridge {
@@ -66,14 +80,28 @@ export interface OrchestratorReviewerDiagnostic {
 	detail: string;
 }
 
+export interface OrchestratorReviewDeadlineAdapter {
+	readonly protocol: "review-deadline-v1";
+	/** Trusted runtime must register request ownership before any dispatch.
+	 * Every spawn/fallback/retry must call beforeAttempt and use its remaining
+	 * budget and signal. Unregistered requests must refuse, never run unbounded.
+	 * cancel must synchronously revoke retries and terminate the owned child;
+	 * dispose releases registration only after cancellation/completion. */
+	register(request: {
+		requestId: string;
+		headSha: string;
+		deadline: ReviewDeadline;
+		signal: AbortSignal;
+		beforeAttempt: () => number;
+	}): { cancel: () => void; dispose: () => void };
+}
+
 export interface OrchestratorReviewerExecutionOptions {
-	/**
-	 * Optional token store used to stamp a PASS only after an orchestrator
-	 * verifier result is correlated to a known request and its exact HEAD.
-	 * Timed-out requests remain known so a late, explicitly correlated result
-	 * can still stamp the reviewed SHA without trusting the current HEAD.
-	 */
+	/** Compatibility only; the bridge never stamps. Dispatch owns authorization. */
 	tokens?: PassTokenStore;
+	/** Owner-injected runtime capability, never repository/user JSON. Missing or
+	 * incompatible support refuses before request allocation/dispatch. */
+	deadlineAdapter?: OrchestratorReviewDeadlineAdapter;
 	/**
 	 * Resolve the HEAD sha captured when runAttempt does not receive one.
 	 * This resolver is never used to stamp an uncorrelated result.
@@ -212,10 +240,9 @@ export function createOrchestratorReviewerExecution(
 	options: OrchestratorReviewerExecutionOptions = {},
 ): OrchestratorReviewerExecutionBridge {
 	const pending = new Map<string, PendingReview>();
-	// Keep request→HEAD correlation after timeout so late results can stamp the
-	// reviewed SHA. Bound the map to avoid unbounded session growth.
-	const knownRequestHeads = new Map<string, string>();
-	const tokens = options.tokens;
+	// Retain exact request→HEAD evidence after timeout, never late PASS authority.
+	// Bound the map to avoid unbounded session growth.
+	const knownRequestHeads = new Map<string, KnownReview>();
 	const resolveHeadSha = options.resolveHeadSha ?? (() => "");
 	let lastDiagnostic: OrchestratorReviewerDiagnostic | null = null;
 	let disposed = false;
@@ -226,35 +253,18 @@ export function createOrchestratorReviewerExecution(
 		lastDiagnostic = { ...d, at: Date.now() };
 	}
 
-	/**
-	 * Stamp a PASS token for the exact HEAD captured by a known review request.
-	 * A timed-out request can still stamp when its late result echoes the request
-	 * id; uncorrelated results never reach this helper.
-	 *
-	 * Safety invariants (mirroring decidePushGate / pr-review-dispatch):
-	 *  - Only a genuine PASS report without CRITICAL security findings stamps.
-	 *  - A PASS that omits ### Test execution or reports a non-PASS test
-	 *    status does NOT stamp (invariant: PASS requires test execution).
-	 */
-	function stampPassFromObservedReport(
-		headSha: string | null,
-		report: ReviewReport | null,
-		summary?: string,
-	): boolean {
-		if (!tokens) return false;
-		if (!headSha?.trim()) return false;
-		if (report?.status !== "PASS") return false;
-		if (hasCriticalSecurityFinding(report)) return false;
-		const testBlocker = getPassBlockingTestExecutionReason(report);
-		if (testBlocker) return false;
-		const token: PassToken = {
-			sha: headSha,
-			passedAt: Date.now(),
-			reportStatus: "PASS",
-			summary: summary ?? report.summary,
-		};
-		tokens.stampPass(token);
-		return tokens.hasPass(headSha);
+	function refuse(
+		reason: string,
+		headSha = "",
+		requestId: string | null = null,
+	): ReviewerResult {
+		recordDiagnostic({
+			requestId,
+			headSha: headSha || null,
+			kind: "error",
+			detail: reason,
+		});
+		return unavailableResult(reason);
 	}
 
 	return {
@@ -273,6 +283,7 @@ export function createOrchestratorReviewerExecution(
 			disposed = true;
 			for (const [requestId, review] of pending) {
 				clearTimeout(review.timer);
+				review.cleanup();
 				review.resolved = true;
 				review.resolve(unavailableResult(`${reason} Request ${requestId}.`));
 			}
@@ -323,19 +334,17 @@ export function createOrchestratorReviewerExecution(
 			) {
 				matchedRequestId = pending.keys().next().value ?? null;
 			}
-			const correlatedHeadSha = matchedRequestId
-				? (knownRequestHeads.get(matchedRequestId) ?? "")
-				: "";
+			const known = matchedRequestId
+				? knownRequestHeads.get(matchedRequestId)
+				: undefined;
+			const correlatedHeadSha = known?.headSha ?? "";
+			const expired = Boolean(
+				known &&
+					(known.expired ||
+						known.deadline.remainingMs() <= 0 ||
+						known.signal?.aborted),
+			);
 			const diagnosticHeadSha = correlatedHeadSha || resolveHeadSha();
-			const stamped =
-				matchedRequestId && (!event.isError || hasExplicitCorrelation)
-					? stampPassFromObservedReport(
-							correlatedHeadSha || null,
-							report,
-							report?.summary,
-						)
-					: false;
-
 			if (captured.overflowed) {
 				recordDiagnostic({
 					requestId: matchedRequestId,
@@ -349,14 +358,14 @@ export function createOrchestratorReviewerExecution(
 						? "report contains CRITICAL security finding(s)"
 						: null;
 					const testBlocker = getPassBlockingTestExecutionReason(report);
-					const blocker = criticalBlocker ?? testBlocker;
+					const blocker = expired
+						? "review deadline expired or review was cancelled"
+						: (criticalBlocker ?? testBlocker);
 					const detail = blocker
 						? `Parsed PASS for HEAD ${diagnosticHeadSha || "(unknown)"} but token NOT stamped: ${blocker}.`
 						: !matchedRequestId
 							? `Parsed PASS for HEAD ${diagnosticHeadSha || "(unknown)"} but token NOT stamped: result was not correlated to a known PR review request.`
-							: stamped
-								? `Parsed PASS (${report.confidence} confidence) for HEAD ${diagnosticHeadSha}; token stamped.`
-								: `Parsed PASS for HEAD ${diagnosticHeadSha || "(unknown)"} but token NOT stamped.`;
+							: `Parsed PASS for HEAD ${diagnosticHeadSha || "(unknown)"} but token NOT stamped: final authorization belongs to dispatch.`;
 					recordDiagnostic({
 						requestId: matchedRequestId,
 						headSha: diagnosticHeadSha || null,
@@ -400,6 +409,23 @@ export function createOrchestratorReviewerExecution(
 				clearTimeout(review.timer);
 				review.resolved = true;
 				pending.delete(matchedRequestId);
+				if (!review.cleanup()) {
+					review.resolve(
+						refuse(
+							"Trusted deadline adapter cleanup failed; PASS refused.",
+							review.headSha,
+							matchedRequestId,
+						),
+					);
+					return true;
+				}
+				if (expired && known) {
+					review.resolve({
+						...reviewDeadlineExceeded(known.deadline),
+						command: review.command,
+					});
+					return true;
+				}
 				const failed = Boolean(event.isError || captured.overflowed);
 				const stderr = failed
 					? rawOutput || "orchestrate pr-reviewer returned an error"
@@ -418,6 +444,12 @@ export function createOrchestratorReviewerExecution(
 		reviewerExecution: {
 			inspectRepositoryDirectly: true,
 			async runAttempt(input): Promise<ReviewerResult> {
+				const deadline =
+					input.deadline ?? createReviewDeadline(input.config.timeoutMs);
+				if (deadline.remainingMs() <= 0)
+					return reviewDeadlineExceeded(deadline);
+				if (input.signal?.aborted)
+					return unavailableResult("PR review cancelled before dispatch.");
 				if (disposed) {
 					return unavailableResult(
 						"PR review gate: reviewer bridge is disposed after session shutdown.",
@@ -447,6 +479,15 @@ export function createOrchestratorReviewerExecution(
 					return { ...unavailableResult(reason), testPlanBudgetExceeded: true };
 				}
 
+				const adapter = options.deadlineAdapter;
+				if (adapter?.protocol !== "review-deadline-v1") {
+					return refuse(
+						"PR review refused: trusted execution deadline/cancellation adapter unavailable. Use the host bridge; no orchestrator reviewer was dispatched.",
+						input.headSha,
+					);
+				}
+				if (deadline.remainingMs() <= 0)
+					return reviewDeadlineExceeded(deadline);
 				const requestId = createRequestId();
 				const command = `orchestrate agentType=verifier profile=pr-review requestId=${requestId}`;
 				const headSha = input.headSha || resolveHeadSha() || "";
@@ -470,26 +511,96 @@ export function createOrchestratorReviewerExecution(
 					const oldestRequestId = knownRequestHeads.keys().next().value;
 					if (oldestRequestId) knownRequestHeads.delete(oldestRequestId);
 				}
-				knownRequestHeads.set(requestId, headSha);
+				if (deadline.remainingMs() <= 0)
+					return reviewDeadlineExceeded(deadline);
+				const known: KnownReview = {
+					headSha,
+					deadline,
+					expired: false,
+					signal: input.signal,
+				};
+				const controller = new AbortController();
+				let registration: ReturnType<
+					OrchestratorReviewDeadlineAdapter["register"]
+				>;
+				try {
+					registration = adapter.register({
+						requestId,
+						headSha,
+						deadline,
+						signal: controller.signal,
+						beforeAttempt: () => {
+							const remaining = deadline.remainingMs();
+							if (remaining <= 0 || controller.signal.aborted)
+								throw new Error(
+									"Orchestrator review deadline exhausted/cancelled.",
+								);
+							return remaining;
+						},
+					});
+					if (
+						typeof registration.cancel !== "function" ||
+						typeof registration.dispose !== "function"
+					)
+						throw new Error("Unsupported adapter.");
+					if (deadline.remainingMs() <= 0 || input.signal?.aborted) {
+						controller.abort();
+						try {
+							registration.cancel();
+						} finally {
+							registration.dispose();
+						}
+						return deadline.remainingMs() <= 0
+							? reviewDeadlineExceeded(deadline)
+							: unavailableResult("PR review cancelled before dispatch.");
+					}
+				} catch {
+					controller.abort();
+					return refuse(
+						"PR review refused: invalid trusted deadline adapter; no dispatch.",
+						headSha,
+						requestId,
+					);
+				}
+				known.signal = controller.signal;
+				knownRequestHeads.set(requestId, known);
 
 				return new Promise<ReviewerResult>((resolve) => {
-					const timer = setTimeout(() => {
+					const cleanup = () => {
+						controller.abort();
+						let ok = true;
+						try {
+							registration.cancel();
+						} catch {
+							ok = false;
+						}
+						try {
+							registration.dispose();
+						} catch {
+							ok = false;
+						}
+						input.signal?.removeEventListener("abort", onAbort);
+						return ok;
+					};
+					const onAbort = () => {
+						known.expired = true;
+						clearTimeout(timer);
 						pending.delete(requestId);
+						cleanup();
+						resolve(unavailableResult("PR review cancelled during dispatch."));
+					};
+					const timer = setTimeout(() => {
+						known.expired = true;
+						pending.delete(requestId);
+						cleanup();
 						recordDiagnostic({
 							requestId,
 							headSha: headSha || null,
 							kind: "timeout",
 							detail: `Timed out waiting for orchestrate pr-reviewer result for ${requestId} (HEAD ${headSha || "(unknown)"}).`,
 						});
-						resolve({
-							report: null,
-							rawOutput: `Timed out waiting for orchestrate pr-reviewer result for ${requestId}.`,
-							exitCode: 1,
-							timedOut: true,
-							stderr: `Timed out waiting for orchestrate pr-reviewer result for ${requestId}.`,
-							command,
-						});
-					}, input.config.timeoutMs);
+						resolve({ ...reviewDeadlineExceeded(deadline), command });
+					}, deadline.remainingMs());
 
 					pending.set(requestId, {
 						resolve,
@@ -497,8 +608,28 @@ export function createOrchestratorReviewerExecution(
 						command,
 						headSha,
 						resolved: false,
+						cleanup,
 					});
-					pi.sendUserMessage(instruction, { deliverAs: "followUp" });
+					input.signal?.addEventListener("abort", onAbort, { once: true });
+					if (input.signal?.aborted) onAbort();
+					else {
+						try {
+							pi.sendUserMessage(instruction, { deliverAs: "followUp" });
+						} catch {
+							known.expired = true;
+							clearTimeout(timer);
+							pending.delete(requestId);
+							cleanup();
+							resolve({
+								...refuse(
+									"PR review dispatch failed; PASS refused.",
+									headSha,
+									requestId,
+								),
+								command,
+							});
+						}
+					}
 				});
 			},
 		},
