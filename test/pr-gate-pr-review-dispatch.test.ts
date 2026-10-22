@@ -721,6 +721,7 @@ describe("pr-review dispatch", () => {
 	it("fails closed when no reviewer execution bridge is configured", async () => {
 		const pi = createMockPi();
 		const dispatch = createPrReviewDispatch({
+			loadReviewValidationPolicy: () => parseReviewValidationPolicy({}),
 			getHeadSha: () => HEAD_SHA,
 			getBaseRef: () => BASE_REF,
 			isWorktreeClean: () => true,

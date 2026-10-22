@@ -4,6 +4,7 @@ import {
 	loadReviewValidationPolicy,
 	type ReviewValidationPolicy,
 } from "../shared/review-validation-policy.js";
+import { discoverWorkspaceValidationProjects } from "./workspace-validation.js";
 
 /**
  * Supported project ecosystems for review-time validation planning.
@@ -28,6 +29,10 @@ export interface RecommendedTestCommand {
 	args: string[];
 	command: string;
 	scope: "targeted" | "broad" | "format-lint" | "typecheck";
+	/** Canonical package directory for workspace-local test execution */
+	cwd?: string;
+	/** TypeScript configuration relative to the repository root */
+	project?: string;
 	/** Explicit initial budget; never rely on the safe runner's 60s default. */
 	timeoutMs?: number;
 	/**
@@ -101,6 +106,15 @@ function readPackageJson(cwd: string): PackageJsonScripts | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+function hasTestRunnerSettings(cwd: string): boolean {
+	const pkg = readPackageJson(cwd);
+	return Boolean(
+		pkg?.scripts?.test ||
+			pkg?.dependencies?.vitest ||
+			pkg?.devDependencies?.vitest,
+	);
 }
 
 /**
@@ -261,6 +275,8 @@ function makePlan(
 
 function formatRunnerCommand(cmd: RecommendedTestCommand): string {
 	const params = {
+		...(cmd.cwd ? { cwd: cmd.cwd } : {}),
+		...(cmd.project ? { project: cmd.project } : {}),
 		...(cmd.args.length > 0 ? { paths: cmd.args } : {}),
 		...(cmd.import ? { import: cmd.import } : {}),
 		timeoutMs: cmd.timeoutMs ?? REVIEW_VALIDATION_TIMEOUT_MS,
@@ -286,9 +302,21 @@ export function recommendTestCommands(
 		? policy.repoOverrides[fs.realpathSync(cwd)]
 		: undefined;
 	plan.runnerCommands = plan.runnerCommands.map((call) => {
+		// Trusted budgets are keyed by repository-relative paths, even when
+		// the runner's cwd and test paths are workspace-local.
+		const budgetFile =
+			call.cwd && call.args.length === 1
+				? path
+						.relative(
+							fs.realpathSync(cwd),
+							path.resolve(call.cwd, call.args[0]),
+						)
+						.split(path.sep)
+						.join("/")
+				: call.args[0];
 		const timeoutMs =
 			call.scope === "targeted" && call.args.length === 1
-				? (overrides?.[call.args[0]] ?? policy.defaultTimeoutMs)
+				? (overrides?.[budgetFile] ?? policy.defaultTimeoutMs)
 				: policy.defaultTimeoutMs;
 		if (
 			!Number.isSafeInteger(timeoutMs) ||
@@ -310,9 +338,22 @@ function buildTestCommands(files: string[], cwd: string): TestExecutionPlan {
 	switch (ecosystem) {
 		case "typescript": {
 			const changedFiles = existingChangedFiles(files, cwd);
-			const framework = detectTypeScriptTestFramework(cwd);
-			const changedTests = changedFiles.filter((file) =>
-				isJavaScriptTestEntry(file, framework),
+			const workspace = discoverWorkspaceValidationProjects(cwd);
+			const packageDirs = [...workspace.packages].sort(
+				(a, b) => b.length - a.length,
+			);
+			const changedContexts = changedFiles.map((file) => {
+				const dir = packageDirs.find((dir) => file.startsWith(`${dir}/`));
+				const ownerCwd = dir ? path.join(workspace.root, dir) : workspace.root;
+				const runnerDir =
+					dir && hasTestRunnerSettings(ownerCwd) ? dir : undefined;
+				// Metadata-only packages still use the root-owned runner and loader.
+				const packageCwd = runnerDir ? ownerCwd : workspace.root;
+				const framework = detectTypeScriptTestFramework(packageCwd);
+				return { file, dir, runnerDir, packageCwd, framework };
+			});
+			const changedTests = changedContexts.filter((test) =>
+				isJavaScriptTestEntry(test.file, test.framework),
 			);
 			const lintFiles = changedFiles.filter((file) => {
 				const extension = path.extname(file).toLowerCase();
@@ -322,35 +363,62 @@ function buildTestCommands(files: string[], cwd: string): TestExecutionPlan {
 					extension === ".jsonc"
 				);
 			});
-			const testRunner: SafeRunnerTool =
-				framework === "node-test" ? "run_node_test" : "run_vitest";
-			// Explicit imports belong to the Node process, regardless of test
-			// suffix. Only infer a dependency-based runtime when TS tests changed;
-			// all per-file calls then inherit that same project runtime.
-			const hasTsTests = changedTests.some((file) =>
-				/\.(?:ts|tsx|mts|cts)$/.test(file),
-			);
-			const loader =
-				framework === "node-test"
-					? detectNodeTestLoader(cwd, hasTsTests)
-					: undefined;
 			const runnerCommands: RecommendedTestCommand[] = [];
-			for (const file of changedTests) {
+			for (const test of changedTests) {
+				const testRunner: SafeRunnerTool =
+					test.framework === "node-test" ? "run_node_test" : "run_vitest";
+				// Runtime inference follows the selected runner's manifest; imports
+				// still apply to JS-only tests with transitive loader dependencies.
+				const hasTsTests = changedTests.some(
+					(other) =>
+						other.packageCwd === test.packageCwd &&
+						/\.(?:ts|tsx|mts|cts)$/.test(other.file),
+				);
+				const loader =
+					test.framework === "node-test"
+						? detectNodeTestLoader(test.packageCwd, hasTsTests)
+						: undefined;
+				const file = test.runnerDir
+					? path
+							.relative(test.packageCwd, path.join(workspace.root, test.file))
+							.split(path.sep)
+							.join("/")
+					: test.file;
 				const cmdArgs = loader ? ["--import", loader, file] : [file];
 				runnerCommands.push({
 					tool: testRunner,
 					args: [file],
-					command: command(testRunner, cmdArgs),
+					command: command(testRunner, [
+						...(test.runnerDir ? ["--cwd", test.packageCwd] : []),
+						...cmdArgs,
+					]),
 					scope: "targeted",
+					...(test.runnerDir ? { cwd: test.packageCwd } : {}),
 					...(loader ? { import: loader } : {}),
 				});
 			}
-			runnerCommands.push({
-				tool: "run_typecheck",
-				args: [],
-				command: command("run_typecheck"),
-				scope: "typecheck",
-			});
+			if (
+				!workspace.projects.includes("tsconfig.json") &&
+				changedContexts.some(
+					(item) =>
+						/\.(?:ts|tsx|mts|cts)$/.test(item.file) &&
+						!workspace.projects.includes(`${item.dir ?? ""}/tsconfig.json`),
+				)
+			) {
+				// A missing owning project must still fail validation; checking an
+				// unrelated workspace alone is not adequate typecheck coverage.
+				workspace.projects.unshift("tsconfig.json");
+			}
+			for (const project of workspace.projects) {
+				const isRoot = project === "tsconfig.json";
+				runnerCommands.push({
+					tool: "run_typecheck",
+					args: [],
+					command: command("run_typecheck", isRoot ? [] : ["-p", project]),
+					scope: "typecheck",
+					...(!isRoot ? { project } : {}),
+				});
+			}
 			if (lintFiles.length > 0) {
 				runnerCommands.push({
 					tool: "run_biome",
@@ -359,8 +427,20 @@ function buildTestCommands(files: string[], cwd: string): TestExecutionPlan {
 					scope: "format-lint",
 				});
 			}
-			const discovery =
+			const framework = detectTypeScriptTestFramework(cwd);
+			const loader =
 				framework === "node-test"
+					? detectNodeTestLoader(
+							cwd,
+							changedTests.some(
+								(test) =>
+									!test.runnerDir && /\.(?:ts|tsx|mts|cts)$/.test(test.file),
+							),
+						)
+					: undefined;
+			const discovery = workspace.packages.length
+				? "Workspace test discovery uses explicit package settings or root-owned settings; preserve the selected runner's cwd and test paths"
+				: framework === "node-test"
 					? loader
 						? `node --test --import ${loader} -- preserves the project runtime on each test call`
 						: "node --test -- discovers *.test.* / node:test files"
