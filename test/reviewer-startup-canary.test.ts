@@ -401,6 +401,68 @@ describe("startup-only canary seam (fabricated SDK, not startup acceptance)", ()
 		}
 	});
 
+	const startupResults = ["complete", "denied"] as const;
+	it.each(startupResults)("awaits delayed cleanup after %s", async (state) => {
+		const f = fixture();
+		if (state === "denied") f.session.model = "ambient";
+		let finishCleanup = () => {};
+		let markCleanupStarted = () => {};
+		const cleanup = new Promise<void>((resolve) => {
+			finishCleanup = resolve;
+		});
+		const started = new Promise<void>((resolve) => {
+			markCleanupStarted = resolve;
+		});
+		f.session.dispose.mockImplementation(() => {
+			markCleanupStarted();
+			return cleanup;
+		});
+		const settled = vi.fn();
+		const result = f.run();
+		void result.then(settled);
+		try {
+			await started;
+			await Promise.resolve();
+			expect(settled).not.toHaveBeenCalled();
+		} finally {
+			finishCleanup();
+		}
+		expect(await result).toEqual(
+			state === "complete"
+				? { status: "startup-completed" }
+				: denied("startup"),
+		);
+		expect(f.session.dispose).toHaveBeenCalledOnce();
+	});
+
+	it("redacts asynchronous cleanup rejection", async () => {
+		const f = fixture();
+		f.session.dispose.mockImplementation(async () => {
+			await Promise.resolve();
+			throw new Error("fixture-private-cleanup");
+		});
+		const result = await f.run();
+		expect(result).toEqual(denied("cleanup"));
+		expect(JSON.stringify(result)).not.toContain("fixture-private-cleanup");
+		expect(f.session.dispose).toHaveBeenCalledOnce();
+	});
+
+	const cleanupChanges = ["expired", "cancelled", "revoked"] as const;
+	it.each(cleanupChanges)("checks %s after async cleanup", async (change) => {
+		const f = fixture();
+		const controller = new AbortController();
+		f.session.dispose.mockImplementation(async () => {
+			await Promise.resolve();
+			if (change === "expired") f.setNow(f.binding.expiresAt);
+			if (change === "cancelled") controller.abort();
+			if (change === "revoked") f.revoke();
+		});
+		expect(await f.run(controller.signal)).toEqual(
+			denied(change === "revoked" ? "authority" : change),
+		);
+		expect(f.session.dispose).toHaveBeenCalledOnce();
+	});
+
 	it("rejects a throwing clock before import with a redacted denial", async () => {
 		const f = fixture();
 		f.deps.now.mockImplementation(() => {

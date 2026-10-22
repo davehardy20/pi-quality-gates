@@ -185,9 +185,19 @@ nullish in-memory handles could re-enable ambient SDK defaults. Ten regression
 cases (null/undefined credentials, settings, session, model and extension runtime)
 were confirmed RED (`0b32a998-f680-4144-81d7-72bb0d32b765`), then fixed with
 pre-factory handle validation. They assert no downstream factory/lifecycle runs.
-Current **80/80 PASS** (`7aaf4b19-65c7-45d1-8f09-ffbce6c8e780`), no-emit typecheck
+Nullish-handle checkpoint **80/80 PASS** (`7aaf4b19-65c7-45d1-8f09-ffbce6c8e780`), no-emit typecheck
 PASS and two-file Biome PASS (`c8ff342f-60d6-488e-9ae7-6ee80376c3bc`). These tests
-import no actual SDK. Fresh exact-HEAD review is still required after the fix.
+import no actual SDK. Fresh exact-HEAD review is still required after each fix.
+
+Greptile subsequently identified that an injected async `dispose()` could finish
+or reject after the canary returned. Two delayed-cleanup regressions were confirmed
+RED (`9c7da138-f15a-4f73-b4eb-7149b82f276e`). Disposal now accepts `void | Promise<void>`
+and is awaited inside the cleanup catch, before final acceptance. Six cases cover
+waiting on successful/denied startup, rejected cleanup, and expiry/cancellation/
+revocation during cleanup. Current **86/86 PASS**
+(`887e8244-a96e-4c9b-ad6e-1f48582dc4a8`), typecheck PASS, two-file Biome PASS
+(`61515b97-71a6-45c1-b9f9-10e53747d722`). A hung cleanup still requires the separately
+admitted coordinator's hard timeout; this library does not supply it.
 
 No broad suite, build emission, real startup canary, reload or activation was run.
 The owner-requested native code review is separate from the source-only audit

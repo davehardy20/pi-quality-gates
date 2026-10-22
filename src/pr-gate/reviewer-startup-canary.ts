@@ -48,7 +48,7 @@ export interface CanarySession {
 	readonly model: unknown;
 	getActiveToolNames(): string[];
 	bindExtensions(bindings: { mode: "json" }): Promise<void>;
-	dispose(): void;
+	dispose(): void | Promise<void>;
 }
 
 /** Structural port, not an import of the checkout's incompatible 0.74 SDK. */
@@ -373,7 +373,7 @@ export function createReviewerStartupCanary(deps: ReviewerCanaryDeps) {
 		} finally {
 			if (session) {
 				try {
-					session.dispose();
+					await session.dispose();
 				} catch {
 					result = { status: "denied", reason: "cleanup" };
 				}
