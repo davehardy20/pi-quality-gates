@@ -50,11 +50,22 @@ function record(value: unknown): Record<string, unknown> {
 	return value as Record<string, unknown>;
 }
 
+function packageManifest(
+	root: string,
+	relative: string,
+): Record<string, unknown> | undefined {
+	const manifest = metadataFile(root, relative);
+	if (!manifest) return undefined;
+	try {
+		return record(JSON.parse(fs.readFileSync(manifest, "utf8")));
+	} catch {
+		// JSON parse errors can contain manifest content; never expose it.
+		throw new Error("Invalid PR review workspace package manifest.");
+	}
+}
+
 function workspacePatterns(root: string): Minimatch[] {
-	const manifest = metadataFile(root, "package.json");
-	const pkg = manifest
-		? record(JSON.parse(fs.readFileSync(manifest, "utf8")))
-		: {};
+	const pkg = packageManifest(root, "package.json") ?? {};
 	let patterns = pkg.workspaces;
 	if (patterns !== undefined && !Array.isArray(patterns)) {
 		patterns = record(patterns).packages;
@@ -122,7 +133,7 @@ export function discoverWorkspaceValidationProjects(
 			relative &&
 			positive.some((pattern) => pattern.match(relative)) &&
 			negative.every((pattern) => pattern.match(relative)) &&
-			metadataFile(root, `${relative}/package.json`)
+			packageManifest(root, `${relative}/package.json`)
 		) {
 			packages.push(relative);
 		}

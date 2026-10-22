@@ -368,6 +368,43 @@ describe("workspace-aware review validation", () => {
 		expect(() => plan(root, [])).toThrow();
 	});
 
+	const invalidManifests = [
+		'{"private-workspace-value":',
+		"null",
+		"[]",
+		'"text"',
+		"42",
+		"true",
+	];
+	it.each(invalidManifests)("rejects workspace manifest %s", (content) => {
+		const root = fixture();
+		put(root, "pnpm-workspace.yaml", "packages: [host]");
+		nodePackage(root, "host");
+		put(root, "host/package.json", content);
+		const files = ["host/test/test-entry.mjs", "host/test/a.test.ts"];
+		for (const file of files) put(root, file);
+		const error = new Error("Invalid PR review workspace package manifest.");
+		expect(() => plan(root, files)).toThrow(error);
+		expect(() => plan(root, [])).toThrow(error);
+	});
+
+	it("keeps Node-only basenames for valid workspace manifests", () => {
+		const root = fixture();
+		put(root, "pnpm-workspace.yaml", "packages: [host]");
+		nodePackage(root, "host", "tsx");
+		const file = "host/test/test-entry.mjs";
+		put(root, file);
+		expect(renderedCalls(root, [file])[0]).toEqual({
+			tool: "run_node_test",
+			params: {
+				cwd: path.join(root, "host"),
+				paths: ["test/test-entry.mjs"],
+				import: "tsx",
+				timeoutMs: 300_000,
+			},
+		});
+	});
+
 	it.each(["package.json", "tsconfig.json"])("rejects escaped %s", (file) => {
 		const root = fixture();
 		const outside = fixture();
