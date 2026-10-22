@@ -196,7 +196,13 @@ forbidden tool appears in `PR_REVIEW_CONFIG.tools`.
 
 **Ecosystem detection** (`detectProjectEcosystem`): checks for `package.json`, `Cargo.toml`, `pyproject.toml`/`setup.py`, `go.mod`.
 
-**TypeScript framework detection** (`detectTypeScriptTestFramework`): picks `run_vitest` when Vitest is a declared dep/devDep, else `run_node_test` when `scripts.test` runs `node --test`; defaults to Vitest (no regression for Vitest projects).
+**TypeScript framework detection** (`detectTypeScriptTestFramework`): picks `run_vitest` when Vitest is a declared dep/devDep, else `run_node_test` when `scripts.test` runs `node --test`; defaults to Vitest. Detection is per owning declared workspace package, not the delegating root script. Node imports and inferred `tsx` are package-local, including JS-only tests with explicit imports.
+
+**Workspace discovery** (`workspace-validation.ts`): statically reads `package.json` workspace arrays/`packages` objects and pnpm YAML package lists (pnpm lists take precedence). Supports literal paths, simple globs including `**`, and `!` exclusions. Executable config and repository package scripts are never evaluated. Each test call carries canonical package `cwd` plus package-relative `paths`; trusted timeout overrides remain keyed by the original repository-relative path. Root test calls and lint paths remain repository-relative.
+
+Every discovered root/workspace `tsconfig.json` gets a required `run_typecheck` call; workspace configurations use the runner's repository-relative `project` argument. Unchanged package projects remain included. If no project exists, the root typecheck remains mandatory; a changed TS file without an owning workspace project and without a root project also retains that failing root check. Unrelated workspace checks cannot replace missing coverage.
+
+Discovery rejects traversal, external metadata targets, symlinked workspace directories, malformed metadata, brace/extglob patterns and repeated negation. Bounds are 256 KiB per metadata file, 64 patterns of at most 256 characters, 2,000 visited directories and depth 16; `node_modules`/`.git` are excluded. Incomplete discovery fails closed, never silently drops required checks. This is planning/path validation, not subprocess isolation or owner-admitted execution enforcement.
 
 **Recommended commands per ecosystem:**
 
@@ -416,6 +422,7 @@ return even when the HEAD already has a token.
 | `src/pr-gate/auto-review-trigger.ts` | Linter-clean → auto-review bridge |
 | `src/pr-gate/reviewer-skip.ts` | `.pi/reviewer.skip` parser |
 | `src/pr-gate/test-execution.ts` | Ecosystem detection and test command recommendation |
+| `src/pr-gate/workspace-validation.ts` | Bounded static workspace and TypeScript project discovery |
 | `src/pr-gate/review-coordinator.ts` | Shared review-start coordinator (`/pr-review` + `pr_review`) |
 | `src/pr-gate/pr-review-tool.ts` | Agent-callable `pr_review` custom tool definition |
 | `src/pr-gate/prompts/system.md` | Reviewer system prompt |

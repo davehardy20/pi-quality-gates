@@ -122,6 +122,18 @@ adapter is available (no container is involved on either bridge).
 There is no separate reviewer config file; PR review uses built-in diff limits
 and the reviewer tool policy.
 
+#### Workspace validation
+
+Review planning reads declared `package.json` workspaces (arrays or
+`{ "packages": [...] }`) and `pnpm-workspace.yaml` package globs. Tests use their
+owning package's runner, loader, working directory and package-relative paths;
+root delegation such as `pnpm -r test` does not force Vitest on Node suites.
+Typechecking includes every discovered root/workspace `tsconfig.json`, including
+unchanged packages. Missing project coverage remains a required failing check,
+not permission to skip validation. Lint paths and trusted timeout keys remain
+repository-relative. No package scripts or executable configuration are run
+for discovery. See [discovery limits](openwiki/pr-gate.md#test-execution-plan).
+
 #### Trusted validation budgets
 
 Only user-global `~/.pi/agent/settings.json` is read for validation policy;
