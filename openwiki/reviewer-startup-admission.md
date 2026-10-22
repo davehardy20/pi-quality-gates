@@ -8,6 +8,11 @@ That request does not establish safe-startup acceptance or authorize integration
 Canonical issue: `pi-quality-gates-68e0`; parent `pi-quality-gates-7823`,
 `pl-a4d5` revision 3. Execution remains single-foreground.
 
+This page records the PR #61 checkpoint. The subsequent unregistered adapter,
+import fence and process candidate is documented in
+[the cold-process checkpoint](reviewer-startup-cold-process.md).
+Neither checkpoint establishes independent startup acceptance.
+
 Dave requested all four stages. This checkpoint advances the source audit,
 adds a local startup-only seam and validates fabricated fixtures. It does not
 claim a complete transitive-import audit, production bootstrap repair,
@@ -25,7 +30,7 @@ independent acceptance, real startup canary or Gondolin review.
 Earlier inert checkpoint `b8488eb22c673d0a8b55722d7d54f20951b5e118` remains on
 `reviewer-startup-admission-68e0`. Its prospective **0.74.1** schema is not a
 1.3.0 adapter or execution lease. It was not overwritten, imported or promoted.
-This new branch starts from current default HEAD
+The original checkpoint branch started from default HEAD
 `c6a1cde4da738a8b251708e3c8e26f3e39ab5814`.
 
 ## Installation identity, not loaded-source attestation
@@ -95,8 +100,10 @@ over-approximation diagnostic, **not** an authoritative resolver, complete
 manifest or source review of those 2,175 files; no acceptance uses its digest.
 A subsequent TypeScript-AST inventory resolved ESM static imports/re-exports and
 literal CJS requires across **1,338 files / 30 packages**, with zero parse errors
-or missing static edges. Its 43 non-JS assets were JSON; 23 dynamic-import sites
-remain to classify. Traversal of literal requires is conservative, including
+or missing static edges. Its 43 non-JS assets were JSON; 23 native dynamic-import
+sites were recorded. Their subsequent routing classification is documented in
+[the cold-process checkpoint](reviewer-startup-cold-process.md); complete closure
+acceptance remains outstanding. Traversal of literal requires is conservative, including
 nested calls: neither that count nor a function wrapper proves startup reachability.
 No target module was evaluated by either source inventory.
 
@@ -132,7 +139,8 @@ The returned `startup-completed` value is **only a startup result**. Mocked SDKs
 can produce it in unit tests. It is not an authenticated receipt, review report,
 PASS token, grant, evidence of OS isolation, or permission to release 68e0.
 The coordinator must own a real hard timeout: cooperative checks cannot forcibly
-terminate an unresponsive import/factory. No such coordinator is shipped here.
+terminate an unresponsive import/factory. This checkpoint shipped no coordinator;
+the subsequent cold-process candidate is not yet an independently accepted envelope.
 
 ## Separately scoped real canary: proposal, not execution admission
 
