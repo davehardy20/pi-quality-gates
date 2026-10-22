@@ -2,7 +2,9 @@
 
 # 68e0: Pi 1.3.0 startup audit and canary checkpoint
 
-Status: **NOT READY for native review, activation or publication.**
+Status: **Inert checkpoint only; real startup canary and activation remain held.**
+Dave separately requested native code review and PR publication of this checkpoint.
+That request does not establish safe-startup acceptance or authorize integration.
 Canonical issue: `pi-quality-gates-68e0`; parent `pi-quality-gates-7823`,
 `pl-a4d5` revision 3. Execution remains single-foreground.
 
@@ -91,6 +93,13 @@ unresolved candidates (including false positives and package-import aliases)
 and 31 possible nonliteral edges. It did not execute the target. This is an
 over-approximation diagnostic, **not** an authoritative resolver, complete
 manifest or source review of those 2,175 files; no acceptance uses its digest.
+A subsequent TypeScript-AST inventory resolved ESM static imports/re-exports and
+literal CJS requires across **1,338 files / 30 packages**, with zero parse errors
+or missing static edges. Its 43 non-JS assets were JSON; 23 dynamic-import sites
+remain to classify. Traversal of literal requires is conservative, including
+nested calls: neither that count nor a function wrapper proves startup reachability.
+No target module was evaluated by either source inventory.
+
 The unresolved closure is a real remaining stage-one task, not a permission
 question that an owner inventory or passing fixture tests can settle.
 
@@ -156,8 +165,9 @@ Proposed acceptance scope, once those prerequisites are independently met:
 - Cleanup removes only the exact created owned root, after confirmed exit;
   no prefix sweep, shared kev-ask cleanup, global reset or live state cleanup.
 - Independently accept the complete result against the exact source/closure
-  and limits before any native review. Reject changed bytes or unsupported
-  ABI; no fallback. OS containment, if required by the threat model, needs a
+  and limits before admitting this bootstrap for native review. Separately
+  requested code review of the inert checkpoint is not that acceptance.
+  Reject changed bytes or unsupported ABI; no fallback. OS containment needs a
   separately admitted mechanism; this trusted-host design does not supply it.
 
 ## Validation and closeout
@@ -166,20 +176,30 @@ Test-first stub: **55 expected failures, 8 passes** (63 initial tests), sidecar
 `90ae0edd-9775-456a-a4fe-07ec5704fa89`. Subsequent cases cover expiry through
 teardown and acceptance-callback expiry before import (that regression was
 confirmed red separately, sidecar `63d2bbdb-6aa1-4418-ad3b-37a7d2645625`).
-Final targeted **70/70 PASS** (sidecar
+Initial checkpoint **70/70 PASS** (sidecar
 `f1d286c8-61ee-4c40-bc7b-9e524fac41f9`), no-emit typecheck PASS and two-file
-Biome PASS (`4cae74af-a47d-4eb8-94ef-8da48218550d`). No actual SDK was imported.
+Biome PASS (`4cae74af-a47d-4eb8-94ef-8da48218550d`).
 
-No broad suite, build emission, Pi import, new agent/session, native review,
-model/backend call, live canary, reload or activation was run. Foreground source
-review only; independent review is NOT RUN. Default host/orchestrator reviewers
-and their publication requirements are unchanged and remain held for this task.
-Local checkpoint/fixture validation does not make the production path ready.
+Dave then explicitly requested `pr_review` for `d954fb60`. It reported a warning:
+nullish in-memory handles could re-enable ambient SDK defaults. Ten regression
+cases (null/undefined credentials, settings, session, model and extension runtime)
+were confirmed RED (`0b32a998-f680-4144-81d7-72bb0d32b765`), then fixed with
+pre-factory handle validation. They assert no downstream factory/lifecycle runs.
+Current **80/80 PASS** (`7aaf4b19-65c7-45d1-8f09-ffbce6c8e780`), no-emit typecheck
+PASS and two-file Biome PASS (`c8ff342f-60d6-488e-9ae7-6ee80376c3bc`). These tests
+import no actual SDK. Fresh exact-HEAD review is still required after the fix.
+
+No broad suite, build emission, real startup canary, reload or activation was run.
+The owner-requested native code review is separate from the source-only audit
+and fabricated tests; its startup effects were not independently attested.
+Default host/orchestrator bridge implementations and publication gates are
+unchanged. Local fixture validation does not make the production path ready.
 
 Eventual PR-first closeout still requires exact-HEAD native PASS with genuine
 required validation, budget measurement, authorized push/PR, required CI/review
-and applicable sensitive-path acceptance. No publication follows from this
-checkpoint; unmerged/deferred work remains non-success for the parent plan.
+and applicable sensitive-path acceptance. Publication now has an explicit owner
+request but still requires that PASS; unmerged/deferred work and unresolved
+startup acceptance remain non-success for the parent plan.
 
 See [PR Gate](pr-gate.md), [Testing](testing.md), and local historical proposal
 `.seeds/drafts/pl-a4d5-startup-bootstrap-proposal.md` (its earlier installation

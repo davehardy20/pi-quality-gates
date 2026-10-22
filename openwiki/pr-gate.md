@@ -122,9 +122,10 @@ Tokens are stored in-memory via `PassTokenStore` (`src/pr-gate/pass-token-store.
 The 1.3.0 [startup audit and canary checkpoint](reviewer-startup-admission.md)
 records CLI pre-tool effects and a local, unregistered startup-only harness.
 Its injected SDK fixtures are not real startup acceptance. No accepted cold
-loader is shipped and neither reviewer bridge imports the harness; native
-review/canary/publication for this held scope remain blocked. Ordinary tool
-allowlists and `--no-session` do not establish safe startup.
+loader is shipped and neither reviewer bridge imports the harness; the real
+canary and activation remain held. Code review/publication of this inert
+checkpoint require separate owner authorization and normal PR gates. Ordinary
+tool allowlists and `--no-session` do not establish safe startup.
 
 ## Reviewer engine
 

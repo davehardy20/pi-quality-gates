@@ -191,6 +191,12 @@ function snapshotBinding(input: unknown, id: string): ReviewerCanaryBinding {
 	return Object.freeze(record) as unknown as ReviewerCanaryBinding;
 }
 
+function requireStartupHandle(value: unknown): unknown {
+	// Nullish options can re-enable ambient SDK defaults downstream.
+	if (value === null || value === undefined) throw new Refusal("startup");
+	return value;
+}
+
 function closedResources(runtime: unknown): CanaryResourceLoader {
 	const empty = <T>(): T[] => Object.freeze([]) as unknown as T[];
 	return Object.freeze({
@@ -298,30 +304,36 @@ export function createReviewerStartupCanary(deps: ReviewerCanaryDeps) {
 			}
 			guard();
 			stage = "startup";
-			const credentials = runtime.AuthStorage.inMemory();
+			const credentials = requireStartupHandle(runtime.AuthStorage.inMemory());
 			guard();
-			const settingsManager = runtime.SettingsManager.inMemory({
-				defaultTools: [],
-				compaction: { enabled: false },
-				retry: { enabled: false, provider: { maxRetries: 0 } },
-				cacheWarming: "off",
-				enableAnalytics: false,
-				enableInstallTelemetry: false,
-			});
-			guard();
-			const sessionManager = runtime.SessionManager.inMemory(
-				binding.fixtureRoot,
+			const settingsManager = requireStartupHandle(
+				runtime.SettingsManager.inMemory({
+					defaultTools: [],
+					compaction: { enabled: false },
+					retry: { enabled: false, provider: { maxRetries: 0 } },
+					cacheWarming: "off",
+					enableAnalytics: false,
+					enableInstallTelemetry: false,
+				}),
 			);
 			guard();
-			const modelRuntime = await runtime.ModelRuntime.create({
-				credentials,
-				modelsPath: null,
-				refreshOnCreate: false,
-				allowModelNetwork: false,
-				signal,
-			});
+			const sessionManager = requireStartupHandle(
+				runtime.SessionManager.inMemory(binding.fixtureRoot),
+			);
 			guard();
-			const resourceLoader = closedResources(runtime.createExtensionRuntime());
+			const modelRuntime = requireStartupHandle(
+				await runtime.ModelRuntime.create({
+					credentials,
+					modelsPath: null,
+					refreshOnCreate: false,
+					allowModelNetwork: false,
+					signal,
+				}),
+			);
+			guard();
+			const resourceLoader = closedResources(
+				requireStartupHandle(runtime.createExtensionRuntime()),
+			);
 			guard();
 			const created = await runtime.createAgentSession({
 				cwd: binding.fixtureRoot,

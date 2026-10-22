@@ -303,6 +303,39 @@ describe("startup-only canary seam (fabricated SDK, not startup acceptance)", ()
 		expect(f.deps.claimAcceptedCanary).not.toHaveBeenCalled();
 	});
 
+	const missingHandles = [
+		"credentials",
+		"settings",
+		"session manager",
+		"model runtime",
+		"extension runtime",
+	].flatMap((handle, index) =>
+		[null, undefined].map((value) => ({ handle, index, value })),
+	);
+	it.each(missingHandles)("rejects $handle/$value", async (entry) => {
+		const f = fixture();
+		const factories = [
+			f.runtime.AuthStorage.inMemory,
+			f.runtime.SettingsManager.inMemory,
+			f.runtime.SessionManager.inMemory,
+			f.runtime.ModelRuntime.create,
+			f.runtime.createExtensionRuntime,
+		] as const;
+		if (entry.index === 3) {
+			factories[3].mockResolvedValue(entry.value as never);
+		} else {
+			factories[entry.index].mockReturnValue(entry.value as never);
+		}
+		expect(await f.run()).toEqual(denied("startup"));
+		for (const next of factories.slice(entry.index + 1)) {
+			expect(next).not.toHaveBeenCalled();
+		}
+		expect(f.runtime.createAgentSession).not.toHaveBeenCalled();
+		expect(f.session.bindExtensions).not.toHaveBeenCalled();
+		expect(f.session.dispose).not.toHaveBeenCalled();
+		expect(f.forbidden).not.toHaveBeenCalled();
+	});
+
 	it("stops between synchronous constructors if acceptance is revoked", async () => {
 		const f = fixture();
 		f.runtime.AuthStorage.inMemory.mockImplementation(() => {
