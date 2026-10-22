@@ -81,7 +81,10 @@ No package entrypoint imports or registers these components.
   replayed roots, changed identity and active children cannot authorize deletion.
   Fabricated auth/settings/models poison is never actual user state.
 - The child can read the SDK tree and its owned bootstrap directory, not its
-  poisoned state directory. No filesystem-write, network, child-process,
+  poisoned state directory. SDK/state trees must be disjoint in both directions;
+  reject equal, ancestor and descendant read scopes before launch. Delimiter-aware
+  comparisons still permit harmless sibling names such as `state-sdk`.
+  No filesystem-write, network, child-process,
   worker-thread, addon or WASI grant is supplied. Only stdin, stdout, stderr and
   a dedicated receipt pipe are inherited. Existing descriptors bypass Node's
   filesystem permission checks; none is a protected file descriptor.

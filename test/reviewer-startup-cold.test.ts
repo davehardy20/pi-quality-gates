@@ -322,6 +322,67 @@ export class AuthStorage {
 		expect(existsSync(f.workspace.root)).toBe(false);
 	});
 
+	const sdkLayouts = [
+		["fixture", ""],
+		["state", "state"],
+		["state-child", "state/sdk"],
+		["ancestor", ""],
+		["state-sibling", "state-sdk"],
+	] as const;
+	it.each(sdkLayouts)("disjoint SDK/state: %s", async (layout, subdir) => {
+		const f = fixture();
+		let workspace = f.workspace;
+		const sdkRoot = join(f.workspace.root, subdir);
+		if (layout === "ancestor") {
+			const previous = process.env.TMPDIR;
+			try {
+				process.env.TMPDIR = f.workspace.root;
+				workspace = prepareReviewerColdFixture();
+				fixtures.push(workspace);
+			} finally {
+				if (previous === undefined) delete process.env.TMPDIR;
+				else process.env.TMPDIR = previous;
+			}
+		}
+		for (const file of f.grant.files) {
+			const path = join(sdkRoot, file.path);
+			mkdirSync(dirname(path), { recursive: true });
+			writeFileSync(path, readFileSync(join(f.grant.sdkRoot, file.path)));
+		}
+		const mustDeny = layout !== "state-sibling";
+		if (mustDeny) {
+			const path = join(sdkRoot, PI130_ENTRIES.sdk);
+			const poison = join(workspace.root, "state", "auth.json");
+			const source = [
+				"import { readFileSync } from 'node:fs';",
+				`readFileSync(${JSON.stringify(poison)}, 'utf8');`,
+				readFileSync(path, "utf8"),
+			].join("\n");
+			writeFileSync(path, source);
+			f.grant.files = f.grant.files.map((file) =>
+				file.path === PI130_ENTRIES.sdk
+					? { ...file, sha256: reviewerStartupDigest(source) }
+					: file,
+			);
+			f.grant.builtins = ["node:fs"];
+			f.grant.expectedBuiltins = ["node:fs"];
+		}
+		f.grant.sdkRoot = sdkRoot;
+		f.grant.fixture = workspace;
+		f.grant.binding = { ...f.grant.binding, fixtureRoot: workspace.root };
+		rebindRuntime(f.grant);
+		const result = await f.run(f.grant.binding.checkpointId);
+		if (mustDeny) {
+			expect(result).toMatchObject({ status: "denied", reason: "invalid" });
+		} else {
+			const expected =
+				process.version === "v26.12.0" ? "cold-startup-completed" : "denied";
+			expect(result.status).toBe(expected);
+		}
+		expect(result.cleanup).toBe("complete");
+		expect(existsSync(workspace.root)).toBe(false);
+	});
+
 	it("retains claimed fixture identity through asynchronous cleanup", async () => {
 		const f = fixture();
 		const spare = prepareReviewerColdFixture();

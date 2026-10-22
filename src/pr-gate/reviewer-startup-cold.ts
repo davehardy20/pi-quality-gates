@@ -267,9 +267,13 @@ export function createReviewerColdCanary(owner: ReviewerColdOwner) {
 			guard();
 			const sdkRoot = grant.sdkRoot;
 			const nodePath = grant.nodePath;
+			const stateRoot = join(claimedFixture.root, "state");
 			if (
 				!safePath(sdkRoot) ||
 				realpathSync(sdkRoot) !== sdkRoot ||
+				sdkRoot === stateRoot ||
+				stateRoot.startsWith(`${sdkRoot}/`) ||
+				sdkRoot.startsWith(`${stateRoot}/`) ||
 				!safePath(nodePath) ||
 				realpathSync(nodePath) !== nodePath ||
 				!Array.isArray(grant.files) ||
