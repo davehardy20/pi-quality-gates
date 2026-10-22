@@ -290,6 +290,126 @@ describe("workspace-aware review validation", () => {
 		});
 	});
 
+	it("preserves root-owned Node settings for metadata-only packages", () => {
+		const root = fixture();
+		put(
+			root,
+			"package.json",
+			JSON.stringify({
+				workspaces: ["packages/*"],
+				scripts: {
+					test: "node --test --import ./register.mjs packages/*/test/*.mjs",
+				},
+			}),
+		);
+		put(root, "packages/a/package.json", '{"name":"a","version":"1.0.0"}');
+		put(root, "packages/a/tsconfig.json", "{}");
+		const files = [
+			"packages/a/test/test-entry.mjs",
+			"packages/a/test/a.test.mjs",
+		];
+		for (const file of files) put(root, file);
+		const calls = renderedCalls(root, files);
+		expect(calls.filter((call) => call.tool === "run_node_test")).toEqual(
+			files.map((file) => ({
+				tool: "run_node_test",
+				params: {
+					paths: [file],
+					import: "./register.mjs",
+					timeoutMs: 300_000,
+				},
+			})),
+		);
+	});
+
+	it.each([
+		{ scripts: { test: "vitest run" } },
+		{ devDependencies: { vitest: "3.2.4" } },
+	])("prefers explicit package runners", (manifest) => {
+		const root = fixture();
+		put(
+			root,
+			"package.json",
+			JSON.stringify({
+				workspaces: ["host"],
+				scripts: { test: "node --test --import ./root-loader.mjs" },
+			}),
+		);
+		put(root, "host/package.json", JSON.stringify(manifest));
+		const file = "host/a.test.mjs";
+		put(root, file);
+		expect(renderedCalls(root, [file])[0]).toEqual({
+			tool: "run_vitest",
+			params: {
+				cwd: path.join(root, "host"),
+				paths: ["a.test.mjs"],
+				timeoutMs: 300_000,
+			},
+		});
+	});
+
+	it("does not inherit root loaders for an explicit package Node runner", () => {
+		const root = fixture();
+		put(
+			root,
+			"package.json",
+			JSON.stringify({
+				workspaces: ["host"],
+				scripts: { test: "node --test --import ./root-loader.mjs" },
+			}),
+		);
+		nodePackage(root, "host");
+		const file = "host/test-entry.mjs";
+		put(root, file);
+		expect(renderedCalls(root, [file])[0]).toEqual({
+			tool: "run_node_test",
+			params: {
+				cwd: path.join(root, "host"),
+				paths: ["test-entry.mjs"],
+				timeoutMs: 300_000,
+			},
+		});
+	});
+
+	const symlinkPatterns = ["packages/*", "packages/**"];
+	it.each(symlinkPatterns)("allows file links for %s", (pattern) => {
+		const root = fixture();
+		put(root, "package.json", JSON.stringify({ workspaces: [pattern] }));
+		nodePackage(root, "packages/a");
+		put(root, "shared/tsconfig.json", "{}");
+		fs.unlinkSync(path.join(root, "packages/a/tsconfig.json"));
+		fs.symlinkSync(
+			"../../shared/tsconfig.json",
+			path.join(root, "packages/a/tsconfig.json"),
+		);
+		expect(renderedCalls(root, [])).toContainEqual({
+			tool: "run_typecheck",
+			params: { project: "packages/a/tsconfig.json", timeoutMs: 300_000 },
+		});
+	});
+
+	it("still rejects contained directory links under recursive globs", () => {
+		const root = fixture();
+		put(root, "package.json", '{"workspaces":["packages/**"]}');
+		nodePackage(root, "shared");
+		fs.mkdirSync(path.join(root, "packages"));
+		fs.symlinkSync("../shared", path.join(root, "packages/linked"), "dir");
+		expect(() => plan(root, [])).toThrow(/directory.*symlink/i);
+	});
+
+	it("still rejects escaping file links under recursive globs", () => {
+		const root = fixture();
+		const outside = fixture();
+		put(root, "package.json", '{"workspaces":["packages/**"]}');
+		nodePackage(root, "packages/a");
+		put(outside, "external.json", "{}");
+		fs.symlinkSync(
+			path.join(outside, "external.json"),
+			path.join(root, "packages/a/linked.json"),
+		);
+		expect(() => plan(root, [])).toThrow(/escapes/i);
+	});
+
 	it("preserves repository-relative trusted timeout keys for package-local test paths", () => {
 		const root = fixture();
 		put(root, "pnpm-workspace.yaml", "packages: [host]");

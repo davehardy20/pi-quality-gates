@@ -18,6 +18,19 @@ export interface WorkspaceValidationProjects {
 	projects: string[];
 }
 
+function containedPath(root: string, relative: string): string {
+	const real = fs.realpathSync(path.join(root, relative));
+	const contained = path.relative(root, real);
+	if (
+		contained === ".." ||
+		contained.startsWith(`..${path.sep}`) ||
+		path.isAbsolute(contained)
+	) {
+		throw new Error("PR review workspace metadata escapes the repository.");
+	}
+	return real;
+}
+
 /** Inspect only bounded, repository-contained files; never load executable config. */
 function metadataFile(root: string, relative: string): string | undefined {
 	const absolute = path.join(root, relative);
@@ -27,15 +40,7 @@ function metadataFile(root: string, relative: string): string | undefined {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
 		throw error;
 	}
-	const real = fs.realpathSync(absolute);
-	const contained = path.relative(root, real);
-	if (
-		contained === ".." ||
-		contained.startsWith(`..${path.sep}`) ||
-		path.isAbsolute(contained)
-	) {
-		throw new Error("PR review workspace metadata escapes the repository.");
-	}
+	const real = containedPath(root, relative);
 	const stat = fs.statSync(real);
 	if (!stat.isFile() || stat.size > MAX_METADATA_BYTES) {
 		throw new Error("PR review workspace metadata is not a bounded file.");
@@ -155,7 +160,12 @@ export function discoverWorkspaceValidationProjects(
 				continue;
 			}
 			if (entry.isSymbolicLink()) {
-				throw new Error("PR review workspace directory is a symlink.");
+				const real = containedPath(root, child);
+				if (!fs.statSync(real).isFile()) {
+					throw new Error("PR review workspace directory is a symlink.");
+				}
+				// File links are not traversed; metadata reads retain their bounds.
+				continue;
 			}
 			if (entry.isDirectory()) walk(child, depth + 1);
 		}

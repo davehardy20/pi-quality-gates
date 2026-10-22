@@ -108,6 +108,15 @@ function readPackageJson(cwd: string): PackageJsonScripts | undefined {
 	}
 }
 
+function hasTestRunnerSettings(cwd: string): boolean {
+	const pkg = readPackageJson(cwd);
+	return Boolean(
+		pkg?.scripts?.test ||
+			pkg?.dependencies?.vitest ||
+			pkg?.devDependencies?.vitest,
+	);
+}
+
 /**
  * Detect whether a TypeScript/JavaScript project runs tests with Vitest or
  * Node's built-in runner. Vitest wins when declared as a dependency; otherwise
@@ -335,9 +344,13 @@ function buildTestCommands(files: string[], cwd: string): TestExecutionPlan {
 			);
 			const changedContexts = changedFiles.map((file) => {
 				const dir = packageDirs.find((dir) => file.startsWith(`${dir}/`));
-				const packageCwd = dir ? path.join(workspace.root, dir) : cwd;
+				const ownerCwd = dir ? path.join(workspace.root, dir) : workspace.root;
+				const runnerDir =
+					dir && hasTestRunnerSettings(ownerCwd) ? dir : undefined;
+				// Metadata-only packages still use the root-owned runner and loader.
+				const packageCwd = runnerDir ? ownerCwd : workspace.root;
 				const framework = detectTypeScriptTestFramework(packageCwd);
-				return { file, dir, packageCwd, framework };
+				return { file, dir, runnerDir, packageCwd, framework };
 			});
 			const changedTests = changedContexts.filter((test) =>
 				isJavaScriptTestEntry(test.file, test.framework),
@@ -354,8 +367,8 @@ function buildTestCommands(files: string[], cwd: string): TestExecutionPlan {
 			for (const test of changedTests) {
 				const testRunner: SafeRunnerTool =
 					test.framework === "node-test" ? "run_node_test" : "run_vitest";
-				// Runtime inference is package-local; explicit imports still apply
-				// to JS-only tests with transitive loader dependencies.
+				// Runtime inference follows the selected runner's manifest; imports
+				// still apply to JS-only tests with transitive loader dependencies.
 				const hasTsTests = changedTests.some(
 					(other) =>
 						other.packageCwd === test.packageCwd &&
@@ -365,7 +378,7 @@ function buildTestCommands(files: string[], cwd: string): TestExecutionPlan {
 					test.framework === "node-test"
 						? detectNodeTestLoader(test.packageCwd, hasTsTests)
 						: undefined;
-				const file = test.dir
+				const file = test.runnerDir
 					? path
 							.relative(test.packageCwd, path.join(workspace.root, test.file))
 							.split(path.sep)
@@ -376,11 +389,11 @@ function buildTestCommands(files: string[], cwd: string): TestExecutionPlan {
 					tool: testRunner,
 					args: [file],
 					command: command(testRunner, [
-						...(test.dir ? ["--cwd", test.packageCwd] : []),
+						...(test.runnerDir ? ["--cwd", test.packageCwd] : []),
 						...cmdArgs,
 					]),
 					scope: "targeted",
-					...(test.dir ? { cwd: test.packageCwd } : {}),
+					...(test.runnerDir ? { cwd: test.packageCwd } : {}),
 					...(loader ? { import: loader } : {}),
 				});
 			}
@@ -420,12 +433,13 @@ function buildTestCommands(files: string[], cwd: string): TestExecutionPlan {
 					? detectNodeTestLoader(
 							cwd,
 							changedTests.some(
-								(test) => !test.dir && /\.(?:ts|tsx|mts|cts)$/.test(test.file),
+								(test) =>
+									!test.runnerDir && /\.(?:ts|tsx|mts|cts)$/.test(test.file),
 							),
 						)
 					: undefined;
 			const discovery = workspace.packages.length
-				? "Workspace test discovery uses each package's manifest; preserve package-local cwd and test paths"
+				? "Workspace test discovery uses explicit package settings or root-owned settings; preserve the selected runner's cwd and test paths"
 				: framework === "node-test"
 					? loader
 						? `node --test --import ${loader} -- preserves the project runtime on each test call`
