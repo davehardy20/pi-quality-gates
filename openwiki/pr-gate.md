@@ -117,6 +117,15 @@ Tokens are stored in-memory via `PassTokenStore` (`src/pr-gate/pass-token-store.
 
 `isLinterClean(ctx)` scans the session branch for the most recent `post-turn-linter-status` entry. Returns `true` if clean or no entry exists. This is the bridge between the linter subsystem and the PR gate — review is blocked until the linter reports clean.
 
+## Held startup-admission work (68e0)
+
+The 1.3.0 [startup audit and canary checkpoint](reviewer-startup-admission.md)
+records CLI pre-tool effects and a local, unregistered startup-only harness.
+Its injected SDK fixtures are not real startup acceptance. No accepted cold
+loader is shipped and neither reviewer bridge imports the harness; native
+review/canary/publication for this held scope remain blocked. Ordinary tool
+allowlists and `--no-session` do not establish safe startup.
+
 ## Reviewer engine
 
 `src/pr-gate/index.ts` selects the reviewer execution bridge at startup
