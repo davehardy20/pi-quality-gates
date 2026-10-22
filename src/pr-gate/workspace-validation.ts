@@ -79,7 +79,10 @@ function workspacePatterns(root: string): Minimatch[] {
 		if (typeof value !== "string" || !value || value.length > 256) {
 			throw new Error("Invalid PR review workspace pattern.");
 		}
-		const pattern = value.replace(/^!/, "").replace(/^\.\//, "");
+		const pattern = value
+			.replace(/^!/, "")
+			.replace(/^\.\//, "")
+			.replace(/\/+$/, "");
 		if (
 			!pattern ||
 			pattern.startsWith("!") ||
@@ -129,6 +132,17 @@ export function discoverWorkspaceValidationProjects(
 			if (EXCLUDED_DIRECTORIES.has(entry.name)) continue;
 			const child = relative ? `${relative}/${entry.name}` : entry.name;
 			if (!positive.some((pattern) => pattern.match(child, true))) continue;
+			// Only a trailing globstar proves every descendant is excluded.
+			// Exact package exclusions must not hide included nested packages.
+			if (
+				negative.some(
+					(pattern) =>
+						(pattern.pattern === "**" || pattern.pattern.endsWith("/**")) &&
+						!pattern.match(`${child}/`),
+				)
+			) {
+				continue;
+			}
 			if (entry.isSymbolicLink()) {
 				throw new Error("PR review workspace directory is a symlink.");
 			}

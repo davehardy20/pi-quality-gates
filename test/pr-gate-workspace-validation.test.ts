@@ -132,6 +132,136 @@ describe("workspace-aware review validation", () => {
 		]);
 	});
 
+	it.each(["npm", "yarn", "pnpm"])("handles %s trailing slashes", (format) => {
+		const root = fixture();
+		const patterns = ["./packages/*///", "!./packages/ignored///"];
+		if (format === "pnpm") {
+			put(root, "pnpm-workspace.yaml", `packages: ${JSON.stringify(patterns)}`);
+		} else {
+			put(
+				root,
+				"package.json",
+				JSON.stringify({
+					workspaces: format === "yarn" ? { packages: patterns } : patterns,
+				}),
+			);
+		}
+		nodePackage(root, "packages/changed", "tsx");
+		nodePackage(root, "packages/unchanged");
+		nodePackage(root, "packages/ignored");
+		const file = "packages/changed/test/a.test.ts";
+		put(root, file);
+		const calls = renderedCalls(root, [file]);
+		expect(calls[0]).toEqual({
+			tool: "run_node_test",
+			params: {
+				cwd: path.join(root, "packages/changed"),
+				paths: ["test/a.test.ts"],
+				import: "tsx",
+				timeoutMs: 300_000,
+			},
+		});
+		expect(
+			calls
+				.filter((call) => call.tool === "run_typecheck")
+				.map((call) => call.params.project),
+		).toEqual([
+			"packages/changed/tsconfig.json",
+			"packages/unchanged/tsconfig.json",
+		]);
+	});
+
+	it("normalizes trailing slashes in literal package paths", () => {
+		const root = fixture();
+		put(root, "pnpm-workspace.yaml", "packages: [host/]");
+		nodePackage(root, "host");
+		put(root, "host/test/a.test.ts");
+		const calls = renderedCalls(root, ["host/test/a.test.ts"]);
+		expect(calls[0].tool).toBe("run_node_test");
+		expect(calls[0].params.cwd).toBe(path.join(root, "host"));
+		expect(calls).toContainEqual({
+			tool: "run_typecheck",
+			params: { project: "host/tsconfig.json", timeoutMs: 300_000 },
+		});
+	});
+
+	it.each([
+		"!packages/ignored/**/",
+		"!packages/ignored/**",
+		"!packages/ig*/**",
+	])("prunes excluded symlinks and deep subtrees for %s", (exclusion) => {
+		const root = fixture();
+		const outside = fixture();
+		put(
+			root,
+			"package.json",
+			JSON.stringify({ workspaces: ["packages/**", exclusion] }),
+		);
+		nodePackage(root, "packages/kept");
+		nodePackage(root, "packages/ignored/deep");
+		put(root, `packages/ignored/${"nested/".repeat(17)}package.json`, "{}");
+		fs.symlinkSync(outside, path.join(root, "packages/ignored/linked"), "dir");
+		const calls = renderedCalls(root, []);
+		expect(calls.filter((call) => call.tool === "run_typecheck")).toEqual([
+			{
+				tool: "run_typecheck",
+				params: { project: "packages/kept/tsconfig.json", timeoutMs: 300_000 },
+			},
+		]);
+	});
+
+	it("prunes an excluded directory symlink before checking its target", () => {
+		const root = fixture();
+		const outside = fixture();
+		put(
+			root,
+			"package.json",
+			JSON.stringify({ workspaces: ["packages/*", "!packages/ignored/**"] }),
+		);
+		nodePackage(root, "packages/kept");
+		fs.symlinkSync(outside, path.join(root, "packages/ignored"), "dir");
+		expect(() => plan(root, [])).not.toThrow();
+	});
+
+	it("does not prune parents or siblings of a descendant-only exclusion", () => {
+		const root = fixture();
+		put(
+			root,
+			"package.json",
+			JSON.stringify({ workspaces: ["packages/**", "!packages/a/ignored/**"] }),
+		);
+		nodePackage(root, "packages/a");
+		nodePackage(root, "packages/a/kept");
+		nodePackage(root, "packages/a/ignored/deep");
+		const calls = renderedCalls(root, []);
+		expect(
+			calls
+				.filter((call) => call.tool === "run_typecheck")
+				.map((call) => call.params.project),
+		).toEqual(["packages/a/tsconfig.json", "packages/a/kept/tsconfig.json"]);
+	});
+
+	it("keeps descendant packages when only the parent package is excluded", () => {
+		const root = fixture();
+		put(
+			root,
+			"package.json",
+			JSON.stringify({ workspaces: ["packages/**", "!packages/a"] }),
+		);
+		nodePackage(root, "packages/a");
+		nodePackage(root, "packages/a/kept");
+		const calls = renderedCalls(root, []);
+		expect(calls.filter((call) => call.tool === "run_typecheck")).toEqual([
+			{
+				tool: "run_typecheck",
+				params: {
+					project: "packages/a/kept/tsconfig.json",
+					timeoutMs: 300_000,
+				},
+			},
+		]);
+	});
+
 	it("keeps root typechecking when root and workspace projects both exist", () => {
 		const root = fixture();
 		put(root, "package.json", JSON.stringify({ workspaces: ["host"] }));
