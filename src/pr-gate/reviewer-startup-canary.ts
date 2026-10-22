@@ -111,8 +111,11 @@ type DenialReason = Extract<
 >["reason"];
 
 class Refusal extends Error {
-	constructor(readonly reason: DenialReason) {
+	readonly reason: DenialReason;
+
+	constructor(reason: DenialReason) {
 		super(reason);
+		this.reason = reason;
 	}
 }
 
@@ -131,7 +134,10 @@ const BINDING_KEYS = [
 ] as const;
 
 /** Lexical validation only. The trusted registry must attest realpath/ownership. */
-function snapshotBinding(input: unknown, id: string): ReviewerCanaryBinding {
+export function snapshotReviewerCanaryBinding(
+	input: unknown,
+	id: string,
+): ReviewerCanaryBinding {
 	if (input === null || typeof input !== "object" || Array.isArray(input)) {
 		throw new Refusal("invalid");
 	}
@@ -258,7 +264,7 @@ export function createReviewerStartupCanary(deps: ReviewerCanaryDeps) {
 		try {
 			const candidate = claimAcceptedCanary(checkpointId);
 			stage = "invalid";
-			const binding = snapshotBinding(candidate, checkpointId);
+			const binding = snapshotReviewerCanaryBinding(candidate, checkpointId);
 			let previousNow = -1;
 			const checkTime = () => {
 				if (signal?.aborted) throw new Refusal("cancelled");
