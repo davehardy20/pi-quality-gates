@@ -322,6 +322,18 @@ export class AuthStorage {
 		expect(existsSync(f.workspace.root)).toBe(false);
 	});
 
+	it("retains claimed fixture identity through asynchronous cleanup", async () => {
+		const f = fixture();
+		const spare = prepareReviewerColdFixture();
+		fixtures.push(spare);
+		const pending = f.run(f.grant.binding.checkpointId);
+		f.grant.fixture = spare;
+		const result = await pending;
+		expect(result.cleanup).toBe("complete");
+		expect(existsSync(spare.root), "unclaimed spare must survive").toBe(true);
+		expect(existsSync(f.workspace.root)).toBe(false);
+	});
+
 	it("does not adopt or delete a copied workspace descriptor", async () => {
 		const f = fixture();
 		f.grant.fixture = { ...f.workspace };

@@ -232,11 +232,12 @@ export function createReviewerColdCanary(owner: ReviewerColdOwner) {
 		try {
 			const grant = owner.claimAcceptedCanary(id);
 			if (!grant) return denied("authority");
-			const candidateState = owned.get(grant.fixture);
+			const claimedFixture = grant.fixture;
+			const candidateState = owned.get(claimedFixture);
 			if (!candidateState || candidateState.claimed || candidateState.active) {
 				return denied("authority");
 			}
-			fixture = grant.fixture;
+			fixture = claimedFixture;
 			state = candidateState;
 			state.claimed = true;
 			stage = "invalid";
@@ -431,7 +432,7 @@ export function createReviewerColdCanary(owner: ReviewerColdOwner) {
 					guard();
 					return true;
 				},
-				cleanup: async () => releaseReviewerColdFixture(grant.fixture),
+				cleanup: async () => releaseReviewerColdFixture(claimedFixture),
 				checkReceipt: (input) => {
 					guard();
 					const receipt = input as Record<string, unknown>;
