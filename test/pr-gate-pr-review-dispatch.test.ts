@@ -171,6 +171,7 @@ function createTestDeps(
 		getHeadSha: () => HEAD_SHA,
 		getBaseRef: () => BASE_REF,
 		loadReviewValidationPolicy: () => parseReviewValidationPolicy({}),
+		resolveReviewModels: () => ({ model: "fixture/model", fallbackModels: [] }),
 		isWorktreeClean: () => true,
 		listChangedFiles: async () => ["src/a.ts", "src/b.ts"],
 		applyDiffFilters: async (files) => files,
@@ -197,6 +198,63 @@ function createInput(
 }
 
 describe("pr-review dispatch", () => {
+	const rejectedScopes = ["empty", "filtered", "oversized"];
+	it.each(rejectedScopes)("skips global reads: %s", async (scope) => {
+		const loadPolicy = vi.fn(() => parseReviewValidationPolicy({}));
+		const models = vi.fn(() => ({ model: "fixture/m", fallbackModels: [] }));
+		const reviewer = createMockReviewerExecution(makePassReport());
+		const dispatch = createPrReviewDispatch({
+			...createTestDeps(makePassReport()),
+			loadReviewValidationPolicy: loadPolicy,
+			resolveReviewModels: models,
+			listChangedFiles: async () => (scope === "empty" ? [] : ["src/a.ts"]),
+			applyDiffFilters: async (files) => (scope === "filtered" ? [] : files),
+			countDiffLines: async () => 5001,
+			reviewerExecution: reviewer,
+		});
+		const result = await dispatch.dispatch(createInput(createMockPi()));
+		expect(result.blocked).toBe(true);
+		expect(loadPolicy).not.toHaveBeenCalled();
+		expect(models).not.toHaveBeenCalled();
+		expect(reviewer.runAttempt).not.toHaveBeenCalled();
+	});
+
+	it("projects validation overrides to the active repo before resolving models", async () => {
+		const order: string[] = [];
+		const loadPolicy = vi.fn(() => {
+			order.push("policy");
+			return parseReviewValidationPolicy({});
+		});
+		const models = vi.fn(() => {
+			order.push("models");
+			return { model: "fixture/primary", fallbackModels: ["fixture/fallback"] };
+		});
+		const reviewer = createMockReviewerExecution(makePassReport());
+		const dispatch = createPrReviewDispatch({
+			...createTestDeps(makePassReport()),
+			loadReviewValidationPolicy: loadPolicy,
+			resolveReviewModels: models,
+			reviewerExecution: reviewer,
+		});
+		const input = createInput(createMockPi());
+		await dispatch.dispatch(input);
+		expect(loadPolicy).toHaveBeenCalledWith(
+			undefined,
+			undefined,
+			input.ctx.cwd,
+		);
+		expect(order).toEqual(["policy", "models"]);
+		expect(models).toHaveBeenCalledOnce();
+		expect(reviewer.runAttempt).toHaveBeenCalledWith(
+			expect.objectContaining({
+				config: expect.objectContaining({
+					model: "fixture/primary",
+					fallbackModels: ["fixture/fallback"],
+				}),
+			}),
+		);
+	});
+
 	it("relays eight complete calls with a 55-minute sum plus overhead and one entry deadline", async () => {
 		const cwd = fs.realpathSync(
 			fs.mkdtempSync(path.join(os.tmpdir(), "qg-dispatch-budget-")),

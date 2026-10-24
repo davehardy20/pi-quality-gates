@@ -20,6 +20,10 @@ import { parseReviewReport } from "../shared/review-report.js";
 import { type DiffFilterOptions, gatherDiff } from "../shared/review-scope.js";
 import { hasFindingsAboveThreshold } from "../shared/review-severity.js";
 import type { DiffCoverage, ReviewReport } from "../shared/review-types.js";
+import {
+  ReviewerFailureOutputError,
+  writeReviewerFailureOutput,
+} from "./reviewer-failure-output.js";
 
 // Re-export shared primitives for backwards compatibility
 export type { ReviewConfig } from "../shared/review-config.js";
@@ -187,6 +191,8 @@ export interface ReviewerExecutionDependencies {
   renderSystemPrompt?: typeof renderSystemPrompt;
   renderTaskTemplate?: typeof renderTaskTemplate;
   spawnReviewer?: typeof spawnReviewer;
+  /** Caller-owned private temporary output root; absent uses a fresh temp root. */
+  failureDirectory?: string;
   getPromptsDir: () => string;
   /** Internal monotonic fake-clock seam. */
   now?: () => number;
@@ -386,6 +392,8 @@ export function createReviewerExecution(
           input.cwd,
           input.signal,
           deadline,
+          undefined,
+          deps.failureDirectory,
         );
         if (deadline.remainingMs() <= 0) {
           return reviewDeadlineExceeded(deadline, result);
@@ -676,6 +684,7 @@ export async function spawnReviewer(
   signal?: AbortSignal,
   deadline: ReviewDeadline = createReviewDeadline(config.timeoutMs),
   spawnProcess: typeof spawn = spawn,
+  failureDirectory?: string,
 ): Promise<ReviewerResult> {
   if (deadline.remainingMs() <= 0) return reviewDeadlineExceeded(deadline);
   const tmpDir = await fs.promises.mkdtemp(
@@ -808,16 +817,23 @@ export async function spawnReviewer(
         let sidecarPath: string | undefined;
         if (!report) {
           try {
-            sidecarPath = await writeParseFailureSidecar(tmpDir, {
-              rawOutput,
-              stderr: stderrValue,
-              exitCode: code ?? 0,
-              timedOut,
-              usage: usage || undefined,
-              command: commandStr,
-            });
-          } catch {
-            // Sidecar persistence is best-effort.
+            sidecarPath = await writeReviewerFailureOutput(
+              {
+                rawOutput,
+                stderr: stderrValue,
+                exitCode: code ?? 0,
+                timedOut,
+                usage: usage || undefined,
+                command: commandStr,
+              },
+              systemPrompt,
+              failureDirectory,
+            );
+          } catch (error) {
+            // Preserve a partial owned directory for recovery, never PASS.
+            if (error instanceof ReviewerFailureOutputError) {
+              sidecarPath = error.retainedDirectory;
+            }
           }
         }
 
@@ -849,69 +865,6 @@ export async function spawnReviewer(
       // Best-effort cleanup
     }
   }
-}
-
-interface ParseFailureSidecar {
-  rawOutput: string;
-  stderr: string;
-  exitCode: number;
-  timedOut: boolean;
-  usage?: string;
-  command: string;
-  timestamp: string;
-}
-
-function reviewerFailuresDir(): string {
-  return path.join(os.homedir(), ".pi", "reviewer-failures");
-}
-
-async function ensureReviewerFailuresDir(): Promise<void> {
-  await fs.promises.mkdir(reviewerFailuresDir(), { recursive: true });
-}
-
-function sidecarTimestamp(): string {
-  return new Date().toISOString().replace(/[:.]/g, "-");
-}
-
-async function writeParseFailureSidecar(
-  tmpDir: string,
-  payload: Omit<ParseFailureSidecar, "timestamp">,
-): Promise<string> {
-  await ensureReviewerFailuresDir();
-  const sidecarDir = path.join(
-    reviewerFailuresDir(),
-    `parse-failure-${sidecarTimestamp()}-${randomId()}`,
-  );
-  await fs.promises.mkdir(sidecarDir, { recursive: true });
-
-  const sidecar: ParseFailureSidecar = {
-    ...payload,
-    timestamp: new Date().toISOString(),
-  };
-  await fs.promises.writeFile(
-    path.join(sidecarDir, "sidecar.json"),
-    JSON.stringify(sidecar, null, 2),
-    { encoding: "utf8", mode: 0o600 },
-  );
-
-  // Best-effort copy of the prompt used for this review.
-  try {
-    await fs.promises.copyFile(
-      path.join(tmpDir, "reviewer-prompt.md"),
-      path.join(sidecarDir, "reviewer-prompt.md"),
-    );
-  } catch {
-    // Ignore prompt copy failures.
-  }
-
-  return sidecarDir;
-}
-
-function randomId(): string {
-  return createHash("sha256")
-    .update(`${Date.now()}-${process.pid}`)
-    .digest("hex")
-    .slice(0, 8);
 }
 
 /**

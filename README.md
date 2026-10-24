@@ -140,6 +140,10 @@ for discovery. See [discovery limits](openwiki/pr-gate.md#test-execution-plan).
 
 Only user-global `~/.pi/agent/settings.json` is read for validation policy;
 merged Pi settings, project settings and repository policy cannot relax it.
+The dispatcher rejects empty, fully filtered and oversized changes before
+loading this policy or resolving default reviewer models. Override paths are
+inspected only for the current canonical repository; unrelated entries still
+receive syntax and budget checks, but need not exist on disk.
 Example (configuration only; this does not establish harness completion):
 
 ```json

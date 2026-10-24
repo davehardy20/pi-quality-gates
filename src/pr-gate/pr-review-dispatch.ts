@@ -30,6 +30,7 @@ import {
 import { decidePushGate } from "./gate-decision.js";
 import type { PassTokenStore } from "./pass-token-store.js";
 import {
+	PR_REVIEW_CONFIG,
 	type ReviewerModelIdentity,
 	resolvePrReviewConfig,
 } from "./pr-review-config.js";
@@ -192,8 +193,12 @@ export interface PrReviewDispatchDeps {
 	 * configuration is resolved from ~/.pi/agent/model-fallbacks.json per review.
 	 */
 	reviewConfig?: ReviewConfig;
-	/** Resolve the runtime default config when no explicit override is injected. */
+	/** Explicit full-config override, resolved eagerly for compatibility. */
 	resolveReviewConfig?: (ctx: ExtensionContext) => ReviewConfig;
+	/** Model-only resolver; scope/limits still come from the review config. */
+	resolveReviewModels?: (
+		ctx: ExtensionContext,
+	) => Pick<ReviewConfig, "model" | "fallbackModels">;
 	loadReviewValidationPolicy?: typeof loadReviewValidationPolicy;
 	/** Internal monotonic fake-clock seam. */
 	now?: () => number;
@@ -582,7 +587,6 @@ export function createPrReviewDispatch(
 		gatherDiff,
 		extractTask: extractOriginalTask,
 		log: console.error,
-		resolveReviewConfig: resolveRuntimeReviewConfig,
 		verifyRef: verifyGitRef,
 		reviewerExecution: missingReviewerExecution(),
 		...partialDeps,
@@ -608,15 +612,10 @@ export function createPrReviewDispatch(
 	): Promise<ReviewerResult> {
 		const now = deps.now ?? (() => performance.now());
 		const startedAt = now();
-		const policy = (
-			deps.loadReviewValidationPolicy ?? loadReviewValidationPolicy
-		)();
 		const { ctx, baseRef: explicitBaseRef } = input;
 		const cwd = ctx.cwd;
 		const config =
-			deps.reviewConfig ??
-			deps.resolveReviewConfig?.(ctx) ??
-			resolveRuntimeReviewConfig(ctx);
+			deps.reviewConfig ?? deps.resolveReviewConfig?.(ctx) ?? PR_REVIEW_CONFIG;
 
 		// C5 incremental review: with no explicit base ref, an enabled
 		// `incrementalReview` toggle scopes the review to lastPassSha..HEAD.
@@ -664,6 +663,10 @@ export function createPrReviewDispatch(
 			);
 		}
 
+		// Reject unusable scope before touching trusted global configuration.
+		const policy = (
+			deps.loadReviewValidationPolicy ?? loadReviewValidationPolicy
+		)(undefined, undefined, cwd);
 		const plan = recommendTestCommands(changedFiles, cwd, policy);
 		const timeoutMs = reviewerTimeoutForPlan(
 			plan.runnerCommands,
@@ -715,8 +718,14 @@ export function createPrReviewDispatch(
 			log,
 			extraInstructionsState,
 		);
+		const { model, fallbackModels } =
+			deps.reviewConfig || deps.resolveReviewConfig
+				? config
+				: (deps.resolveReviewModels ?? resolveRuntimeReviewConfig)(ctx);
 		const reviewConfig: ReviewConfig = {
 			...config,
+			model,
+			fallbackModels,
 			timeoutMs,
 			...(extraInstructions ? { extraInstructions } : {}),
 		};
