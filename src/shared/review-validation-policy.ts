@@ -48,6 +48,17 @@ function unsafePath(value: string): boolean {
 		["\\", "*", "?", "[", "]", "{", "}"].some((char) => value.includes(char))
 	);
 }
+// The active workspace is a literal directory, not an override-key pattern.
+function validateWorkspaceRoot(root: string): void {
+	if (
+		typeof root !== "string" ||
+		!path.isAbsolute(root) ||
+		path.normalize(root) !== root ||
+		fs.realpathSync(root) !== root ||
+		!fs.statSync(root).isDirectory()
+	)
+		invalid();
+}
 function validateRoot(root: string, inspect: boolean): void {
 	if (
 		typeof root !== "string" ||
@@ -119,7 +130,7 @@ export function parseReviewValidationPolicy(
 			invalid();
 		const repoOverrides: ReviewValidationPolicy["repoOverrides"] =
 			Object.create(null);
-		if (repoRoot !== undefined) validateRoot(repoRoot, true);
+		if (repoRoot !== undefined) validateWorkspaceRoot(repoRoot);
 		for (const [root, files] of Object.entries(block(review.repoOverrides))) {
 			if (!record(files)) invalid();
 			const selected = repoRoot === undefined || root === repoRoot;

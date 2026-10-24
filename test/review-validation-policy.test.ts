@@ -239,6 +239,16 @@ describe("trusted review validation policy", () => {
 		}
 	});
 
+	const literalNames = ["[client]", "{client}", "client?"];
+	it.each(literalNames)("accepts literal workspace path: %s", (name) => {
+		const home = fixture();
+		const repo = path.join(home, name);
+		fs.mkdirSync(repo);
+		expect(
+			loadReviewValidationPolicy(home, undefined, repo).repoOverrides,
+		).toEqual({});
+	});
+
 	it("projects the current repo without inspecting unrelated override paths", () => {
 		const root = fixture();
 		const unrelated = path.join(root, "unrelated-missing-repo");
