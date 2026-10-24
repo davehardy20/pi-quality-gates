@@ -1,5 +1,8 @@
 import type { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { PR_REVIEW_CONFIG } from "../src/pr-gate/pr-review-config.js";
 import {
@@ -21,6 +24,9 @@ const empty: ReviewerResult = {
 
 describe("one monotonic reviewer deadline", () => {
 	it("gives the host subprocess only remaining time and refuses PASS after timer termination", async () => {
+		const failureDirectory = realpathSync(
+			mkdtempSync(join(tmpdir(), "qg-deadline-output-")),
+		);
 		vi.useFakeTimers();
 		try {
 			let started!: () => void;
@@ -66,6 +72,7 @@ describe("one monotonic reviewer deadline", () => {
 				undefined,
 				deadline,
 				spawnProcess as unknown as typeof spawn,
+				failureDirectory,
 			);
 			await didSpawn;
 			await vi.advanceTimersByTimeAsync(3_899_899);
@@ -77,6 +84,7 @@ describe("one monotonic reviewer deadline", () => {
 			expect(result.report).toBeNull();
 		} finally {
 			vi.useRealTimers();
+			rmSync(failureDirectory, { recursive: true, force: true });
 		}
 	});
 

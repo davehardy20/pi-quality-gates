@@ -26,6 +26,7 @@ function createPrReviewDispatch(
 ) {
 	return buildDispatch({
 		loadReviewValidationPolicy: () => parseReviewValidationPolicy({}),
+		resolveReviewModels: () => ({ model: "fixture/model", fallbackModels: [] }),
 		...deps,
 	});
 }

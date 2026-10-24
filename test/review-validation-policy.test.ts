@@ -239,6 +239,59 @@ describe("trusted review validation policy", () => {
 		}
 	});
 
+	const literalNames = ["[client]", "{client}", "client?"];
+	it.each(literalNames)("accepts literal workspace path: %s", (name) => {
+		const home = fixture();
+		const repo = path.join(home, name);
+		fs.mkdirSync(repo);
+		expect(
+			loadReviewValidationPolicy(home, undefined, repo).repoOverrides,
+		).toEqual({});
+	});
+
+	it("projects the current repo without inspecting unrelated override paths", () => {
+		const root = fixture();
+		const unrelated = path.join(root, "unrelated-missing-repo");
+		settings(
+			root,
+			review({
+				repoOverrides: {
+					[unrelated]: { "test/missing.test.ts": 1_200_000 },
+					[root]: { "test/slow.test.ts": 1_200_000 },
+				},
+			}),
+		);
+		const policy = loadReviewValidationPolicy(root, undefined, root);
+		expect(Object.keys(policy.repoOverrides)).toEqual([root]);
+		expect(policy.repoOverrides[root]["test/slow.test.ts"]).toBe(1_200_000);
+		// The legacy all-repository mode still rejects nonexistent paths.
+		expect(() => loadReviewValidationPolicy(root)).toThrow();
+	});
+
+	it("still rejects unsafe names and budgets outside the selected repo", () => {
+		const root = fixture();
+		const unrelated = path.join(root, "unrelated-missing-repo");
+		for (const files of [
+			{ "../escape.test.ts": 300_000 },
+			{ "test/missing.test.ts": 1_800_001 },
+		]) {
+			expect(() =>
+				parseReviewValidationPolicy(
+					review({ repoOverrides: { [unrelated]: files } }),
+					root,
+				),
+			).toThrow();
+		}
+	});
+
+	it("refuses a scoped repo symlink instead of expanding its metadata scope", () => {
+		const root = fixture();
+		const other = fixture();
+		const alias = path.join(root, "alias");
+		fs.symlinkSync(other, alias);
+		expect(() => parseReviewValidationPolicy({}, alias)).toThrow();
+	});
+
 	it("sums all eight call budgets once, plus overhead, not the per-call ceiling", () => {
 		const policy = parseReviewValidationPolicy({});
 		const commands = [

@@ -48,13 +48,30 @@ function unsafePath(value: string): boolean {
 		["\\", "*", "?", "[", "]", "{", "}"].some((char) => value.includes(char))
 	);
 }
-function validateOverride(root: string, file: string): void {
+// The active workspace is a literal directory, not an override-key pattern.
+function validateWorkspaceRoot(root: string): void {
 	if (
-		unsafePath(root) ||
+		typeof root !== "string" ||
 		!path.isAbsolute(root) ||
 		path.normalize(root) !== root ||
 		fs.realpathSync(root) !== root ||
-		!fs.statSync(root).isDirectory() ||
+		!fs.statSync(root).isDirectory()
+	)
+		invalid();
+}
+function validateRoot(root: string, inspect: boolean): void {
+	if (
+		typeof root !== "string" ||
+		unsafePath(root) ||
+		!path.isAbsolute(root) ||
+		path.normalize(root) !== root ||
+		(inspect &&
+			(fs.realpathSync(root) !== root || !fs.statSync(root).isDirectory()))
+	)
+		invalid();
+}
+function validateOverride(root: string, file: string, inspect: boolean): void {
+	if (
 		!file ||
 		unsafePath(file) ||
 		path.isAbsolute(file) ||
@@ -62,6 +79,7 @@ function validateOverride(root: string, file: string): void {
 		file.split("/").some((part) => !part || part === "." || part === "..")
 	)
 		invalid();
+	if (!inspect) return;
 	const target = path.join(root, file);
 	if (fs.realpathSync(target) !== target || !fs.statSync(target).isFile())
 		invalid();
@@ -71,6 +89,8 @@ function validateOverride(root: string, file: string): void {
  * Unrelated global settings are ignored, never returned or logged. */
 export function parseReviewValidationPolicy(
 	settings: unknown,
+	/** Optional canonical workspace; omit for legacy full validation. */
+	repoRoot?: string,
 ): ReviewValidationPolicy {
 	try {
 		if (!record(settings)) invalid();
@@ -110,24 +130,19 @@ export function parseReviewValidationPolicy(
 			invalid();
 		const repoOverrides: ReviewValidationPolicy["repoOverrides"] =
 			Object.create(null);
+		if (repoRoot !== undefined) validateWorkspaceRoot(repoRoot);
 		for (const [root, files] of Object.entries(block(review.repoOverrides))) {
 			if (!record(files)) invalid();
-			// Validate roots even for empty maps (no dormant unsafe policy).
-			if (
-				unsafePath(root) ||
-				!path.isAbsolute(root) ||
-				path.normalize(root) !== root ||
-				fs.realpathSync(root) !== root ||
-				!fs.statSync(root).isDirectory()
-			)
-				invalid();
+			const selected = repoRoot === undefined || root === repoRoot;
+			// Inactive entries get syntax/budget checks, never path inspection.
+			validateRoot(root, selected);
 			const budgets: Record<string, number> = Object.create(null);
 			for (const [file, value] of Object.entries(files)) {
-				validateOverride(root, file);
+				validateOverride(root, file, selected);
 				if (!bounded(value, ceiling)) invalid();
 				budgets[file] = value;
 			}
-			repoOverrides[root] = budgets;
+			if (selected) repoOverrides[root] = budgets;
 		}
 		return {
 			defaultTimeoutMs,
@@ -147,6 +162,7 @@ export function parseReviewValidationPolicy(
 export function loadReviewValidationPolicy(
 	home = os.homedir(),
 	io: typeof fs = fs,
+	repoRoot?: string,
 ): ReviewValidationPolicy {
 	let fd: number | undefined;
 	try {
@@ -159,7 +175,7 @@ export function loadReviewValidationPolicy(
 				stat = io.lstatSync(parent);
 			} catch (error) {
 				if ((error as NodeJS.ErrnoException).code === "ENOENT")
-					return parseReviewValidationPolicy({});
+					return parseReviewValidationPolicy({}, repoRoot);
 				throw error;
 			}
 			if (!stat.isDirectory() || io.realpathSync(parent) !== parent) invalid();
@@ -170,7 +186,7 @@ export function loadReviewValidationPolicy(
 			expected = io.lstatSync(file);
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === "ENOENT")
-				return parseReviewValidationPolicy({});
+				return parseReviewValidationPolicy({}, repoRoot);
 			throw error;
 		}
 		if (!expected.isFile()) invalid();
@@ -216,6 +232,7 @@ export function loadReviewValidationPolicy(
 					buffer.subarray(0, length),
 				),
 			),
+			repoRoot,
 		);
 	} catch {
 		return invalid();

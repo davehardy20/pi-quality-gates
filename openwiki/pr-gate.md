@@ -99,10 +99,11 @@ Tokens are stored in-memory via `PassTokenStore` (`src/pr-gate/pass-token-store.
    - Resolve base ref (defaults: `origin/master` → `origin/main` → `master` → `main` → `HEAD~1`). When `incrementalReview` is on (default) and no explicit base ref was given, `resolveIncrementalBaseRef` scopes the review to `lastPassSha..HEAD` (PR-Agent incremental review); it falls back to the default full-range base when there is no PASS token yet, the last-PASS sha is the current HEAD, or the sha no longer resolves in the repo.
    - List changed files via `git diff --name-only`.
    - Load and apply `.gitignore` plus `.pi/reviewer.skip` filters to the review file scope; block if every changed file is excluded.
-   - Count changed lines in the filtered scope → reject if it exceeds `maxChangedLines` (5000).
+   - Count changed lines in the filtered scope → reject if it exceeds `maxChangedLines` (5000), before loading default global policy/model metadata.
+   - Load trusted validation policy for the active canonical repository only. Unrelated overrides are syntax/budget checked without filesystem inspection.
    - Pass the filtered file list to repository-direct review. For legacy/injected execution, gather a capped diff (`maxDiffLines` = 4000). The orchestrator bridge (`PI_PR_REVIEW_BRIDGE=orchestrator`) skips parent diff materialization.
    - Extract original task from session entries.
-   - Generate test execution plan.
+   - Generate test execution plan; resolve default reviewer models only after scope and preparation checks pass.
    - Call `reviewerExecution.runAttempt()`.
 5. Parse report:
    - No parseable report → block with sidecar hint.
@@ -403,7 +404,7 @@ return even when the HEAD already has a token.
 - **Linter not clean**: Review blocked by `isLinterClean`. Fix linter findings first.
 - **Diff too large**: Diffs exceeding `maxChangedLines` (5000) are rejected before review. Use `.pi/reviewer.skip` to exclude files.
 - **PARTIAL review (truncated diff)**: The text-diff path caps the diff at `maxDiffLines` (4000). A PASS on a truncated diff is an effective **PARTIAL** and blocks publish (`ReviewReport.diffCoverage.truncated`). Split the PR (or raise the cap deliberately) and re-review for full coverage.
-- **Report parse failure**: Child Pi output without a parseable `## Review Report` block → sidecar written to `~/.pi/reviewer-failures/`. Check the sidecar for raw output. `classifyReviewerFailure` (`src/pr-gate/reviewer.ts`) matches known stderr signatures (e.g. pi-compact-plus stale-extension-context crashes during auto-compaction in the ephemeral reviewer child) and appends an actionable remediation hint to the blocked message — additive only; the verdict stays fail-closed. The child sets `COMPACT_PLUS_DISABLE_AUTO_COMPACTION=true` as the kill switch.
+- **Report parse failure**: Child Pi output without a parseable `## Review Report` block → diagnostics retained in a fresh private `pi-reviewer-failure-*` directory under the system temporary directory (or an internally supplied private temporary root), never `~/.pi/reviewer-failures/`. The blocked message reports the recovery path. Each directory is mode 0700, its files mode 0600, and diagnostic JSON and prompt are each limited to 1 MiB. Check `sidecar.json` for raw output and `reviewer-prompt.md` for the prompt; temporary diagnostics may disappear during system cleanup. `classifyReviewerFailure` (`src/pr-gate/reviewer.ts`) matches known stderr signatures (e.g. pi-compact-plus stale-extension-context crashes during auto-compaction in the ephemeral reviewer child) and appends an actionable remediation hint to the blocked message — additive only; the verdict stays fail-closed. The child sets `COMPACT_PLUS_DISABLE_AUTO_COMPACTION=true` as the kill switch.
 - **Test execution missing**: Report says PASS but no `### Test execution` section → overridden to `CANNOT_REVIEW`. Ensure the reviewer runs test commands.
 - **Base ref not found**: If `origin/master` doesn't exist, falls back through the chain. Verify the base ref exists.
 - **Reviewer prompt exceeded safety budget**: The rendered task prompt exceeded `maxReviewerPromptChars` (default 100000), so the reviewer child was never spawned. The blocked message from dispatch asks you to reduce scope — split unrelated/generated changes out, narrow the base ref for incremental re-review, or shrink large generated docs/fixtures — then re-run `/pr-review`. Do not raise the knob to bypass the guard. Setting it to `0` or negative disables it (not recommended).
