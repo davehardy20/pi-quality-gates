@@ -186,6 +186,42 @@ describe("host SDK launch through the existing native supervisor", () => {
 		expect(result.command).not.toContain("fixed task");
 	});
 
+	for (const phase of ["before entry", "during prompt preparation"]) {
+		it(`does not spawn an SDK reviewer cancelled ${phase}`, async () => {
+			const f = fixture();
+			const controller = new AbortController();
+			const spawnProcess = vi.fn(() => {
+				queueMicrotask(() => {
+					f.child.stdout.emit("data", Buffer.from(`${event}\n`));
+					f.child.emit("close", 0, null);
+				});
+				return f.child;
+			});
+			if (phase === "before entry") controller.abort();
+			const pending = spawnReviewer(
+				"fixed task",
+				"fixed system prompt",
+				PR_REVIEW_CONFIG,
+				process.cwd(),
+				controller.signal,
+				undefined,
+				spawnProcess as unknown as typeof spawn,
+				f.root,
+				launch,
+			);
+			if (phase === "during prompt preparation") controller.abort();
+			const result = await pending;
+			expect(spawnProcess).not.toHaveBeenCalled();
+			expect(f.child.kill).not.toHaveBeenCalled();
+			expect(result).toMatchObject({
+				report: null,
+				exitCode: 1,
+				timedOut: false,
+			});
+			expect(result.stderr).toMatch(/cancelled|aborted/i);
+		});
+	}
+
 	it("never promotes stderr into an SDK assistant report", async () => {
 		const f = fixture();
 		const spawnProcess = () => {

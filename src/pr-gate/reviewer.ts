@@ -751,7 +751,23 @@ export async function spawnReviewer(
   failureDirectory?: string,
   launch?: ReviewerProcessLaunch,
 ): Promise<ReviewerResult> {
-  if (deadline.remainingMs() <= 0) return reviewDeadlineExceeded(deadline);
+  const preflightFailure = (): ReviewerResult | undefined => {
+    if (signal?.aborted) {
+      const diagnostic = "Reviewer request cancelled before process launch.";
+      return {
+        report: null,
+        rawOutput: diagnostic,
+        exitCode: 1,
+        timedOut: false,
+        stderr: diagnostic,
+        command: "(reviewer not started)",
+      };
+    }
+    if (deadline.remainingMs() <= 0) return reviewDeadlineExceeded(deadline);
+    return undefined;
+  };
+  const initialFailure = preflightFailure();
+  if (initialFailure) return initialFailure;
   const tmpDir = await fs.promises.mkdtemp(
     path.join(os.tmpdir(), "pi-reviewer-"),
   );
@@ -787,7 +803,8 @@ export async function spawnReviewer(
 
     const invocation = launch ? invocationForCommand : getPiInvocation(piArgs);
 
-    if (deadline.remainingMs() <= 0) return reviewDeadlineExceeded(deadline);
+    const preparationFailure = preflightFailure();
+    if (preparationFailure) return preparationFailure;
     return await new Promise<ReviewerResult>((resolve) => {
       const output = createBoundedTextCapture(MAX_REVIEWER_OUTPUT_CHARS);
       const stderr = createBoundedTextCapture(MAX_REVIEWER_STDERR_CHARS);
