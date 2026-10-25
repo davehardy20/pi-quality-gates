@@ -143,7 +143,9 @@ const allowedReviewerContextPolicyEvents = new Set([
 	"tool_call",
 	"tool_result",
 ]);
-const refused = () => new Error("Closed reviewer startup refused.");
+// Keep the public refusal fixed; only the worker formats/redacts its cause.
+const refused = (cause?: unknown) =>
+	new Error("Closed reviewer startup refused.", { cause });
 
 /** Explicit SDK session construction, with no CLI main, global/project
  * extensions, discovery, file-backed settings/session, warming or retry loop.
@@ -172,8 +174,8 @@ export async function createClosedReviewerSession(
 		disposal = Promise.resolve().then(async () => {
 			try {
 				await session?.dispose();
-			} catch {
-				throw refused();
+			} catch (error) {
+				throw refused(error);
 			}
 		});
 		return disposal;
@@ -368,9 +370,9 @@ export async function createClosedReviewerSession(
 						throw refused();
 					await boundSession.prompt(task);
 					verifyTools();
-				} catch {
+				} catch (error) {
 					failed = true;
-					throw refused();
+					throw refused(error);
 				}
 			},
 			subscribe(listener: (event: unknown) => void) {
@@ -379,9 +381,9 @@ export async function createClosedReviewerSession(
 			},
 			dispose,
 		});
-	} catch {
+	} catch (error) {
 		failed = true;
 		await dispose();
-		throw refused();
+		throw refused(error);
 	}
 }

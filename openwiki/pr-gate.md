@@ -124,18 +124,22 @@ The 1.3.0 [startup audit and canary checkpoint](reviewer-startup-admission.md)
 records CLI pre-tool effects and a local, unregistered startup-only harness.
 Its injected SDK fixtures are not real startup acceptance. No accepted cold
 loader is shipped and neither reviewer bridge imports the harness; the real
-canary and activation remain held. Code review/publication of this inert
-checkpoint require separate owner authorization and normal PR gates. Ordinary
-tool allowlists and `--no-session` do not establish safe startup.
+canary and activation remain held. This older admission work is separate from
+ordinary trusted single-user SDK reviews below; it is not an extra approval or
+attestation requirement for them. Tool allowlists and `--no-session` alone are
+not an OS sandbox.
 
 ## Reviewer engine
 
 `src/pr-gate/index.ts` selects the reviewer execution bridge at startup
 (`PrReviewerBridgeMode`, env `PI_PR_REVIEW_BRIDGE`). The **default `host`
-bridge** (`src/pr-gate/reviewer.ts`) spawns a read-only headless child Pi that
-runs the safe validation runners against the repository checkout, where
-dependencies already live — the review is read-only, so the Apple-container
-sandbox (reserved for mutating workers) is not used. `PI_PR_REVIEW_BRIDGE=orchestrator`
+bridge** binds `reviewer.ts` to `reviewer-sdk-spawn.ts`, which starts the fixed
+`reviewer-sdk-worker.mjs` in a Node child against the trusted installed Pi 1.3.0
+SDK. It uses explicit in-memory settings, credentials and session storage, closed
+resources, four scoped read tools and seven mandatory safe Git/validation tools.
+Only the selected tool definitions and context redactor are retained; discovered
+extensions, commands, hooks, skills and prompt templates are not loaded. No CLI
+startup or Apple container is involved. `PI_PR_REVIEW_BRIDGE=orchestrator`
 opts into the orchestrator verifier bridge, which dispatches a host-side
 orchestrate `verifier`/`pr-review` child (no container is involved).
 
@@ -148,9 +152,27 @@ orchestrate `verifier`/`pr-review` child (no container is involved).
 - Bounds result capture at 262,144 characters and fails closed on overflow.
 - Fails closed if `orchestrate` is unavailable, the request times out, or the session shuts down. Shutdown clears pending timers/correlation state.
 
-`src/pr-gate/reviewer.ts` is the default host bridge: injectable reviewer
-execution and `spawnReviewer` (the headless child Pi). The host bridge
-materializes a capped diff (`maxDiffLines` = 4000) and passes it to the child;
+The launcher captures worker/session source at extension registration, resolves
+only the selected builtin HTTPS provider through the actual caller context, and
+sends its resolved credential over private IPC, not argv, environment or files.
+OAuth-only providers use a credential-free SDK config overlay and an in-memory
+borrowed access token; no OAuth record or refresh token is copied. Expiry refuses
+and requires a fresh parent-resolved attempt. Unsupported SDK versions, custom
+native providers, changed recipients and missing mandatory tools refuse without
+CLI fallback. SDK management/cache/temp paths are directed into the private child
+root before SDK import; this is not a filesystem or network sandbox.
+
+`reviewer-closed-session.ts` constructs the session from explicit runtime ports.
+The worker emits a report only after a nonempty completed assistant answer and
+awaited disposal; earlier PASS text cannot survive a failed or unfinished answer.
+`reviewer.ts` retains bounded supervision, cancellation and confirmed-close checks.
+Only confirmed successful termination allows deletion of the private directory;
+failures retain diagnostics, and unconfirmed closure retains the PID/root.
+Worker diagnostics retain bounded error causes after credential redaction, before
+truncation. No stack, prompt, auth store or environment dump is logged.
+
+The default host bridge still materializes a capped diff (`maxDiffLines` = 4000)
+and passes it to the child;
 the orchestrator bridge sets `inspectRepositoryDirectly` and skips parent diff
 materialization. Both bridges delegate report parsing to the shared parser in
 `src/shared/review-report.ts`.
@@ -174,8 +196,10 @@ Legacy direct child capture is also pre-close bounded: 1,048,576 characters per 
 
 ## Reviewer tool policy
 
-`src/pr-gate/pr-review-config.ts` defines review limits plus a legacy/injected
-tool allowlist and blocklist.
+`src/pr-gate/pr-review-config.ts` defines review limits and uses the same fixed
+`CLOSED_REVIEWER_TOOLS` list as the SDK session: read, grep, find, ls,
+`git_inspect_safe`, and the six safe validation runners. The blocklist remains
+an independent startup check. No publication or general shell tool is granted.
 
 **`PR_REVIEW_CONFIG`** (source: `src/pr-gate/pr-review-config.ts`):
 - Model: **resolved at review time**, not hardcoded. `resolvePrReviewConfig()` (`resolveReviewerModelConfig`) reads the `worker` profile from `~/.pi/agent/model-fallbacks.json`; when that config is missing/malformed it falls back to the active parent-session model plus its scoped retry candidates (`ctx.model` + `ctx.scopedModels`, via `resolveRuntimeReviewConfig` / `resolveSessionFallbackModels`). Without either, Pi's own default selection is the fail-closed review attempt. The `PR_REVIEW_CONFIG.model` literal is `null` and is only a source placeholder.
@@ -427,7 +451,10 @@ return even when the HEAD already has a token.
 | `src/pr-gate/push-gate-hook.ts` | `tool_call` interceptor (veto-only) |
 | `src/pr-gate/pass-token-store.ts` | In-memory PASS token store |
 | `src/pr-gate/pr-review-dispatch.ts` | Review orchestration |
-| `src/pr-gate/reviewer.ts` | Child Pi spawn and report parsing delegation |
+| `src/pr-gate/reviewer.ts` | Bounded child supervision and report parsing delegation |
+| `src/pr-gate/reviewer-sdk-spawn.ts` | Trusted SDK/tool selection, credential IPC and private worker bootstrap |
+| `src/pr-gate/reviewer-sdk-worker.mjs` | Explicit SDK runtime, closed tools/resources, completed-answer checks and redacted diagnostics |
+| `src/pr-gate/reviewer-closed-session.ts` | Injectable session construction, closed resource loader and disposal |
 | `src/shared/review-report.ts` | Shared `parseReviewReport` — turns reviewer text output into a `ReviewReport` |
 | `src/pr-gate/pr-review-config.ts` | Reviewer tool policy, review limits, and runtime model resolution |
 | `src/pr-gate/auto-review-trigger.ts` | Linter-clean → auto-review bridge |

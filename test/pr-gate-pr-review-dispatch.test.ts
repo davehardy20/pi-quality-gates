@@ -252,6 +252,7 @@ describe("pr-review dispatch", () => {
 					fallbackModels: ["fixture/fallback"],
 				}),
 			}),
+			input.ctx,
 		);
 	});
 
@@ -885,6 +886,7 @@ describe("pr-review dispatch", () => {
 				files: ["src/a.ts"],
 				headSha: HEAD_SHA,
 			}),
+			expect.objectContaining({ cwd: "/repo" }),
 		);
 	});
 
@@ -975,6 +977,7 @@ describe("C5 incremental review (lastPassSha..HEAD scoping)", () => {
 		);
 		expect(reviewer.runAttempt).toHaveBeenCalledWith(
 			expect.objectContaining({ baseRef: OLD_PASS_SHA }),
+			input.ctx,
 		);
 		expect(log).toHaveBeenCalledWith(
 			expect.stringContaining("incremental review: scoping review"),

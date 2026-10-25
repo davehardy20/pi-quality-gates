@@ -126,6 +126,7 @@ describe("createPrReviewDispatch", () => {
 
 		expect(runAttempt).toHaveBeenCalledWith(
 			expect.objectContaining({ headSha: "head-a" }),
+			expect.objectContaining({ cwd: "/repo" }),
 		);
 		expect(result.blocked).toBe(true);
 		expect(result.stamped).toBe(false);
@@ -369,6 +370,7 @@ describe("createPrReviewDispatch", () => {
 						extraInstructions: "Prefer failing fast over silent fallbacks.",
 					}),
 				}),
+				expect.objectContaining({ cwd: dir }),
 			);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
@@ -463,6 +465,7 @@ describe("createPrReviewDispatch", () => {
 						omittedLines: 777,
 					}),
 				}),
+				expect.objectContaining({ cwd: dir }),
 			);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
@@ -641,6 +644,7 @@ describe("createPrReviewDispatch", () => {
 						extraInstructions: "Prefer failing fast over silent fallbacks.",
 					}),
 				}),
+				expect.objectContaining({ cwd: dir }),
 			);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
@@ -785,6 +789,7 @@ describe("createPrReviewDispatch", () => {
 						extraInstructions: "Prefer failing fast over silent fallbacks.",
 					}),
 				}),
+				expect.objectContaining({ cwd: dir }),
 			);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });

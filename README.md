@@ -115,12 +115,20 @@ This bundle previously shipped an auto-triggering post-turn reviewer. It has
 been retired in favour of explicit `/pr-review` and governed Seeds closeout
 review requests. `/pr-review` prepares a PR diff and runs the configured
 reviewer bridge to produce the `## Review Report`, stamping a PASS token before
-publishing. The default host bridge spawns a read-only headless child Pi; set
+publishing. The default host bridge runs a fixed Pi 1.3.0 SDK worker with
+explicit in-memory settings, sessions and resources, rather than starting the
+ambient Pi CLI and discovered global extensions. The selected provider's resolved
+credential travels over private IPC, never arguments, environment or files. Set
 `PI_PR_REVIEW_BRIDGE=orchestrator` to route the review through a host-side
 orchestrate `verifier`/`pr-review` child when a trusted execution-deadline
 adapter is available (no container is involved on either bridge).
 There is no separate reviewer config file; PR review uses built-in diff limits
-and the reviewer tool policy.
+and the reviewer tool policy. The SDK entry requires the trusted installed
+Pi 1.3.0 runtime and user-scoped safe validation tools. It supports builtin HTTPS
+providers and refuses unsupported SDK versions, missing tools or custom native
+provider implementations rather than falling back to the CLI. OAuth access tokens
+are borrowed from the parent; expired tokens cannot refresh inside the reviewer.
+See [SDK reviewer limits](openwiki/pr-gate.md#reviewer-engine).
 
 #### Workspace validation
 
@@ -217,7 +225,7 @@ remains blocking. Do not substitute harness subsets for the complete harness.
 
 ## Notes
 
-- `/pr-review` runs the configured reviewer bridge (default host child Pi; the
+- `/pr-review` runs the configured reviewer bridge (default host SDK worker; the
   `orchestrate` tool is only required when `PI_PR_REVIEW_BRIDGE=orchestrator` is
   set to route through the host-side verifier child).
 - LSP diagnostics are optional and disabled by default. Enable via linter config.

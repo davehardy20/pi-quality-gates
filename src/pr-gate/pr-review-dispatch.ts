@@ -731,20 +731,23 @@ export function createPrReviewDispatch(
 		};
 		if (deadline.remainingMs() <= 0) return reviewDeadlineExceeded(deadline);
 
-		const result = await deps.reviewerExecution.runAttempt({
-			task,
-			files: changedFiles,
-			cwd,
-			config: reviewConfig,
-			filterOptions,
-			diff,
-			diffCoverage,
-			baseRef,
-			testPlan,
-			headSha: reviewedHeadSha,
-			signal: input.signal,
-			deadline,
-		});
+		const result = await deps.reviewerExecution.runAttempt(
+			{
+				task,
+				files: changedFiles,
+				cwd,
+				config: reviewConfig,
+				filterOptions,
+				diff,
+				diffCoverage,
+				baseRef,
+				testPlan,
+				headSha: reviewedHeadSha,
+				signal: input.signal,
+				deadline,
+			},
+			ctx,
+		);
 		// A bridge must not turn a late/timeout report into PASS evidence.
 		if (deadline.remainingMs() <= 0)
 			return reviewDeadlineExceeded(deadline, result);
