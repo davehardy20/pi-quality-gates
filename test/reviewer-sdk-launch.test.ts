@@ -42,7 +42,11 @@ function fixture() {
 	});
 	return { root, child };
 }
-function run(f: ReturnType<typeof fixture>, spawnProcess: () => unknown) {
+function run(
+	f: ReturnType<typeof fixture>,
+	spawnProcess: () => unknown,
+	withSdkLaunch = true,
+) {
 	return spawnReviewer(
 		"fixed task",
 		"fixed system prompt",
@@ -52,7 +56,7 @@ function run(f: ReturnType<typeof fixture>, spawnProcess: () => unknown) {
 		undefined,
 		spawnProcess as unknown as typeof spawn,
 		f.root,
-		launch,
+		withSdkLaunch ? launch : undefined,
 	);
 }
 afterEach(() => {
@@ -62,15 +66,26 @@ afterEach(() => {
 });
 
 describe("host SDK launch through the existing native supervisor", () => {
-	async function complete(events: string[]) {
+	async function complete(
+		events: string[],
+		withSdkLaunch = true,
+		finalNewline = true,
+	) {
 		const f = fixture();
-		return run(f, () => {
-			queueMicrotask(() => {
-				f.child.stdout.emit("data", Buffer.from(`${events.join("\n")}\n`));
-				f.child.emit("close", 0, null);
-			});
-			return f.child;
-		});
+		return run(
+			f,
+			() => {
+				queueMicrotask(() => {
+					f.child.stdout.emit(
+						"data",
+						Buffer.from(`${events.join("\n")}${finalNewline ? "\n" : ""}`),
+					);
+					f.child.emit("close", 0, null);
+				});
+				return f.child;
+			},
+			withSdkLaunch,
+		);
 	}
 
 	for (const reason of [
@@ -111,13 +126,46 @@ describe("host SDK launch through the existing native supervisor", () => {
 		expect(result.report).toBeNull();
 	});
 
-	it("invalidates an earlier PASS on an unfinished later assistant response", async () => {
-		const result = await complete([
-			event,
-			JSON.stringify({ type: "message_start", message: { role: "assistant" } }),
-		]);
-		expect(result.report).toBeNull();
-	});
+	for (const withSdkLaunch of [false, true]) {
+		const bridge = withSdkLaunch ? "SDK" : "default host";
+		const assistantStart = JSON.stringify({
+			type: "message_start",
+			message: { role: "assistant" },
+		});
+
+		for (const finalNewline of [false, true]) {
+			it(`${bridge}: invalidates an earlier PASS on an unfinished later assistant response (final newline: ${finalNewline})`, async () => {
+				const result = await complete(
+					[event, assistantStart],
+					withSdkLaunch,
+					finalNewline,
+				);
+				expect(result.report).toBeNull();
+				expect(result.rawOutput).toContain(
+					"Reviewer assistant did not complete successfully.",
+				);
+			});
+		}
+
+		it(`${bridge}: accepts a later assistant answer that finishes successfully`, async () => {
+			const result = await complete(
+				[assistant("toolUse", "checking"), assistantStart, event],
+				withSdkLaunch,
+			);
+			expect(result.report?.status).toBe("PASS");
+		});
+
+		it(`${bridge}: ignores non-assistant message starts after PASS`, async () => {
+			const result = await complete(
+				[
+					event,
+					JSON.stringify({ type: "message_start", message: { role: "user" } }),
+				],
+				withSdkLaunch,
+			);
+			expect(result.report?.status).toBe("PASS");
+		});
+	}
 
 	it("parses only the last successful answer rather than concatenating completed reports", async () => {
 		const result = await complete([event, event]);

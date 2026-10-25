@@ -811,6 +811,7 @@ export async function spawnReviewer(
       const overflowSources = new Set<string>();
       let usage = "";
       let terminalAnswer: string | undefined;
+      let assistantInProgress = false;
       let assistantFailed = false;
       let timedOut = false;
       let exited = false;
@@ -903,9 +904,11 @@ export async function spawnReviewer(
           const parsed = parseReviewerStdoutLine(line);
           if (!parsed) return;
           if (parsed.assistantStarted) {
+            assistantInProgress = true;
             terminalAnswer = undefined;
             return;
           }
+          assistantInProgress = false;
           const reason = parsed.stopReason;
           if (reason && reason !== "stop" && reason !== "toolUse") {
             assistantFailed = true;
@@ -946,6 +949,7 @@ export async function spawnReviewer(
         const outputValue = output.value();
         const incompleteAssistant =
           assistantFailed ||
+          assistantInProgress ||
           (launch?.assistantOutputOnly && !terminalAnswer?.trim());
         const stderrValue = stderr.value();
         const outputOverflowed = overflowSources.size > 0;
