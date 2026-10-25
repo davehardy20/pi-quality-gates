@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ReviewConfig } from "../shared/review-config.js";
 import {
   createReviewDeadline,
@@ -45,6 +46,22 @@ export type {
   Severity,
 } from "../shared/review-types.js";
 
+/** Diagnostic wire identity, shared without depending on the SDK launcher. */
+export interface SdkObservedStartupIdentity {
+  type: "reviewer_startup_identity";
+  version: 1;
+  mode: "review" | "startup-only";
+  correlationId: string;
+  resourcePolicy: "closed-sdk-v1";
+  sdkRoot: string;
+  hashes: Record<string, string>;
+  nodeSha256: string;
+  toolSource: string;
+  toolSha256: string;
+  guardSha256: string;
+  tools: string[];
+}
+
 export interface ReviewerResult {
   /** Internal authorization deadline, never authored by a reviewer. */
   reviewDeadline?: ReviewDeadline;
@@ -65,6 +82,19 @@ export interface ReviewerResult {
   /** True when the required test plan exceeded the orchestrator relay budget.
    * No reviewer was started; this is a preflight refusal, not a parse failure. */
   testPlanBudgetExceeded?: boolean;
+  /** Observed file/entry identity only, never startup admission or native attestation. */
+  startupIdentity?: SdkObservedStartupIdentity;
+  terminationConfirmed?: boolean;
+  pid?: number;
+}
+
+/** Host-only fixed entry; never sourced from tool arguments or repository data. */
+export interface ReviewerProcessLaunch {
+  command: string;
+  args: string[];
+  environment: Record<string, string>;
+  /** Closed SDK protocol: stdout-only reports and a successful terminal answer. */
+  assistantOutputOnly?: boolean;
 }
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -99,7 +129,10 @@ export interface ReviewerAttemptInput {
 }
 
 export interface ReviewerExecution {
-  runAttempt(input: ReviewerAttemptInput): Promise<ReviewerResult>;
+  runAttempt(
+    input: ReviewerAttemptInput,
+    ctx?: ExtensionContext,
+  ): Promise<ReviewerResult>;
   /** Skip parent-side diff materialization; the reviewer inspects baseRef..HEAD. */
   inspectRepositoryDirectly?: boolean;
 }
@@ -191,6 +224,11 @@ export interface ReviewerExecutionDependencies {
   renderSystemPrompt?: typeof renderSystemPrompt;
   renderTaskTemplate?: typeof renderTaskTemplate;
   spawnReviewer?: typeof spawnReviewer;
+  /** Host capability, kept separate from serializable review/task inputs. */
+  bindHostSpawner?: (
+    ctx: ExtensionContext,
+    input: ReviewerAttemptInput,
+  ) => typeof spawnReviewer;
   /** Caller-owned private temporary output root; absent uses a fresh temp root. */
   failureDirectory?: string;
   getPromptsDir: () => string;
@@ -311,7 +349,10 @@ export function createReviewerExecution(
   deps: ReviewerExecutionDependencies,
 ): ReviewerExecution {
   return {
-    async runAttempt(input: ReviewerAttemptInput): Promise<ReviewerResult> {
+    async runAttempt(
+      input: ReviewerAttemptInput,
+      ctx?: ExtensionContext,
+    ): Promise<ReviewerResult> {
       const deadline =
         input.deadline ??
         createReviewDeadline(input.config.timeoutMs, deps.now);
@@ -373,7 +414,21 @@ export function createReviewerExecution(
           promptBudgetExceeded: true,
         };
       }
-      const spawn = deps.spawnReviewer ?? spawnReviewer;
+      if (deadline.remainingMs() <= 0) return reviewDeadlineExceeded(deadline);
+      if (deps.bindHostSpawner && !ctx) {
+        return {
+          report: null,
+          rawOutput: "",
+          stderr: "Closed SDK reviewer requires the actual caller context.",
+          exitCode: 1,
+          timedOut: false,
+          command: "(not spawned)",
+        };
+      }
+      const spawn =
+        ctx && deps.bindHostSpawner
+          ? deps.bindHostSpawner(ctx, input)
+          : (deps.spawnReviewer ?? spawnReviewer);
       // Stamp the diff-coverage signal onto the parsed report (metadata; not
       // authored by the reviewer child).
       const stampCoverage = (result: ReviewerResult): ReviewerResult =>
@@ -606,6 +661,8 @@ const MAX_REVIEWER_STDERR_CHARS = 65_536;
 export interface ParsedReviewerStdoutLine {
   assistantText: string;
   usage?: string;
+  stopReason?: string;
+  assistantStarted?: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -635,11 +692,18 @@ export function parseReviewerStdoutLine(
   if (!line.trim()) return null;
   try {
     const event: unknown = JSON.parse(line);
-    if (!isRecord(event) || event.type !== "message_end") return null;
+    if (!isRecord(event)) return null;
     const message = event.message;
     if (!isRecord(message) || message.role !== "assistant") return null;
+    if (event.type === "message_start") {
+      return { assistantText: "", assistantStarted: true };
+    }
+    if (event.type !== "message_end") return null;
     const parsed: ParsedReviewerStdoutLine = {
       assistantText: collectAssistantText(message.content),
+      ...(typeof message.stopReason === "string"
+        ? { stopReason: message.stopReason }
+        : {}),
     };
     if (isRecord(message.usage)) {
       parsed.usage = formatReviewerUsage(message.usage);
@@ -685,11 +749,29 @@ export async function spawnReviewer(
   deadline: ReviewDeadline = createReviewDeadline(config.timeoutMs),
   spawnProcess: typeof spawn = spawn,
   failureDirectory?: string,
+  launch?: ReviewerProcessLaunch,
 ): Promise<ReviewerResult> {
-  if (deadline.remainingMs() <= 0) return reviewDeadlineExceeded(deadline);
+  const preflightFailure = (): ReviewerResult | undefined => {
+    if (signal?.aborted) {
+      const diagnostic = "Reviewer request cancelled before process launch.";
+      return {
+        report: null,
+        rawOutput: diagnostic,
+        exitCode: 1,
+        timedOut: false,
+        stderr: diagnostic,
+        command: "(reviewer not started)",
+      };
+    }
+    if (deadline.remainingMs() <= 0) return reviewDeadlineExceeded(deadline);
+    return undefined;
+  };
+  const initialFailure = preflightFailure();
+  if (initialFailure) return initialFailure;
   const tmpDir = await fs.promises.mkdtemp(
     path.join(os.tmpdir(), "pi-reviewer-"),
   );
+  let retainPromptRoot = false;
 
   try {
     // Write system prompt to temp file for --append-system-prompt
@@ -699,14 +781,16 @@ export async function spawnReviewer(
       mode: 0o600,
     });
 
-    // Keep extensions enabled: safe validation runners are extension-provided
-    // in normal Pi sessions, and /pr-review must expose them to the child.
-    const piArgs = buildReviewerPiArgs(config, promptFile);
+    // Legacy callers retain their CLI entry. The closed SDK entry uses a fixed
+    // invocation and sends its task/provider material only through private IPC.
+    const piArgs = launch ? [] : buildReviewerPiArgs(config, promptFile);
 
     // NOTE: pi CLI does not support --max-tokens; maxTokens is config-only
     // and can be used by consumers for logging or provider-specific limits.
 
-    const invocationForCommand = getPiInvocation(piArgs);
+    const invocationForCommand = launch
+      ? { command: launch.command, args: [...launch.args] }
+      : getPiInvocation(piArgs);
     const commandStr = buildSanitizedReviewerCommand(
       invocationForCommand.command,
       invocationForCommand.args,
@@ -717,19 +801,26 @@ export async function spawnReviewer(
     // ReviewerResult.command to avoid persisting task/diff text in appendEntry.
     piArgs.push(taskPrompt);
 
-    const invocation = getPiInvocation(piArgs);
+    const invocation = launch ? invocationForCommand : getPiInvocation(piArgs);
 
-    if (deadline.remainingMs() <= 0) return reviewDeadlineExceeded(deadline);
+    const preparationFailure = preflightFailure();
+    if (preparationFailure) return preparationFailure;
     return await new Promise<ReviewerResult>((resolve) => {
       const output = createBoundedTextCapture(MAX_REVIEWER_OUTPUT_CHARS);
       const stderr = createBoundedTextCapture(MAX_REVIEWER_STDERR_CHARS);
       const overflowSources = new Set<string>();
       let usage = "";
+      let terminalAnswer: string | undefined;
+      let assistantInProgress = false;
+      let assistantFailed = false;
       let timedOut = false;
       let exited = false;
       let terminationRequested = false;
+      let settled = false;
+      let processError = false;
       let timeoutId: ReturnType<typeof setTimeout>;
       let killTimer: ReturnType<typeof setTimeout> | undefined;
+      let exitWaitTimer: ReturnType<typeof setTimeout> | undefined;
       let onAbort: (() => void) | undefined;
 
       const proc = spawnProcess(invocation.command, invocation.args, {
@@ -738,7 +829,7 @@ export async function spawnReviewer(
         stdio: ["ignore", "pipe", "pipe"],
         // Kill switch for Compact+ auto-compaction in the ephemeral reviewer
         // child; extensions (safe runners) stay enabled. See buildReviewerChildEnv.
-        env: buildReviewerChildEnv(),
+        env: launch ? { ...launch.environment } : buildReviewerChildEnv(),
       });
 
       const cleanupControlState = () => {
@@ -747,23 +838,60 @@ export async function spawnReviewer(
           clearTimeout(killTimer);
           killTimer = undefined;
         }
+        if (exitWaitTimer) {
+          clearTimeout(exitWaitTimer);
+          exitWaitTimer = undefined;
+        }
         if (signal && onAbort) {
           signal.removeEventListener("abort", onAbort);
           onAbort = undefined;
         }
       };
 
-      const requestTermination = (source: "timeout" | "abort") => {
+      const requestTermination = (
+        source: "timeout" | "abort" | "process" | "overflow",
+      ) => {
         if (source === "timeout") timedOut = true;
+        if (source === "process") processError = true;
         clearTimeout(timeoutId);
-        if (terminationRequested || exited) return;
+        if (terminationRequested || exited || settled) return;
         terminationRequested = true;
-        proc.kill("SIGTERM");
+        try {
+          proc.kill("SIGTERM");
+        } catch {
+          // A failed signal is not termination evidence.
+        }
+        if (exited || settled) return;
         killTimer = setTimeout(() => {
           killTimer = undefined;
-          if (!exited) proc.kill("SIGKILL");
+          if (exited || settled) return;
+          try {
+            proc.kill("SIGKILL");
+          } catch {
+            // Retain the owned root until closure can be confirmed.
+          }
+          if (exited || settled) return;
+          exitWaitTimer = setTimeout(() => {
+            if (exited || settled) return;
+            settled = true;
+            retainPromptRoot = true;
+            cleanupControlState();
+            resolve({
+              report: null,
+              rawOutput: output.value(),
+              stderr:
+                "Reviewer termination unconfirmed; owned prompt root retained.",
+              exitCode: 1,
+              timedOut,
+              command: commandStr,
+              sidecarPath: tmpDir,
+              terminationConfirmed: false,
+              ...(proc.pid ? { pid: proc.pid } : {}),
+            });
+          }, 5000);
         }, 5000);
       };
+      proc.on("error", () => requestTermination("process"));
 
       timeoutId = setTimeout(
         () => requestTermination("timeout"),
@@ -775,6 +903,22 @@ export async function spawnReviewer(
         (line) => {
           const parsed = parseReviewerStdoutLine(line);
           if (!parsed) return;
+          if (parsed.assistantStarted) {
+            assistantInProgress = true;
+            terminalAnswer = undefined;
+            return;
+          }
+          assistantInProgress = false;
+          const reason = parsed.stopReason;
+          if (reason && reason !== "stop" && reason !== "toolUse") {
+            assistantFailed = true;
+          }
+          if (launch?.assistantOutputOnly) {
+            if (reason !== "stop" && reason !== "toolUse")
+              assistantFailed = true;
+            terminalAnswer =
+              reason === "stop" ? parsed.assistantText : undefined;
+          }
           output.append(parsed.assistantText);
           if (output.overflowed()) overflowSources.add("assistant output");
           if (parsed.usage) usage = parsed.usage;
@@ -784,34 +928,58 @@ export async function spawnReviewer(
       proc.stdout.on("data", (data: Buffer) => {
         stdoutLines.append(data.toString());
         if (stdoutLines.overflowed()) overflowSources.add("stdout JSON line");
+        if (overflowSources.size) requestTermination("overflow");
       });
 
       proc.stderr.on("data", (data: Buffer) => {
         stderr.append(data.toString());
-        if (stderr.overflowed()) overflowSources.add("stderr");
+        if (stderr.overflowed()) {
+          overflowSources.add("stderr");
+          requestTermination("overflow");
+        }
       });
 
-      proc.on("close", async (code) => {
+      proc.on("close", async (code, closedSignal) => {
         exited = true;
         cleanupControlState();
-        clearTimeout(timeoutId);
+        if (settled) return;
+        settled = true;
         stdoutLines.flush();
 
         const outputValue = output.value();
+        const incompleteAssistant =
+          assistantFailed ||
+          assistantInProgress ||
+          (launch?.assistantOutputOnly && !terminalAnswer?.trim());
         const stderrValue = stderr.value();
         const outputOverflowed = overflowSources.size > 0;
         const overflowNote = outputOverflowed
           ? `[reviewer output exceeded memory limits: ${[...overflowSources].join(", ")}].`
           : "";
-        // Fallback: if no structured output but stderr has content, use it.
-        const capturedOutput = outputValue || stderrValue;
-        const rawOutput = overflowNote
-          ? `${overflowNote}\n${capturedOutput}`
-          : capturedOutput;
+        // Preserve legacy diagnostics, but never treat SDK stderr as a report.
+        const capturedOutput =
+          launch?.assistantOutputOnly && !incompleteAssistant
+            ? (terminalAnswer ?? "")
+            : outputValue || (launch?.assistantOutputOnly ? "" : stderrValue);
+        const rawOutput = [
+          overflowNote,
+          incompleteAssistant
+            ? "Reviewer assistant did not complete successfully."
+            : "",
+          capturedOutput,
+        ]
+          .filter(Boolean)
+          .join("\n");
         // Any overflow fails closed: a partial report cannot stamp a PASS token.
         if (deadline.remainingMs() <= 0) timedOut = true;
         const report =
-          outputOverflowed || timedOut || signal?.aborted
+          outputOverflowed ||
+          incompleteAssistant ||
+          timedOut ||
+          signal?.aborted ||
+          processError ||
+          code !== 0 ||
+          closedSignal
             ? null
             : parseReviewReport(rawOutput);
         let sidecarPath: string | undefined;
@@ -821,7 +989,7 @@ export async function spawnReviewer(
               {
                 rawOutput,
                 stderr: stderrValue,
-                exitCode: code ?? 0,
+                exitCode: code ?? 1,
                 timedOut,
                 usage: usage || undefined,
                 command: commandStr,
@@ -840,8 +1008,10 @@ export async function spawnReviewer(
         resolve({
           report,
           rawOutput,
-          exitCode: code ?? 0,
+          exitCode: code ?? 1,
           timedOut,
+          terminationConfirmed: true,
+          ...(proc.pid ? { pid: proc.pid } : {}),
           usage: usage || undefined,
           stderr: stderrValue,
           command: commandStr,
@@ -860,7 +1030,9 @@ export async function spawnReviewer(
   } finally {
     // Clean up temp dir
     try {
-      await fs.promises.rm(tmpDir, { recursive: true, force: true });
+      if (!retainPromptRoot) {
+        await fs.promises.rm(tmpDir, { recursive: true, force: true });
+      }
     } catch {
       // Best-effort cleanup
     }
