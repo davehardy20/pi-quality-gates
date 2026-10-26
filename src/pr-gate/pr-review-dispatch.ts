@@ -667,7 +667,12 @@ export function createPrReviewDispatch(
 		const policy = (
 			deps.loadReviewValidationPolicy ?? loadReviewValidationPolicy
 		)(undefined, undefined, cwd);
-		const plan = recommendTestCommands(changedFiles, cwd, policy);
+		const plan = recommendTestCommands(
+			changedFiles,
+			cwd,
+			policy,
+			unfilteredChangedFiles,
+		);
 		const timeoutMs = reviewerTimeoutForPlan(
 			plan.runnerCommands,
 			policy,
