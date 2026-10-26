@@ -45,6 +45,7 @@ import {
 	type ReviewKickoffResult,
 } from "./review-coordinator.js";
 import { createReviewerExecution, type ReviewerExecution } from "./reviewer.js";
+import { createSdkReviewerLauncher } from "./reviewer-sdk-spawn.js";
 
 export interface PrGateConfig {
 	/** Whether the push gate is active. Default: true. */
@@ -167,7 +168,7 @@ function sendPrReviewStatus(
 
 /**
  * PR reviewer execution bridge. The review is read-only, so the default `host`
- * bridge spawns a headless child Pi that runs validation (e.g. run_typecheck)
+ * bridge starts a fixed SDK worker that runs validation (e.g. run_typecheck)
  * against the repository checkout, where dependencies already live. The
  * Apple container sandbox is reserved for mutating workers; PI_PR_REVIEW_BRIDGE=orchestrator
  * opts into a host-side orchestrator verifier child instead (see mx-87a9dd,
@@ -191,6 +192,9 @@ function resolveReviewerBridgeMode(
 
 export interface PrGateExtensionDeps {
 	createPrReviewDispatch?: typeof createPrReviewDispatch;
+	/** Inert test seams; never resolved from repository settings. */
+	createReviewerExecution?: typeof createReviewerExecution;
+	createSdkReviewerLauncher?: typeof createSdkReviewerLauncher;
 	/** Override HEAD sha resolution (tests inject a fake without spawning git). */
 	resolveHeadSha?: (cwd: string) => string;
 	/**
@@ -238,13 +242,18 @@ export default function prGateExtension(
 	}
 	const reviewerExecution: ReviewerExecution = orchestratorReviewer
 		? orchestratorReviewer.reviewerExecution
-		: createReviewerExecution({ getPromptsDir });
+		: (deps.createReviewerExecution ?? createReviewerExecution)({
+				getPromptsDir,
+				bindHostSpawner: (
+					deps.createSdkReviewerLauncher ?? createSdkReviewerLauncher
+				)(() => pi.getAllTools()),
+			});
 
 	// The orchestrator bridge is async: it routes review through a follow-up
 	// `orchestrate` call and resolves a correlated tool_result. Dispatch alone
 	// authorizes PASS after final checkout and deadline guards. The host
-	// bridge spawns a headless child Pi directly and returns its report, so it
-	// needs no tool_result listener.
+	// bridge starts the fixed SDK worker without a Pi CLI/global extension
+	// startup and returns its report, so it needs no tool_result listener.
 	if (orchestratorReviewer) {
 		pi.on("tool_result", (event) => {
 			orchestratorReviewer.handleToolResult(event);

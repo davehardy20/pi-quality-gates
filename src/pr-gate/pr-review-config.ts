@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ReviewConfig } from "../shared/review-config.js";
+import { CLOSED_REVIEWER_TOOLS } from "./reviewer-closed-session.js";
 
 /**
  * PR reviewer configuration.
@@ -123,34 +124,7 @@ export const PR_REVIEW_CONFIG: ReviewConfig = {
 	autoFixThreshold: "warning",
 	maxTokens: 8192,
 	timeoutMs: 45 * 60_000,
-	tools: [
-		"read",
-		"grep",
-		"find",
-		"ls",
-		"safe_parse_file",
-		"ast_grep_search",
-		"lsp_goto_definition",
-		"lsp_find_references",
-		"lsp_diagnostics",
-		"lsp_symbols",
-		"lsp_prepare_rename",
-		"git_inspect_safe",
-		"context7_library",
-		"context7_docs",
-		"web_search",
-		"mulch_query",
-		"mulch_search",
-		"seeds_show",
-		"seeds_plan_show",
-		"run_biome",
-		"run_vitest",
-		"run_typecheck",
-		"run_pytest",
-		"run_cargo_test",
-		"run_node_test",
-		"compact_plus_query_tool_output",
-	],
+	tools: [...CLOSED_REVIEWER_TOOLS],
 	allowedBashPatterns: [],
 	respectGitignore: true,
 	skipFile: ".pi/reviewer.skip",
