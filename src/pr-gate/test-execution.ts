@@ -4,6 +4,7 @@ import {
 	loadReviewValidationPolicy,
 	type ReviewValidationPolicy,
 } from "../shared/review-validation-policy.js";
+import { scopeBiomeValidation } from "./biome-validation-scope.js";
 import { discoverWorkspaceValidationProjects } from "./workspace-validation.js";
 
 /**
@@ -363,6 +364,13 @@ function buildTestCommands(files: string[], cwd: string): TestExecutionPlan {
 					extension === ".jsonc"
 				);
 			});
+			// The complete path set is already validated by existingChangedFiles.
+			// Keep deletions in the config-change guard, never in runner arguments.
+			const biomeScope = scopeBiomeValidation(
+				lintFiles,
+				cwd,
+				files.map((file) => path.posix.normalize(file)),
+			);
 			const runnerCommands: RecommendedTestCommand[] = [];
 			for (const test of changedTests) {
 				const testRunner: SafeRunnerTool =
@@ -419,11 +427,11 @@ function buildTestCommands(files: string[], cwd: string): TestExecutionPlan {
 					...(!isRoot ? { project } : {}),
 				});
 			}
-			if (lintFiles.length > 0) {
+			if (biomeScope.files.length > 0) {
 				runnerCommands.push({
 					tool: "run_biome",
-					args: lintFiles,
-					command: command("run_biome", lintFiles),
+					args: biomeScope.files,
+					command: command("run_biome", biomeScope.files),
 					scope: "format-lint",
 				});
 			}
@@ -451,7 +459,8 @@ function buildTestCommands(files: string[], cwd: string): TestExecutionPlan {
 				`${discovery}. Filename selection is conservative; inspect project ` +
 					"configuration and relevant tests for helper/source changes. Run " +
 					"additional relevant entries with safe runners, including custom " +
-					"configured tests; do not execute config or package scripts directly.",
+					"configured tests; do not execute config or package scripts directly." +
+					(biomeScope.note ? ` ${biomeScope.note}` : ""),
 			);
 		}
 		case "python": {
