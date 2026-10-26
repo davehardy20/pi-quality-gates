@@ -162,7 +162,9 @@ export function scopeBiomeValidation(
 	if (!configs.length) return { files };
 	if (
 		configs.length !== 1 ||
-		changedPaths.some((file) => CONFIG_NAMES.includes(file))
+		// A case-insensitive host can read a case-variant tracked config through
+		// the lowercase lookup above. Fold case only for this conservative guard.
+		changedPaths.some((file) => CONFIG_NAMES.includes(file.toLowerCase()))
 	) {
 		return unresolved();
 	}

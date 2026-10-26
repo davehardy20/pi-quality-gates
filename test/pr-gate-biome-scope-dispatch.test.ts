@@ -22,16 +22,18 @@ describe("Biome scope through review dispatch", () => {
 	it.each([
 		{ config: "biome.json", changed: ["biome.json"] },
 		{ config: "biome.jsonc", changed: ["biome.jsonc"] },
+		{ config: "biome.json", changed: ["Biome.json"] },
+		{ config: "biome.json", changed: ["BIOME.JSON"] },
+		{ config: "biome.jsonc", changed: ["Biome.jsonc"] },
+		{ config: "biome.jsonc", changed: ["BIOME.JSONC"] },
 		{ config: "biome.jsonc", changed: ["biome.json", "biome.jsonc"] },
 		{ config: "biome.json", changed: ["biome.jsonc", "biome.json"] },
 		// A deleted configuration alone must disable use of the remaining one.
 		{ config: "biome.jsonc", changed: ["biome.json"] },
 		{ config: "biome.json", changed: ["biome.jsonc"] },
 		{ config: "biome.json", changed: [] },
-	])("uses unfiltered config changes: $config / $changed", async ({
-		config,
-		changed,
-	}) => {
+	])("guards config: $config / $changed", async (entry) => {
+		const { config, changed } = entry;
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "biome-dispatch-"));
 		roots.push(root);
 		fs.mkdirSync(path.join(root, ".pi"));

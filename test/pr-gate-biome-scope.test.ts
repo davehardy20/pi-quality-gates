@@ -217,6 +217,20 @@ describe("PR review Biome scope", () => {
 	});
 
 	it.each([
+		["biome.json", "Biome.json"],
+		["biome.json", "BIOME.JSON"],
+		["biome.jsonc", "Biome.jsonc"],
+		["biome.jsonc", "BIOME.JSONC"],
+	])("guards case-variant configs: %s / %s", (config, changed) => {
+		// Keep the config readable on case-sensitive test hosts too; only the
+		// conservative change guard folds case, not ordinary include patterns.
+		const root = fixture({ files: { includes: ["test/**"] } }, config);
+		const result = scopeBiomeValidation(["src/a.ts"], root, [changed]);
+		expect(result.files).toEqual(["src/a.ts"]);
+		expect(result.note).toContain("unresolved");
+	});
+
+	it.each([
 		["biome.json", "biome.jsonc"],
 		["biome.jsonc", "biome.json"],
 		["./biome.json", "biome.jsonc"],
@@ -251,12 +265,13 @@ describe("PR review Biome scope", () => {
 		expect(result.discoveryCommand).toContain("unresolved");
 	});
 
-	it.each([
+	const invalidUnfilteredPaths = [
 		"../biome.json",
 		"/biome.json",
 		"src/../biome.json",
 		"src\\\\a.ts",
-	])("rejects invalid unfiltered paths before normalization: %s", (file) => {
+	];
+	it.each(invalidUnfilteredPaths)("rejects invalid guard paths: %s", (file) => {
 		const root = fixture({ files: { includes: ["test/**"] } });
 		put(root, "src/a.ts", "export const a = 1;");
 		expect(() =>
