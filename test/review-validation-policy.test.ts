@@ -40,6 +40,7 @@ describe("trusted review validation policy", () => {
 		expect(defaults).toEqual({
 			defaultTimeoutMs: 300_000,
 			repoOverrides: {},
+			pytestPartitions: {},
 			reviewOverheadMs: 600_000,
 			maxReviewerTimeoutMs: 7_200_000,
 			validationMaxTimeoutMs: 1_800_000,

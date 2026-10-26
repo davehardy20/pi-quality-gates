@@ -249,6 +249,55 @@ Discovery accepts contained file symlinks without traversing them; metadata cons
 | Rust | `run_cargo_test` | All |
 | Go | No runner commands, discovery only | — |
 
+### Exhaustive Python partitions (opt-in)
+
+By default, Python still requires targeted whole-file checks followed by one
+unfiltered full-suite call. An owner may instead declare a two-way partition
+in **`~/.pi/agent/settings.json`**; repository settings cannot supply it:
+
+```json
+{
+  "qualityGates": {
+    "reviewValidation": {
+      "pytestPartitions": {
+        "/absolute/canonical/repository": {
+          "keyword": "fresh_installed",
+          "matchingTimeoutMs": 210000,
+          "remainingTimeoutMs": 300000
+        }
+      }
+    }
+  }
+}
+```
+
+For that exact repository, the planner replaces only the broad call with:
+
+- `run_pytest {"keyword":"not (fresh_installed)","timeoutMs":300000}`
+- `run_pytest {"keyword":"fresh_installed","timeoutMs":210000}`
+
+Both calls retain the **same full collection scope** as the original call;
+no narrower paths or second independent filter may be configured. Their
+selectors are complementary, so together they select the original suite.
+Targeted whole-file checks and their existing timeout overrides remain intact.
+Both full-suite calls are required: a targeted subset cannot replace either;
+empty selection, failure or timeout is not successful completion.
+
+`keyword` must be one ASCII identifier (letter/underscore, then letters,
+digits/underscores; at most 128 characters), excluding `and`, `or`, `not`
+case-insensitively. Expressions, paths, excludes and unknown fields are refused.
+Both timeout fields are optional, defaulting to `reviewValidation.defaultTimeoutMs`
+(300000 ms by default), never to the safe runner's shorter default. Each must
+fit the existing trusted safe-runner ceiling; both count toward the existing
+aggregate reviewer deadline and maximum. Invalid policy fails closed before
+reviewer startup. Inactive repository entries get syntax/budget validation,
+not filesystem inspection, just like `repoOverrides`.
+
+This is a planning contract, not per-test execution telemetry or subprocess
+isolation. Existing reviewer evidence, exact-HEAD and startup-admission checks
+still apply. This example is not activation approval and does not add Ruff
+access; that capability requires its separate implementation and admission.
+
 **Invariant**: A PASS requires executed validation. The default `host` bridge
 runs the safe validation runners (e.g. `run_typecheck`) against the repository
 checkout; the `orchestrator` bridge runs them through its host-side orchestrate
