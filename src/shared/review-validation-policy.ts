@@ -10,9 +10,17 @@ const REVIEW_HARD_MAX_MS = 86_400_000;
 const MAX_SETTINGS_BYTES = 1_048_576;
 const POLICY_ERROR = "Invalid trusted review validation policy.";
 
+export interface PytestPartition {
+	/** One ASCII identifier, never an arbitrary pytest expression. */
+	keyword: string;
+	matchingTimeoutMs: number;
+	remainingTimeoutMs: number;
+}
+
 export interface ReviewValidationPolicy {
 	defaultTimeoutMs: number;
 	repoOverrides: Record<string, Record<string, number>>;
+	pytestPartitions: Record<string, PytestPartition>;
 	reviewOverheadMs: number;
 	maxReviewerTimeoutMs: number;
 	validationMaxTimeoutMs: number;
@@ -38,6 +46,15 @@ function block(value: unknown): Record<string, unknown> {
 }
 function keys(value: Record<string, unknown>, allowed: string[]): void {
 	if (Object.keys(value).some((key) => !allowed.includes(key))) invalid();
+}
+function literalKeyword(value: unknown): value is string {
+	return (
+		typeof value === "string" &&
+		value.length <= 128 &&
+		/^[A-Za-z_]/.test(value) &&
+		!/[^A-Za-z0-9_]/.test(value) &&
+		!["and", "or", "not"].includes(value.toLowerCase())
+	);
 }
 function unsafePath(value: string): boolean {
 	return (
@@ -111,6 +128,7 @@ export function parseReviewValidationPolicy(
 		keys(review, [
 			"defaultTimeoutMs",
 			"repoOverrides",
+			"pytestPartitions",
 			"reviewOverheadMs",
 			"maxReviewerTimeoutMs",
 		]);
@@ -144,9 +162,40 @@ export function parseReviewValidationPolicy(
 			}
 			if (selected) repoOverrides[root] = budgets;
 		}
+		const pytestPartitions: ReviewValidationPolicy["pytestPartitions"] =
+			Object.create(null);
+		for (const [root, value] of Object.entries(
+			block(review.pytestPartitions),
+		)) {
+			if (!record(value)) invalid();
+			keys(value, ["keyword", "matchingTimeoutMs", "remainingTimeoutMs"]);
+			const selected = repoRoot === undefined || root === repoRoot;
+			validateRoot(root, selected);
+			const matchingTimeoutMs =
+				value.matchingTimeoutMs === undefined
+					? defaultTimeoutMs
+					: value.matchingTimeoutMs;
+			const remainingTimeoutMs =
+				value.remainingTimeoutMs === undefined
+					? defaultTimeoutMs
+					: value.remainingTimeoutMs;
+			if (
+				!literalKeyword(value.keyword) ||
+				!bounded(matchingTimeoutMs, ceiling) ||
+				!bounded(remainingTimeoutMs, ceiling)
+			)
+				invalid();
+			if (selected)
+				pytestPartitions[root] = {
+					keyword: value.keyword,
+					matchingTimeoutMs,
+					remainingTimeoutMs,
+				};
+		}
 		return {
 			defaultTimeoutMs,
 			repoOverrides,
+			pytestPartitions,
 			reviewOverheadMs,
 			maxReviewerTimeoutMs,
 			validationMaxTimeoutMs: ceiling,

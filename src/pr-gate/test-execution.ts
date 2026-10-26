@@ -42,6 +42,8 @@ export interface RecommendedTestCommand {
 	 * dependencies. Omitted when no configured or inferred import is needed.
 	 */
 	import?: string;
+	/** Trusted pytest literal or the planner-generated complement. */
+	keyword?: string;
 }
 
 export interface TestExecutionPlan {
@@ -280,6 +282,7 @@ function formatRunnerCommand(cmd: RecommendedTestCommand): string {
 		...(cmd.project ? { project: cmd.project } : {}),
 		...(cmd.args.length > 0 ? { paths: cmd.args } : {}),
 		...(cmd.import ? { import: cmd.import } : {}),
+		...(cmd.keyword ? { keyword: cmd.keyword } : {}),
 		timeoutMs: cmd.timeoutMs ?? REVIEW_VALIDATION_TIMEOUT_MS,
 	};
 	return `${cmd.tool} ${JSON.stringify(params)}`;
@@ -302,10 +305,17 @@ export function recommendTestCommands(
 	unfilteredChangedFiles: string[] = files,
 ): TestExecutionPlan {
 	const plan = buildTestCommands(files, cwd, unfilteredChangedFiles);
-	const overrides = Object.keys(policy.repoOverrides).length
-		? policy.repoOverrides[fs.realpathSync(cwd)]
-		: undefined;
-	plan.runnerCommands = plan.runnerCommands.map((call) => {
+	const root =
+		Object.keys(policy.repoOverrides).length ||
+		Object.keys(policy.pytestPartitions).length
+			? fs.realpathSync(cwd)
+			: undefined;
+	const overrides = root ? policy.repoOverrides[root] : undefined;
+	const partition =
+		root && plan.ecosystem === "python"
+			? policy.pytestPartitions[root]
+			: undefined;
+	plan.runnerCommands = plan.runnerCommands.flatMap((call) => {
 		// Trusted budgets are keyed by repository-relative paths, even when
 		// the runner's cwd and test paths are workspace-local.
 		const budgetFile =
@@ -322,16 +332,40 @@ export function recommendTestCommands(
 			call.scope === "targeted" && call.args.length === 1
 				? (overrides?.[budgetFile] ?? policy.defaultTimeoutMs)
 				: policy.defaultTimeoutMs;
-		if (
-			!Number.isSafeInteger(timeoutMs) ||
-			timeoutMs < 1_000 ||
-			timeoutMs > policy.validationMaxTimeoutMs
-		)
-			throw new Error(
-				"Review validation budget exceeds trusted runner ceiling.",
-			);
-		return { ...call, timeoutMs };
+		// Partition only the original full-suite call, never targeted entries.
+		// Both retain the exact collection scope; the complement is generated,
+		// not a separately configurable filter that could omit tests.
+		const calls =
+			partition && call.tool === "run_pytest" && call.scope === "broad"
+				? [
+						{
+							...call,
+							keyword: `not (${partition.keyword})`,
+							timeoutMs: partition.remainingTimeoutMs,
+						},
+						{
+							...call,
+							keyword: partition.keyword,
+							timeoutMs: partition.matchingTimeoutMs,
+						},
+					].map((next) => ({ ...next, command: formatRunnerCommand(next) }))
+				: [{ ...call, timeoutMs }];
+		for (const next of calls) {
+			if (
+				!Number.isSafeInteger(next.timeoutMs) ||
+				next.timeoutMs < 1_000 ||
+				next.timeoutMs > policy.validationMaxTimeoutMs
+			)
+				throw new Error(
+					"Review validation budget exceeds trusted runner ceiling.",
+				);
+		}
+		return calls;
 	});
+	plan.recommendedCommands = plan.runnerCommands.map((call) => call.command);
+	if (partition)
+		plan.resultContract +=
+			" Both complementary full-suite calls are required over the same collection scope; targeted checks cannot replace either call. Empty selection, timeout or progress alone is not completion evidence.";
 	return plan;
 }
 
