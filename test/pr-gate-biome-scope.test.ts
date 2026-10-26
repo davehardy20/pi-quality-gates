@@ -236,6 +236,58 @@ describe("PR review Biome scope", () => {
 		expect(result.discoveryCommand).toContain("unresolved");
 	});
 
+	it("uses separately supplied unfiltered paths only for the configuration guard", () => {
+		const root = fixture({ files: { includes: ["test/**"] } });
+		put(root, "src/a.ts", "export const a = 1;");
+		const result = recommendTestCommands(
+			["src/a.ts"],
+			root,
+			parseReviewValidationPolicy({}),
+			["src/a.ts", "./biome.json"],
+		);
+		expect(
+			result.runnerCommands.find((call) => call.tool === "run_biome")?.args,
+		).toEqual(["src/a.ts"]);
+		expect(result.discoveryCommand).toContain("unresolved");
+	});
+
+	it.each([
+		"../biome.json",
+		"/biome.json",
+		"src/../biome.json",
+		"src\\\\a.ts",
+	])("rejects invalid unfiltered paths before normalization: %s", (file) => {
+		const root = fixture({ files: { includes: ["test/**"] } });
+		put(root, "src/a.ts", "export const a = 1;");
+		expect(() =>
+			recommendTestCommands(
+				["src/a.ts"],
+				root,
+				parseReviewValidationPolicy({}),
+				[file],
+			),
+		).toThrow(/changed path/);
+	});
+
+	it("rejects external symlinks in unfiltered paths even when review filters hide them", () => {
+		const outside = fixture();
+		put(outside, "target.json", "{}");
+		const root = fixture({ files: { includes: ["test/**"] } });
+		put(root, "src/a.ts", "export const a = 1;");
+		fs.symlinkSync(
+			path.join(outside, "target.json"),
+			path.join(root, "hidden.json"),
+		);
+		expect(() =>
+			recommendTestCommands(
+				["src/a.ts"],
+				root,
+				parseReviewValidationPolicy({}),
+				["src/a.ts", "hidden.json"],
+			),
+		).toThrow(/escapes the workspace/);
+	});
+
 	const invalidPaths = [
 		"../outside.json",
 		"/outside.json",

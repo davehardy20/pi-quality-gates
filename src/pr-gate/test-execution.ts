@@ -292,13 +292,16 @@ function formatRunnerCommand(cmd: RecommendedTestCommand): string {
  *
  * @param files Changed file paths relative to `cwd`.
  * @param cwd Project root.
+ * @param unfilteredChangedFiles Full changed-path set for configuration guards,
+ * including review-filtered and deleted paths. Never used as runner arguments.
  */
 export function recommendTestCommands(
 	files: string[],
 	cwd: string,
 	policy: ReviewValidationPolicy = loadReviewValidationPolicy(),
+	unfilteredChangedFiles: string[] = files,
 ): TestExecutionPlan {
-	const plan = buildTestCommands(files, cwd);
+	const plan = buildTestCommands(files, cwd, unfilteredChangedFiles);
 	const overrides = Object.keys(policy.repoOverrides).length
 		? policy.repoOverrides[fs.realpathSync(cwd)]
 		: undefined;
@@ -332,12 +335,20 @@ export function recommendTestCommands(
 	return plan;
 }
 
-function buildTestCommands(files: string[], cwd: string): TestExecutionPlan {
+function buildTestCommands(
+	files: string[],
+	cwd: string,
+	unfilteredChangedFiles: string[],
+): TestExecutionPlan {
 	const ecosystem = detectProjectEcosystem(cwd);
 	const testFiles = files.filter(isTestFile);
 
 	switch (ecosystem) {
 		case "typescript": {
+			// Validate before normalization, even when review filters hide a path.
+			// Discard the existing-only result: deleted config names still guard lint.
+			if (unfilteredChangedFiles !== files)
+				existingChangedFiles(unfilteredChangedFiles, cwd);
 			const changedFiles = existingChangedFiles(files, cwd);
 			const workspace = discoverWorkspaceValidationProjects(cwd);
 			const packageDirs = [...workspace.packages].sort(
@@ -364,12 +375,12 @@ function buildTestCommands(files: string[], cwd: string): TestExecutionPlan {
 					extension === ".jsonc"
 				);
 			});
-			// The complete path set is already validated by existingChangedFiles.
-			// Keep deletions in the config-change guard, never in runner arguments.
+			// Guard with the validated, unfiltered set so reviewer.skip/gitignore
+			// cannot hide a config change. Runner arguments remain filtered/existing.
 			const biomeScope = scopeBiomeValidation(
 				lintFiles,
 				cwd,
-				files.map((file) => path.posix.normalize(file)),
+				unfilteredChangedFiles.map((file) => path.posix.normalize(file)),
 			);
 			const runnerCommands: RecommendedTestCommand[] = [];
 			for (const test of changedTests) {

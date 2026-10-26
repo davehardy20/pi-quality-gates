@@ -31,9 +31,13 @@ Comments/trailing commas, inheritance, non-root configurations, unsupported
 patterns, conflicting config names and nested configurations retain required
 lint checks for unresolved paths. Missing explicit file scope preserves the
 existing lint plan. A changed or deleted root Biome configuration also retains
-all checks. The guard receives the complete validated changed-path set, while
-deleted files never enter runner arguments. A PR cannot use its own new
-exclusions or a config-name switch to suppress required lint validation.
+all checks. Dispatch passes the unfiltered changed-path set separately from
+review-filtered candidates. The planner validates it before normalization and
+uses it only for the config-change guard, including deleted config names.
+Neither `.pi/reviewer.skip` nor gitignore filtering can hide a config change
+from this guard; filtered/deleted files never enter runner arguments. A PR
+cannot use its own new exclusions or a config-name switch to suppress required
+lint validation.
 Unsafe symlinks and oversized metadata fail planning with a safe error.
 Repository configuration is never executed and no packages are installed.
 
@@ -47,6 +51,8 @@ gates are unchanged. No gate budget or repository lint configuration is changed.
 `test/pr-gate-biome-scope.test.ts` reproduces the Gondolin manifest/lockfile
 failure and covers mixed included/excluded files, preserved test/typecheck
 calls, ordered patterns, conservative unresolved cases and metadata/path bounds.
+`test/pr-gate-biome-scope-dispatch.test.ts` exercises real reviewer.skip filtering
+through dispatch, including both config names, deletions and config-name switches.
 The workspace and test-execution suites cover the surrounding planner contract.
 
 After the fix is reviewed and installed, reload the owning Pi session before
