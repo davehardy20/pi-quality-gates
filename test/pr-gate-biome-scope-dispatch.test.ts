@@ -1,16 +1,17 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type {
-	ExtensionAPI,
-	ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createPassTokenStore } from "../src/pr-gate/pass-token-store.js";
 import { PR_REVIEW_CONFIG } from "../src/pr-gate/pr-review-config.js";
-import { createPrReviewDispatch } from "../src/pr-gate/pr-review-dispatch.js";
 import type { ReviewerExecution } from "../src/pr-gate/reviewer.js";
 import { parseReviewValidationPolicy } from "../src/shared/review-validation-policy.js";
+import {
+	createDispatchContext,
+	createFixtureReviewerExecution,
+	createDispatchFixture as createPrReviewDispatch,
+} from "./dispatch-fixtures.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -69,7 +70,6 @@ describe("Biome scope through review dispatch", () => {
 			command: "fixture",
 		}));
 		const dispatch = createPrReviewDispatch({
-			getHeadSha: () => "fixture-head",
 			getBaseRef: () => "master",
 			isWorktreeClean: () => true,
 			listChangedFiles: async () => ["src/a.ts", ...changed],
@@ -84,10 +84,10 @@ describe("Biome scope through review dispatch", () => {
 				omittedLines: 0,
 			}),
 			extractTask: () => "review",
-			reviewerExecution: { runAttempt },
+			reviewerExecution: createFixtureReviewerExecution(runAttempt),
 		});
 		const result = await dispatch.dispatch({
-			ctx: { cwd: root } as ExtensionContext,
+			ctx: createDispatchContext(root),
 			state: { tokens: createPassTokenStore(), config: { enabled: true } },
 			pi: {} as ExtensionAPI,
 		});

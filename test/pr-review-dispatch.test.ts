@@ -8,33 +8,23 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type {
-	ExtensionAPI,
-	ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 import { createPassTokenStore } from "../src/pr-gate/pass-token-store.js";
 import {
-	createPrReviewDispatch as buildDispatch,
 	defaultIsWorktreeClean,
 	resolveDefaultBaseRef,
 } from "../src/pr-gate/pr-review-dispatch.js";
-import { parseReviewValidationPolicy } from "../src/shared/review-validation-policy.js";
-
-function createPrReviewDispatch(
-	deps: Parameters<typeof buildDispatch>[0] = {},
-) {
-	return buildDispatch({
-		loadReviewValidationPolicy: () => parseReviewValidationPolicy({}),
-		resolveReviewModels: () => ({ model: "fixture/model", fallbackModels: [] }),
-		...deps,
-	});
-}
+import {
+	createDispatchContext,
+	createFixtureReviewerExecution,
+	createDispatchFixture as createPrReviewDispatch,
+	DISPATCH_HEAD_SHA,
+} from "./dispatch-fixtures.js";
 
 describe("createPrReviewDispatch", () => {
 	it("surfaces a sidecar path when the reviewer returns unparsable output", async () => {
 		const dispatch = createPrReviewDispatch({
-			getHeadSha: () => "abc123",
 			getBaseRef: () => "origin/main",
 			isWorktreeClean: () => true,
 			listChangedFiles: async () => ["src/foo.ts"],
@@ -46,22 +36,20 @@ describe("createPrReviewDispatch", () => {
 				omittedLines: 0,
 			}),
 			extractTask: () => "review",
-			reviewerExecution: {
-				runAttempt: async () => ({
-					report: null,
-					rawOutput: "garbage",
-					exitCode: 0,
-					timedOut: false,
-					usage: "↑1 ↓2 $0.00",
-					stderr: "",
-					command: "pi ...",
-					sidecarPath: "/tmp/reviewer-failures/abc",
-				}),
-			},
+			reviewerExecution: createFixtureReviewerExecution(async () => ({
+				report: null,
+				rawOutput: "garbage",
+				exitCode: 0,
+				timedOut: false,
+				usage: "↑1 ↓2 $0.00",
+				stderr: "",
+				command: "pi ...",
+				sidecarPath: "/tmp/reviewer-failures/abc",
+			})),
 		});
 
 		const result = await dispatch.dispatch({
-			ctx: { cwd: "/tmp" } as ExtensionContext,
+			ctx: createDispatchContext("/tmp"),
 			state: { tokens: createPassTokenStore(), config: { enabled: true } },
 			pi: {} as ExtensionAPI,
 		});
@@ -83,8 +71,9 @@ describe("createPrReviewDispatch", () => {
 	});
 
 	it("fails closed when HEAD changes during review", async () => {
-		const heads = ["head-a", "head-a", "head-b"];
-		const getHeadSha = vi.fn(() => heads.shift() ?? "head-b");
+		const getHeadSha = vi.fn(() =>
+			runAttempt.mock.calls.length ? "b".repeat(40) : DISPATCH_HEAD_SHA,
+		);
 		const runAttempt = vi.fn(async () => ({
 			report: {
 				status: "PASS" as const,
@@ -115,17 +104,17 @@ describe("createPrReviewDispatch", () => {
 				omittedLines: 0,
 			}),
 			extractTask: () => "review",
-			reviewerExecution: { runAttempt },
+			reviewerExecution: createFixtureReviewerExecution(runAttempt),
 		});
 
 		const result = await dispatch.dispatch({
-			ctx: { cwd: "/repo" } as ExtensionContext,
+			ctx: createDispatchContext("/repo"),
 			state: { tokens, config: { enabled: true } },
 			pi: {} as ExtensionAPI,
 		});
 
 		expect(runAttempt).toHaveBeenCalledWith(
-			expect.objectContaining({ headSha: "head-a" }),
+			expect.objectContaining({ headSha: DISPATCH_HEAD_SHA }),
 			expect.objectContaining({ cwd: "/repo" }),
 		);
 		expect(result.blocked).toBe(true);
@@ -151,7 +140,6 @@ describe("createPrReviewDispatch", () => {
 			command: "pi ...",
 		}));
 		const dispatch = createPrReviewDispatch({
-			getHeadSha: () => "abc123",
 			isWorktreeClean: () => false,
 			getBaseRef: () => "master",
 			listChangedFiles: async () => ["src/foo.ts"],
@@ -163,10 +151,10 @@ describe("createPrReviewDispatch", () => {
 				omittedLines: 0,
 			}),
 			extractTask: () => "review",
-			reviewerExecution: { runAttempt },
+			reviewerExecution: createFixtureReviewerExecution(runAttempt),
 		});
 		const result = await dispatch.dispatch({
-			ctx: { cwd: "/repo" } as ExtensionContext,
+			ctx: createDispatchContext("/repo"),
 			state: { tokens: createPassTokenStore(), config: { enabled: true } },
 			pi: {} as ExtensionAPI,
 		});
@@ -177,8 +165,7 @@ describe("createPrReviewDispatch", () => {
 	});
 
 	it("fails closed when the worktree becomes dirty during review", async () => {
-		const cleanValues = [true, false];
-		const isWorktreeClean = vi.fn(() => cleanValues.shift() ?? false);
+		const isWorktreeClean = vi.fn(() => runAttempt.mock.calls.length === 0);
 		const runAttempt = vi.fn(async () => ({
 			report: {
 				status: "PASS" as const,
@@ -197,7 +184,6 @@ describe("createPrReviewDispatch", () => {
 		}));
 		const tokens = createPassTokenStore();
 		const dispatch = createPrReviewDispatch({
-			getHeadSha: () => "abc123",
 			isWorktreeClean,
 			getBaseRef: () => "master",
 			listChangedFiles: async () => ["src/foo.ts"],
@@ -209,10 +195,10 @@ describe("createPrReviewDispatch", () => {
 				omittedLines: 0,
 			}),
 			extractTask: () => "review",
-			reviewerExecution: { runAttempt },
+			reviewerExecution: createFixtureReviewerExecution(runAttempt),
 		});
 		const result = await dispatch.dispatch({
-			ctx: { cwd: "/repo" } as ExtensionContext,
+			ctx: createDispatchContext("/repo"),
 			state: { tokens, config: { enabled: true } },
 			pi: {} as ExtensionAPI,
 		});
@@ -244,7 +230,6 @@ describe("createPrReviewDispatch", () => {
 		}));
 		const tokens = createPassTokenStore();
 		const dispatch = createPrReviewDispatch({
-			getHeadSha: () => "abc123",
 			isWorktreeClean: () => true,
 			getBaseRef: () => "master",
 			listChangedFiles: async () => ["src/foo.ts"],
@@ -256,10 +241,10 @@ describe("createPrReviewDispatch", () => {
 				omittedLines: 0,
 			}),
 			extractTask: () => "review",
-			reviewerExecution: { runAttempt },
+			reviewerExecution: createFixtureReviewerExecution(runAttempt),
 		});
 		const result = await dispatch.dispatch({
-			ctx: { cwd: "/repo" } as ExtensionContext,
+			ctx: createDispatchContext("/repo"),
 			state: { tokens, config: { enabled: true } },
 			pi: {} as ExtensionAPI,
 			signal: controller.signal,
@@ -340,7 +325,6 @@ describe("createPrReviewDispatch", () => {
 			);
 			const runAttempt = makePassRunAttempt();
 			const dispatch = createPrReviewDispatch({
-				getHeadSha: () => "abc123",
 				getBaseRef: () => "master",
 				isWorktreeClean: () => true,
 				listChangedFiles: async () => ["src/foo.ts"],
@@ -352,11 +336,11 @@ describe("createPrReviewDispatch", () => {
 					omittedLines: 0,
 				}),
 				extractTask: () => "review",
-				reviewerExecution: { runAttempt },
+				reviewerExecution: createFixtureReviewerExecution(runAttempt),
 			});
 
 			await dispatch.dispatch({
-				ctx: { cwd: dir } as ExtensionContext,
+				ctx: createDispatchContext(dir),
 				state: {
 					tokens: createPassTokenStore(),
 					config: { enabled: true },
@@ -397,7 +381,6 @@ describe("createPrReviewDispatch", () => {
 				command: "pi ...",
 			}));
 			const dispatch = createPrReviewDispatch({
-				getHeadSha: () => "abc123",
 				getBaseRef: () => "master",
 				isWorktreeClean: () => true,
 				listChangedFiles: async () => ["src/foo.ts"],
@@ -409,11 +392,11 @@ describe("createPrReviewDispatch", () => {
 					omittedLines: 500,
 				}),
 				extractTask: () => "review",
-				reviewerExecution: { runAttempt },
+				reviewerExecution: createFixtureReviewerExecution(runAttempt),
 			});
 
 			const result = await dispatch.dispatch({
-				ctx: { cwd: dir } as ExtensionContext,
+				ctx: createDispatchContext(dir),
 				state: {
 					tokens: createPassTokenStore(),
 					config: { enabled: true },
@@ -434,7 +417,6 @@ describe("createPrReviewDispatch", () => {
 		try {
 			const runAttempt = makePassRunAttempt();
 			const dispatch = createPrReviewDispatch({
-				getHeadSha: () => "abc123",
 				getBaseRef: () => "master",
 				isWorktreeClean: () => true,
 				listChangedFiles: async () => ["src/foo.ts"],
@@ -446,11 +428,11 @@ describe("createPrReviewDispatch", () => {
 					omittedLines: 777,
 				}),
 				extractTask: () => "review",
-				reviewerExecution: { runAttempt },
+				reviewerExecution: createFixtureReviewerExecution(runAttempt),
 			});
 
 			await dispatch.dispatch({
-				ctx: { cwd: dir } as ExtensionContext,
+				ctx: createDispatchContext(dir),
 				state: {
 					tokens: createPassTokenStore(),
 					config: { enabled: true },
@@ -477,7 +459,6 @@ describe("createPrReviewDispatch", () => {
 		try {
 			const runAttempt = makePassRunAttempt();
 			const dispatch = createPrReviewDispatch({
-				getHeadSha: () => "abc123",
 				getBaseRef: () => "master",
 				isWorktreeClean: () => true,
 				listChangedFiles: async () => ["src/foo.ts"],
@@ -489,11 +470,11 @@ describe("createPrReviewDispatch", () => {
 					omittedLines: 0,
 				}),
 				extractTask: () => "review",
-				reviewerExecution: { runAttempt },
+				reviewerExecution: createFixtureReviewerExecution(runAttempt),
 			});
 
 			await dispatch.dispatch({
-				ctx: { cwd: dir } as ExtensionContext,
+				ctx: createDispatchContext(dir),
 				state: {
 					tokens: createPassTokenStore(),
 					config: { enabled: true },
@@ -518,7 +499,6 @@ describe("createPrReviewDispatch", () => {
 			);
 			const runAttempt = makePassRunAttempt();
 			const dispatch = createPrReviewDispatch({
-				getHeadSha: () => "abc123",
 				getBaseRef: () => "master",
 				isWorktreeClean: () => true,
 				listChangedFiles: async () => [
@@ -533,11 +513,11 @@ describe("createPrReviewDispatch", () => {
 					omittedLines: 0,
 				}),
 				extractTask: () => "review",
-				reviewerExecution: { runAttempt },
+				reviewerExecution: createFixtureReviewerExecution(runAttempt),
 			});
 
 			await dispatch.dispatch({
-				ctx: { cwd: dir } as ExtensionContext,
+				ctx: createDispatchContext(dir),
 				state: {
 					tokens: createPassTokenStore(),
 					config: { enabled: true },
@@ -562,7 +542,6 @@ describe("createPrReviewDispatch", () => {
 			);
 			const runAttempt = makePassRunAttempt();
 			const dispatch = createPrReviewDispatch({
-				getHeadSha: () => "abc123",
 				getBaseRef: () => "master",
 				isWorktreeClean: () => true,
 				listChangedFiles: async () => [
@@ -580,11 +559,11 @@ describe("createPrReviewDispatch", () => {
 					omittedLines: 0,
 				}),
 				extractTask: () => "review",
-				reviewerExecution: { runAttempt },
+				reviewerExecution: createFixtureReviewerExecution(runAttempt),
 			});
 
 			await dispatch.dispatch({
-				ctx: { cwd: dir } as ExtensionContext,
+				ctx: createDispatchContext(dir),
 				state: {
 					tokens: createPassTokenStore(),
 					config: { enabled: true },
@@ -609,7 +588,6 @@ describe("createPrReviewDispatch", () => {
 			);
 			const runAttempt = makePassRunAttempt();
 			const dispatch = createPrReviewDispatch({
-				getHeadSha: () => "abc123",
 				getBaseRef: () => "master",
 				isWorktreeClean: () => true,
 				// A nested package's instructions file is distinct from the root one
@@ -626,11 +604,11 @@ describe("createPrReviewDispatch", () => {
 					omittedLines: 0,
 				}),
 				extractTask: () => "review",
-				reviewerExecution: { runAttempt },
+				reviewerExecution: createFixtureReviewerExecution(runAttempt),
 			});
 
 			await dispatch.dispatch({
-				ctx: { cwd: dir } as ExtensionContext,
+				ctx: createDispatchContext(dir),
 				state: {
 					tokens: createPassTokenStore(),
 					config: { enabled: true },
@@ -661,7 +639,6 @@ describe("createPrReviewDispatch", () => {
 			);
 			const runAttempt = makePassRunAttempt();
 			const dispatch = createPrReviewDispatch({
-				getHeadSha: () => "abc123",
 				getBaseRef: () => "master",
 				isWorktreeClean: () => true,
 				// Case-variant path: on a case-insensitive host FS the lowercase
@@ -678,11 +655,11 @@ describe("createPrReviewDispatch", () => {
 					omittedLines: 0,
 				}),
 				extractTask: () => "review",
-				reviewerExecution: { runAttempt },
+				reviewerExecution: createFixtureReviewerExecution(runAttempt),
 			});
 
 			await dispatch.dispatch({
-				ctx: { cwd: dir } as ExtensionContext,
+				ctx: createDispatchContext(dir),
 				state: {
 					tokens: createPassTokenStore(),
 					config: { enabled: true },
@@ -713,7 +690,6 @@ describe("createPrReviewDispatch", () => {
 			);
 			const runAttempt = makePassRunAttempt();
 			const dispatch = createPrReviewDispatch({
-				getHeadSha: () => "abc123",
 				getBaseRef: () => "master",
 				isWorktreeClean: () => true,
 				listChangedFiles: async () => ["src/foo.ts", "INSTRUCTIONS_TARGET.md"],
@@ -725,11 +701,11 @@ describe("createPrReviewDispatch", () => {
 					omittedLines: 0,
 				}),
 				extractTask: () => "review",
-				reviewerExecution: { runAttempt },
+				reviewerExecution: createFixtureReviewerExecution(runAttempt),
 			});
 
 			await dispatch.dispatch({
-				ctx: { cwd: dir } as ExtensionContext,
+				ctx: createDispatchContext(dir),
 				state: {
 					tokens: createPassTokenStore(),
 					config: { enabled: true },
@@ -758,7 +734,6 @@ describe("createPrReviewDispatch", () => {
 			);
 			const runAttempt = makePassRunAttempt();
 			const dispatch = createPrReviewDispatch({
-				getHeadSha: () => "abc123",
 				getBaseRef: () => "master",
 				isWorktreeClean: () => true,
 				// The symlink target is NOT in the PR's changed files -> load normally.
@@ -771,11 +746,11 @@ describe("createPrReviewDispatch", () => {
 					omittedLines: 0,
 				}),
 				extractTask: () => "review",
-				reviewerExecution: { runAttempt },
+				reviewerExecution: createFixtureReviewerExecution(runAttempt),
 			});
 
 			await dispatch.dispatch({
-				ctx: { cwd: dir } as ExtensionContext,
+				ctx: createDispatchContext(dir),
 				state: {
 					tokens: createPassTokenStore(),
 					config: { enabled: true },
@@ -806,7 +781,6 @@ describe("createPrReviewDispatch", () => {
 			);
 			const runAttempt = makePassRunAttempt();
 			const dispatch = createPrReviewDispatch({
-				getHeadSha: () => "abc123",
 				getBaseRef: () => "master",
 				isWorktreeClean: () => true,
 				listChangedFiles: async () => ["src/foo.ts"],
@@ -818,11 +792,13 @@ describe("createPrReviewDispatch", () => {
 					omittedLines: 0,
 				}),
 				extractTask: () => "review",
-				reviewerExecution: { runAttempt, inspectRepositoryDirectly: true },
+				reviewerExecution: createFixtureReviewerExecution(runAttempt, {
+					inspectRepositoryDirectly: true,
+				}),
 			});
 
 			await dispatch.dispatch({
-				ctx: { cwd: dir } as ExtensionContext,
+				ctx: createDispatchContext(dir),
 				state: {
 					tokens: createPassTokenStore(),
 					config: { enabled: true },
@@ -850,7 +826,6 @@ describe("createPrReviewDispatch prompt budget", () => {
 			promptBudgetExceeded: true,
 		}));
 		const dispatch = createPrReviewDispatch({
-			getHeadSha: () => "abc123",
 			getBaseRef: () => "origin/main",
 			isWorktreeClean: () => true,
 			listChangedFiles: async () => ["src/foo.ts"],
@@ -862,13 +837,11 @@ describe("createPrReviewDispatch prompt budget", () => {
 				omittedLines: 0,
 			}),
 			extractTask: () => "review",
-			reviewerExecution: {
-				runAttempt: runAttempt as never,
-			},
+			reviewerExecution: createFixtureReviewerExecution(runAttempt as never),
 		});
 
 		const result = await dispatch.dispatch({
-			ctx: { cwd: "/tmp" } as ExtensionContext,
+			ctx: createDispatchContext("/tmp"),
 			state: { tokens: createPassTokenStore(), config: { enabled: true } },
 			pi: {} as ExtensionAPI,
 		});
@@ -888,7 +861,6 @@ describe("createPrReviewDispatch stale-ctx classification", () => {
 			"    at Object.onError (/Users/dave/tools/pi-compact-plus/src/lifecycle.ts:56:15)",
 		].join("\n");
 		const dispatch = createPrReviewDispatch({
-			getHeadSha: () => "abc123",
 			getBaseRef: () => "origin/master",
 			isWorktreeClean: () => true,
 			listChangedFiles: async () => ["src/foo.ts"],
@@ -900,21 +872,19 @@ describe("createPrReviewDispatch stale-ctx classification", () => {
 				omittedLines: 0,
 			}),
 			extractTask: () => "review",
-			reviewerExecution: {
-				runAttempt: async () => ({
-					report: null,
-					rawOutput: staleStderr,
-					exitCode: 1,
-					timedOut: false,
-					usage: "↑0 ↓0 $0.0000",
-					stderr: staleStderr,
-					command: "pi ...",
-				}),
-			},
+			reviewerExecution: createFixtureReviewerExecution(async () => ({
+				report: null,
+				rawOutput: staleStderr,
+				exitCode: 1,
+				timedOut: false,
+				usage: "↑0 ↓0 $0.0000",
+				stderr: staleStderr,
+				command: "pi ...",
+			})),
 		});
 
 		const result = await dispatch.dispatch({
-			ctx: { cwd: "/tmp" } as ExtensionContext,
+			ctx: createDispatchContext("/tmp"),
 			state: { tokens: createPassTokenStore(), config: { enabled: true } },
 			pi: {} as ExtensionAPI,
 		});
