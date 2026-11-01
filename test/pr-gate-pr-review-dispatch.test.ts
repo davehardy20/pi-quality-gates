@@ -13,7 +13,6 @@ import {
 	resolvePrReviewConfig,
 } from "../src/pr-gate/pr-review-config.js";
 import {
-	createPrReviewDispatch,
 	type PrReviewDispatchDeps,
 	type PrReviewDispatchInput,
 	resolveRuntimeReviewConfig,
@@ -25,7 +24,14 @@ import type {
 import type { ReviewReport } from "../src/shared/review-types.js";
 import { parseReviewValidationPolicy } from "../src/shared/review-validation-policy.js";
 
-const HEAD_SHA = "abc123def456";
+import {
+	createDispatchContext,
+	createFixtureReviewerExecution,
+	createDispatchFixture as createPrReviewDispatch,
+	DISPATCH_HEAD_SHA,
+} from "./dispatch-fixtures.js";
+
+const HEAD_SHA = DISPATCH_HEAD_SHA;
 const BASE_REF = "origin/master";
 
 function createMockPi(): ExtensionAPI & { userMessages: string[] } {
@@ -64,13 +70,7 @@ function createMockContext(
 			details: { status: "clean" },
 		});
 	}
-	return {
-		cwd: "/repo",
-		model,
-		sessionManager: {
-			getBranch: () => branch,
-		},
-	} as unknown as ExtensionContext;
+	return createDispatchContext("/repo", { branch, model });
 }
 
 function makePassReport(summary = "clean"): ReviewReport {
@@ -152,8 +152,8 @@ function makeCriticalReport(): ReviewReport {
 function createMockReviewerExecution(
 	report: ReviewReport | null,
 ): ReviewerExecution {
-	return {
-		runAttempt: vi.fn().mockResolvedValue({
+	return createFixtureReviewerExecution(
+		vi.fn().mockResolvedValue({
 			report,
 			rawOutput: "raw",
 			exitCode: 0,
@@ -161,7 +161,7 @@ function createMockReviewerExecution(
 			stderr: "",
 			command: "cmd",
 		} satisfies ReviewerResult),
-	};
+	);
 }
 
 function createTestDeps(
@@ -279,7 +279,7 @@ describe("pr-review dispatch", () => {
 					...createTestDeps(makePassReport()),
 					now: () => now,
 					listChangedFiles: async () => {
-						now = 100;
+						now += 100;
 						return files;
 					},
 					loadReviewValidationPolicy: () => ({
@@ -380,12 +380,15 @@ describe("pr-review dispatch", () => {
 			},
 		]) {
 			let now = 0;
-			let checks = 0;
+			const reviewer = createMockReviewerExecution(report);
 			const dispatch = createPrReviewDispatch({
 				...createTestDeps(report),
 				now: () => now,
+				reviewerExecution: reviewer,
 				isWorktreeClean: () => {
-					if (++checks === 2) now = PR_REVIEW_CONFIG.timeoutMs;
+					if (vi.mocked(reviewer.runAttempt).mock.calls.length) {
+						now = PR_REVIEW_CONFIG.timeoutMs;
+					}
 					return true;
 				},
 			});
@@ -850,10 +853,9 @@ describe("pr-review dispatch", () => {
 			stderr: "",
 			command: "orchestrate agentType=verifier profile=pr-review",
 		}));
-		const reviewerExecution: ReviewerExecution = {
+		const reviewerExecution = createFixtureReviewerExecution(runAttempt, {
 			inspectRepositoryDirectly: true,
-			runAttempt,
-		};
+		});
 		const dispatch = createPrReviewDispatch({
 			...createTestDeps(makePassReport()),
 			listChangedFiles,

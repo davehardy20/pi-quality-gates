@@ -2,15 +2,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import type {
-	ExtensionAPI,
-	ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createOrchestratorReviewerExecution } from "../src/pr-gate/orchestrator-reviewer-execution.js";
 import { createPassTokenStore } from "../src/pr-gate/pass-token-store.js";
 import { PR_REVIEW_CONFIG } from "../src/pr-gate/pr-review-config.js";
-import { createPrReviewDispatch } from "../src/pr-gate/pr-review-dispatch.js";
 import {
 	type ReviewerAttemptInput,
 	type ReviewerExecution,
@@ -22,6 +18,12 @@ import {
 } from "../src/pr-gate/test-execution.js";
 import type { ReviewReport } from "../src/shared/review-types.js";
 import { parseReviewValidationPolicy } from "../src/shared/review-validation-policy.js";
+import {
+	createDispatchContext,
+	createFixtureReviewerExecution,
+	createDispatchFixture as createPrReviewDispatch,
+	DISPATCH_HEAD_SHA,
+} from "./dispatch-fixtures.js";
 
 // Inert protocol fixtures only: no real reviewers, SDK, credentials or Git.
 const roots: string[] = [];
@@ -62,7 +64,7 @@ function fixture(maxReviewerTimeoutMs = 7_200_000) {
 		config: { ...PR_REVIEW_CONFIG, model: "fixture/model", fallbackModels: [] },
 		diff: "fixture diff",
 		baseRef: "fixture-base",
-		headSha: "fixture-head",
+		headSha: DISPATCH_HEAD_SHA,
 		testPlan,
 	};
 	return { cwd, files, policy, input };
@@ -104,7 +106,6 @@ function dispatchFixture(
 	}));
 	const tokens = createPassTokenStore();
 	const dispatch = createPrReviewDispatch({
-		getHeadSha: () => "fixture-head",
 		getBaseRef: () => "fixture-base",
 		isWorktreeClean: () => true,
 		listChangedFiles: async () => f.files,
@@ -118,14 +119,14 @@ function dispatchFixture(
 			omittedLines: 0,
 		}),
 		extractTask: () => "fixture review",
-		reviewerExecution: { runAttempt },
+		reviewerExecution: createFixtureReviewerExecution(runAttempt),
 	});
 	return {
 		runAttempt,
 		tokens,
 		run: () =>
 			dispatch.dispatch({
-				ctx: { cwd: f.cwd } as ExtensionContext,
+				ctx: createDispatchContext(f.cwd),
 				state: { tokens, config: { enabled: true } },
 				pi: {} as ExtensionAPI,
 			}),
@@ -146,7 +147,7 @@ describe("Python partition plan transport and gate", () => {
 		expect(attempt.config.timeoutMs).toBe(2_910_000);
 		expect(result.stamped).toBe(status === "PASS");
 		expect(result.blocked).toBe(status !== "PASS");
-		expect(d.tokens.hasPass("fixture-head")).toBe(status === "PASS");
+		expect(d.tokens.hasPass(DISPATCH_HEAD_SHA)).toBe(status === "PASS");
 	});
 
 	it("refuses the total partition budget before invoking any reviewer", async () => {
@@ -155,7 +156,7 @@ describe("Python partition plan transport and gate", () => {
 		expect(result.blocked).toBe(true);
 		expect(result.message).toMatch(/required 2910000.*2850000/);
 		expect(d.runAttempt).not.toHaveBeenCalled();
-		expect(d.tokens.hasPass("fixture-head")).toBe(false);
+		expect(d.tokens.hasPass(DISPATCH_HEAD_SHA)).toBe(false);
 	});
 
 	it("renders the complete partition plan into the host task without starting the SDK", () => {
