@@ -338,7 +338,12 @@ function parseMarkdownField(block: string, fieldName: string): string {
 }
 
 function isTestExecutionStatus(value: string): value is TestExecutionStatus {
-	return value === "PASS" || value === "FAIL" || value === "NOT_RUN";
+	return (
+		value === "PASS" ||
+		value === "FAIL" ||
+		value === "NOT_RUN" ||
+		value === "NOT_APPLICABLE"
+	);
 }
 
 /**

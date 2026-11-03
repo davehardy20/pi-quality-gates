@@ -191,6 +191,11 @@ For each review pass:
    Only mark it `PASS` when all required validation completed successfully;
    disclose broader/live checks not completed without claiming CI or live
    readiness. Ensure each initial timeout fits your remaining review budget.
+6. **Zero-call plans.** Only when the generated plan proposes no validation
+   calls and no executable validation applies, use `NOT_APPLICABLE` with a
+   reason. Inspect the documentation/configuration normally; this status does
+   not claim tests ran. Unavailable relevant validation remains `NOT_RUN`;
+   required checks, failures and timeouts can never be `NOT_APPLICABLE`.
 
 If tests fail, treat the failure as evidence. Determine whether the failure is
 caused by the changes under review. If yes, report it as a WARNING or CRITICAL
@@ -227,7 +232,7 @@ CONFIDENCE: HIGH | MEDIUM | LOW
 - <claim>: <reason — missing test runner, no runtime, ambiguous requirement>
 
 ### Test execution
-- **Status:** PASS | FAIL | NOT_RUN
+- **Status:** PASS | FAIL | NOT_RUN | NOT_APPLICABLE
 - **Summary:** <bounded synthesis of validation commands/results>
 - **Sidecar:** <tool-output sidecar ref, or none>
 

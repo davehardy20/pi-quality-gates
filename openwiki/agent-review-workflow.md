@@ -123,7 +123,11 @@ command/tool parity.
 
 A PASS report that omits the `### Test execution` section or reports `FAIL`/
 `NOT_RUN` is overridden to `CANNOT_REVIEW` and blocked — the agent cannot stamp a
-token by claiming PASS without verified tests.
+token by claiming PASS without verified tests. A generated plan with exactly
+zero validation calls permits explicit `NOT_APPLICABLE` with a reason when no
+executable validation applies. Dispatch checks its own plan count, not reviewer
+claims; required, failed, timed-out or unavailable checks cannot use this
+exception. The test-execution section remains mandatory.
 
 On `session_shutdown`, the bridge cancels pending attempts, clears timers and request correlation, and the coordinator suppresses late UI/session messages. Reload therefore requires a fresh review.
 

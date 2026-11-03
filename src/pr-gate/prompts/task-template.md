@@ -43,7 +43,9 @@
 - Include bounded test results in `### Test execution`; cite any sidecar ref
   instead of pasting raw logs. Incomplete or unavailable required validation
   stays `NOT_RUN`; executed failures stay `FAIL`. A passing subset cannot
-  turn an incomplete required check into `PASS`.
+  turn an incomplete required check into `PASS`. Use `NOT_APPLICABLE` only
+  for a generated zero-call plan when no executable validation applies, and
+  explain why; it is not evidence of executed tests.
 - Focus on the **diff between the base ref and HEAD**.
 - If you cannot read a file or run a test, note it under
   "What could not be verified" with the reason.

@@ -56,7 +56,11 @@ export interface Finding {
 	effort?: number | null;
 }
 
-export type TestExecutionStatus = "PASS" | "FAIL" | "NOT_RUN";
+export type TestExecutionStatus =
+	| "PASS"
+	| "FAIL"
+	| "NOT_RUN"
+	| "NOT_APPLICABLE";
 
 export interface TestExecutionSummary {
 	/** Overall result of review-time validation commands. */
