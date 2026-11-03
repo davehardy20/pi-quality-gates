@@ -17,6 +17,14 @@ npm run mutation    # stryker run — mutation testing (see below)
 
 Formatting/linting is via Biome (config in `/biome.json`); the `npm run lint` script runs `biome check src test` — the same gate CI and `/pr-review` use.
 
+### Optional SDK authentication contract
+
+`test/reviewer-sdk-auth-check.test.ts` runs the contract script against fabricated SDK modules only; ordinary Vitest never imports an installed SDK for this coverage.
+
+`scripts/reviewer-sdk-auth-check.mjs` is a separate, optional check of a trusted installed SDK **1.3.0**. Obtain explicit approval before running `node --test scripts/reviewer-sdk-auth-check.mjs`; `PI_REVIEWER_SDK_ROOT` can select another trusted installation. It clears ambient credential variables, supplies fabricated in-memory keys, disables catalog refresh/networking, and scans its private temporary directory while keys are bound and after removal. Scan limits or symlinks fail closed. It creates no reviewer session or PASS token and requests no model stream.
+
+These are bounded persistence checkpoints, not proof against transient writes or an OS sandbox. They do not establish live-provider compatibility, startup-canary admission or Gondolin acceptance. The installed-SDK command is not part of normal CI and requires separate authorization.
+
 ## Framework
 
 - **Vitest 3.2.4** — all tests use explicit imports: `import { describe, expect, it } from "vitest"` (with `vi` for mocking).
@@ -92,6 +100,7 @@ Files with 2-space indent (biome.json override):
 | `test/pr-review-dispatch.test.ts` | Integration | Single focused test: dispatch surfaces sidecar path on unparsable output. |
 | `test/review-coordinator.test.ts` | Unit | Shared coordinator eligibility/in-progress guard: disabled, unknown HEAD, dirty linter, already-passed, explicit base-ref re-review, in-progress dedup, PASS/escalation background messages, compact kickoff contract (no bulky content). |
 | `test/pr-review-tool.test.ts` | Unit | `pr_review` custom tool: contract exposure, kickoff/already-passed/base-ref/linter/HEAD/disabled/in-progress states, no bulky details, non-deadlocking async execute. |
+| `test/reviewer-sdk-auth-check.test.ts` | Fabricated child fixture | Optional auth-contract checks: active-key and post-removal persistence, nested files, bounded traversal, symlink rejection, SDK metadata and cleared ambient credentials. Never imports the installed SDK. |
 | `test/reviewer.test.ts` | Unit | Report parser: well-formed report, malformed test execution status, missing marker, case-insensitivity, embedded-in-large-output (500KB prefix). |
 
 ## Patterns for adding tests
