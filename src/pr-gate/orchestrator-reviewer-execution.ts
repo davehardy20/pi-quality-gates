@@ -38,6 +38,7 @@ interface PendingReview {
 
 interface KnownReview {
 	headSha: string;
+	requiredTestCommandCount?: number;
 	deadline: ReviewDeadline;
 	expired: boolean;
 	signal?: AbortSignal;
@@ -357,7 +358,10 @@ export function createOrchestratorReviewerExecution(
 					const criticalBlocker = hasCriticalSecurityFinding(report)
 						? "report contains CRITICAL security finding(s)"
 						: null;
-					const testBlocker = getPassBlockingTestExecutionReason(report);
+					const testBlocker = getPassBlockingTestExecutionReason(
+						report,
+						known?.requiredTestCommandCount,
+					);
 					const blocker = expired
 						? "review deadline expired or review was cancelled"
 						: (criticalBlocker ?? testBlocker);
@@ -515,6 +519,7 @@ export function createOrchestratorReviewerExecution(
 					return reviewDeadlineExceeded(deadline);
 				const known: KnownReview = {
 					headSha,
+					requiredTestCommandCount: input.requiredTestCommandCount,
 					deadline,
 					expired: false,
 					signal: input.signal,

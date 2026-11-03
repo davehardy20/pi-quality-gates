@@ -720,7 +720,7 @@ describe("formatTestExecutionPlan", () => {
 			resultContract: "bounded summary only",
 		};
 		expect(formatTestExecutionPlan(plan)).toContain(
-			"No safe validation runner is available",
+			"No validation calls are proposed",
 		);
 	});
 });

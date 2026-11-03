@@ -365,11 +365,19 @@ function formatUnparseableReviewerOutput(result: ReviewerResult): string {
 
 export function getPassBlockingTestExecutionReason(
 	report: ReviewReport,
+	requiredTestCommandCount?: number,
 ): string | null {
 	if (report.status !== "PASS") return null;
 	if (!report.testExecution) {
 		return "reviewer omitted the required ### Test execution section";
 	}
+	// Only the parent's exact zero-call plan permits NOT_APPLICABLE. Missing
+	// metadata, unavailable runners and incomplete/failed checks stay blocked.
+	if (
+		report.testExecution.status === "NOT_APPLICABLE" &&
+		requiredTestCommandCount === 0
+	)
+		return null;
 	if (report.testExecution.status !== "PASS") {
 		return `test execution status is ${report.testExecution.status}`;
 	}
@@ -747,6 +755,7 @@ export function createPrReviewDispatch(
 				diffCoverage,
 				baseRef,
 				testPlan,
+				requiredTestCommandCount: plan.runnerCommands.length,
 				headSha: reviewedHeadSha,
 				signal: input.signal,
 				deadline,
@@ -759,6 +768,7 @@ export function createPrReviewDispatch(
 		return {
 			...result,
 			report: result.timedOut ? null : result.report,
+			requiredTestCommandCount: plan.runnerCommands.length,
 			reviewDeadline: deadline,
 		};
 	}
@@ -958,7 +968,10 @@ export function createPrReviewDispatch(
 				};
 			}
 
-			const testExecutionBlocker = getPassBlockingTestExecutionReason(report);
+			const testExecutionBlocker = getPassBlockingTestExecutionReason(
+				report,
+				childOutput.requiredTestCommandCount,
+			);
 			if (testExecutionBlocker) {
 				return {
 					report: { ...report, status: "CANNOT_REVIEW" },

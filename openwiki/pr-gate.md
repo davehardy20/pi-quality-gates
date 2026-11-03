@@ -309,7 +309,17 @@ isolation. Existing reviewer evidence, exact-HEAD and startup-admission checks
 still apply. This example is not activation approval and does not add Ruff
 access; that capability requires its separate implementation and admission.
 
-**Invariant**: A PASS requires executed validation. The default `host` bridge
+**Invariant**: A PASS requires successful completion of every proposed validation
+call. If the parent's generated plan contains exactly zero calls and no
+executable validation applies (for example, a docs-only bootstrap), the reviewer
+may instead report `NOT_APPLICABLE` with a reason. Dispatch checks the structured
+parent plan count, overwriting bridge-provided counts; reviewer prose cannot
+waive a required check. Missing plan metadata does not permit the exception.
+This status records applicability, not executed tests or runtime readiness.
+Unavailable relevant checks remain `NOT_RUN` and block; failures and timeouts
+cannot become `NOT_APPLICABLE`.
+
+The default `host` bridge
 runs the safe validation runners (e.g. `run_typecheck`) against the repository
 checkout; the `orchestrator` bridge runs them through its host-side orchestrate
 verifier child (no container is involved).
@@ -323,7 +333,7 @@ under "What could not be verified" (`NOT_RUN`), optionally covered by a targeted
 subset. A timed-out suite is incomplete evidence, not a finding against the
 diff.
 
-**Mandatory test execution**: A review report that says PASS but omits `### Test execution` or reports `FAIL`/`NOT_RUN` is overridden to `CANNOT_REVIEW` and blocked (enforced in `pr-review-dispatch.ts`).
+**Mandatory test execution**: A review report that says PASS but omits `### Test execution` or reports `FAIL`/`NOT_RUN` is overridden to `CANNOT_REVIEW` and blocked, even for a zero-call plan. `NOT_APPLICABLE` is accepted only with the parent-confirmed zero-call plan described above (enforced in `pr-review-dispatch.ts`).
 
 ## Auto-review trigger
 
@@ -469,7 +479,7 @@ return even when the HEAD already has a token.
 3. Empty/malformed HEAD sha **always blocks**.
 4. Unrecognised actions **always block** (fail-closed).
 5. CRITICAL security findings **always escalate**.
-6. PASS requires test execution — missing/failed tests → `CANNOT_REVIEW`.
+6. PASS requires completed proposed validation, or explicit `NOT_APPLICABLE` for a parent-confirmed zero-call plan. Missing/failed/incomplete tests → `CANNOT_REVIEW`.
 7. A truncated diff never yields a full PASS. When `ReviewReport.diffCoverage.truncated` is true (the text-diff path capped the diff below `maxDiffLines`), a PASS report is an effective **PARTIAL**: `decidePushGate` blocks (no token stamp) and `autoPassOnNitOnly` cannot auto-stamp even for an all-NIT report with a test PASS. CRITICAL escalation still takes precedence. The direct-inspection path (orchestrator bridge) reviews the full `baseRef..HEAD` diff, so it carries no truncation (full coverage; `diffCoverage` absent).
 8. Tokens are sha-scoped, not branch-scoped.
 9. No persistence — session reload clears all tokens.

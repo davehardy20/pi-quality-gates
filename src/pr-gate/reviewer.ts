@@ -65,6 +65,8 @@ export interface SdkObservedStartupIdentity {
 export interface ReviewerResult {
   /** Internal authorization deadline, never authored by a reviewer. */
   reviewDeadline?: ReviewDeadline;
+  /** Parent-computed plan size; dispatch overwrites any bridge-provided value. */
+  requiredTestCommandCount?: number;
   report: ReviewReport | null;
   rawOutput: string;
   exitCode: number;
@@ -116,6 +118,8 @@ export interface ReviewerAttemptInput {
   diffCoverage?: DiffCoverage;
   /** Optional test-execution plan rendered into the task template. */
   testPlan?: string;
+  /** Structured parent plan size, never inferred from reviewer prose. */
+  requiredTestCommandCount?: number;
   /** Base ref for repository-direct review execution. */
   baseRef?: string;
   signal?: AbortSignal;

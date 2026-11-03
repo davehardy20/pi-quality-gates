@@ -562,7 +562,7 @@ export function formatTestExecutionPlan(plan: TestExecutionPlan): string {
 	if (plan.recommendedCommands.length === 0) {
 		lines.push(
 			"",
-			"No safe validation runner is available for this project. Mark test execution as NOT_RUN and explain why under What could not be verified.",
+			"No validation calls are proposed. Inspect the changed files and relevant test configuration. If no executable validation applies (for example, a documentation-only bootstrap), report Test execution as NOT_APPLICABLE and explain why; this does not claim that tests ran. If relevant validation is unavailable or incomplete, report NOT_RUN instead. Required checks, failures and timeouts can never be NOT_APPLICABLE.",
 		);
 	} else {
 		const calls =
