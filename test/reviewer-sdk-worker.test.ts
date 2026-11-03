@@ -18,7 +18,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { PR_REVIEW_CONFIG } from "../src/pr-gate/pr-review-config.js";
 import { createSdkReviewerLauncher } from "../src/pr-gate/reviewer-sdk-spawn.js";
 
-// Fabricated SDK/credentials only. No installed SDK or provider requests.
+// Fabricated SDK/credentials only. These tests never import the installed SDK,
+// call a model, inspect private application state, or grant startup admission.
 const roots: string[] = [];
 const worker = fileURLToPath(
 	new URL("../src/pr-gate/reviewer-sdk-worker.mjs", import.meta.url),
@@ -47,13 +48,25 @@ function importEnvironment(log: string): {
 	return JSON.parse(line?.slice(prefix.length) ?? "null");
 }
 
+function externalCode() {
+	const directory = realpathSync(
+		mkdtempSync(join(tmpdir(), "qg-external-code-")),
+	);
+	roots.push(directory);
+	const source = join(directory, "dependency.unlisted");
+	const text = "export const externalFixture = true;";
+	writeFileSync(source, text);
+	return { directory, source, text };
+}
+
 function fixture(
 	options: {
 		injectedExtension?: boolean;
 		echoKey?: boolean;
 		oauthOnly?: boolean;
 		missingRunner?: boolean;
-		readPath?: string;
+		readPath?: unknown;
+		readTool?: "read" | "grep" | "find" | "ls";
 		assistantMessages?: {
 			stopReason?: string;
 			text?: string;
@@ -160,11 +173,17 @@ function fixture(
 		sdk: file(
 			join(sdkRoot, "dist/core/sdk.js"),
 			`${record}
+			import { readFileSync, readdirSync } from "node:fs";
 			${throwAt("import-sdk")}
 			export function createReadOnlyTools() {
 				return ["read", "grep", "find", "ls"].map(name => ({
 					name,
-					execute: async (_id, params) => { note("read:" + params.path); return { content: [] }; }
+					execute: async (_id, params) => {
+						note(name + ":" + params.path);
+						const text = name === "read" ? readFileSync(params.path, "utf8") : readdirSync(params.path).join("\\n");
+						note("fixture-content:" + JSON.stringify(text));
+						return { content: [{ type: "text", text }] };
+					}
 				}));
 			}
 			export async function createAgentSession(options) {
@@ -188,7 +207,7 @@ function fixture(
 							const auth = await options.modelRuntime.getAuth(options.model);
 							if (auth?.auth.apiKey !== options.modelRuntime.key) throw Error("request authentication missing");
 							${throwAt("prompt")}
-							${options.readPath === undefined ? "" : `await (options.customTools.find(tool => tool.name === "read") ?? createReadOnlyTools()[0]).execute("fixture-call", { path: ${JSON.stringify(options.readPath)} });`}
+							${options.readPath === undefined ? "" : `await options.customTools.find(tool => tool.name === ${JSON.stringify(options.readTool ?? "read")}).execute("fixture-call", { path: ${JSON.stringify(options.readPath)} });`}
 							for (const message of ${JSON.stringify(options.assistantMessages ?? [{ stopReason: "stop", text: report }])}) {
 								listener({ type: "message_start", message: { role: "assistant" } });
 								listener({ type: "message_end", message: { role: "assistant", stopReason: message.stopReason, errorMessage: message.errorMessage, content: [{ type: "text", text: ${options.echoKey ? "options.modelRuntime.key" : 'message.text ?? ""'} }] } });
@@ -842,7 +861,7 @@ describe("fixed SDK worker with owned fabricated modules", () => {
 		expect(readFileSync(f.log, "utf8")).toContain("dispose");
 	});
 
-	it("preserves ordinary workspace reads through the scoped SDK override", async () => {
+	it("preserves ordinary workspace reads through the SDK override", async () => {
 		const f = fixture({ readPath: "fixed.ts" });
 		const result = await launch(f.request);
 		expect(result.code).toBe(0);
@@ -851,22 +870,87 @@ describe("fixed SDK worker with owned fabricated modules", () => {
 		);
 	});
 
-	it("refuses traversal before delegating a builtin read", async () => {
-		const f = fixture({ readPath: "../owned/private.txt" });
+	for (const name of ["read", "grep", "find", "ls"] as const) {
+		it(`allows external ${name} code access without allowlists`, async () => {
+			const external = externalCode();
+			const path = name === "read" ? external.source : external.directory;
+			const f = fixture({ readPath: path, readTool: name });
+			const result = await launch(f.request);
+			expect(result.code).toBe(0);
+			const effects = readFileSync(f.log, "utf8");
+			expect(effects).toContain(`${name}:${path}`);
+			expect(effects).toContain(
+				name === "read" ? external.text : "dependency.unlisted",
+			);
+			// In-memory authentication remains required; source access adds no tools.
+			expect(JSON.parse(result.stdout.split("\n")[0]).tools).toEqual([
+				"read",
+				"grep",
+				"find",
+				"ls",
+				"git_inspect_safe",
+				"run_biome",
+				"run_vitest",
+				"run_typecheck",
+				"run_pytest",
+				"run_cargo_test",
+				"run_node_test",
+			]);
+			expect(result.stdout).not.toContain(f.request.auth.apiKey);
+			expect(result.stderr).not.toContain(f.request.auth.apiKey);
+		});
+
+		it(`allows symlinked external ${name} code access`, async () => {
+			const external = externalCode();
+			const path = name === "read" ? external.source : external.directory;
+			const f = fixture({ readPath: "linked-code", readTool: name });
+			symlinkSync(path, join(f.request.cwd, "linked-code"));
+			const result = await launch(f.request);
+			expect(result.code).toBe(0);
+			const effects = readFileSync(f.log, "utf8");
+			expect(effects).toContain(`${name}:${path}`);
+			expect(effects).toContain(
+				name === "read" ? external.text : "dependency.unlisted",
+			);
+		});
+	}
+
+	it("allows parent-relative code paths after canonicalization", async () => {
+		const f = fixture({ readPath: "../dependency.unlisted" });
+		const source = join(f.root, "dependency.unlisted");
+		writeFileSync(source, "export const relativeFixture = true;");
+		const result = await launch(f.request);
+		expect(result.code).toBe(0);
+		expect(readFileSync(f.log, "utf8")).toContain(`read:${source}`);
+	});
+
+	const malformedPaths = [null, 42, {}, "", "fixed.ts\0", "x".repeat(4097)];
+	for (const [index, readPath] of malformedPaths.entries()) {
+		it(`refuses malformed path ${index} before delegating`, async () => {
+			const f = fixture({ readPath });
+			const result = await launch(f.request);
+			expect(result.code).toBe(1);
+			expect(readFileSync(f.log, "utf8")).not.toContain("read:");
+		});
+	}
+
+	it("refuses nonregular read targets before delegating", async () => {
+		const f = fixture({ readPath: "." });
 		const result = await launch(f.request);
 		expect(result.code).toBe(1);
 		expect(readFileSync(f.log, "utf8")).not.toContain("read:");
 	});
 
-	it("refuses workspace symlinks before inspecting their target", async () => {
-		const f = fixture({ readPath: "linked.ts" });
-		const privateFile = join(f.request.agentDir, "private.txt");
-		writeFileSync(privateFile, "owned private fixture; not a real secret");
-		symlinkSync(privateFile, join(f.request.cwd, "linked.ts"));
-		const result = await launch(f.request);
-		expect(result.code).toBe(1);
-		expect(readFileSync(f.log, "utf8")).not.toContain("read:");
-	});
+	for (const kind of ["broken", "cycle"]) {
+		it(`refuses ${kind} symlinks without delegating`, async () => {
+			const f = fixture({ readPath: "linked-code" });
+			const link = join(f.request.cwd, "linked-code");
+			symlinkSync(kind === "cycle" ? link : join(f.root, "missing"), link);
+			const result = await launch(f.request);
+			expect(result.code).toBe(1);
+			expect(readFileSync(f.log, "utf8")).not.toContain("read:");
+		});
+	}
 
 	it("refuses missing mandatory validation tools before prompting", async () => {
 		const f = fixture({ missingRunner: true });

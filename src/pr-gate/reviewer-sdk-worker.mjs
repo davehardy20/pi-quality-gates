@@ -167,9 +167,9 @@ function plainHeaders(value) {
 	);
 }
 
-/** Guard builtin path arguments without pretending to be an OS sandbox or a
- * hostile-writer lease. Symlinks are refused before inspecting their target. */
-function scopedReadTools(raw, cwd, roots) {
+/** Validate read arguments and file kinds, not code locations. External and
+ * symlinked code is allowed; this is not an OS sandbox or hostile-writer lease. */
+function validatedReadTools(raw, cwd) {
 	const names = new Set(["read", "grep", "find", "ls"]);
 	if (
 		!Array.isArray(raw) ||
@@ -178,29 +178,21 @@ function scopedReadTools(raw, cwd, roots) {
 		raw.some((tool) => !names.has(tool.name))
 	)
 		fail();
-	const check = (value) => {
+	const check = (value, name) => {
 		guard();
 		if (
 			typeof value !== "string" ||
+			value.length === 0 ||
 			value.length > 4096 ||
-			value.includes("\0") ||
-			value.split(/[\\/]/).includes("..")
+			value.includes("\0")
 		)
 			fail();
-		const target = resolve(cwd, value);
-		const root = roots.find((candidate) => {
-			const suffix = relative(candidate, target);
-			return (
-				!isAbsolute(suffix) && suffix !== ".." && !suffix.startsWith(`..${sep}`)
-			);
-		});
-		if (!root || lstatSync(root).isSymbolicLink()) fail();
-		let path = root;
-		for (const part of relative(root, target).split(sep).filter(Boolean)) {
-			path = join(path, part);
-			if (lstatSync(path).isSymbolicLink()) fail();
-		}
-		if (realpathSync(target) !== target) fail();
+		const target = realpathSync(resolve(cwd, value));
+		const stat = lstatSync(target);
+		if (
+			name === "read" ? !stat.isFile() : !stat.isFile() && !stat.isDirectory()
+		)
+			fail();
 		return target;
 	};
 	return raw.map((tool) => ({
@@ -210,13 +202,16 @@ function scopedReadTools(raw, cwd, roots) {
 			if (!record(params) || types.isProxy(params)) fail();
 			const descriptors = Object.getOwnPropertyDescriptors(params);
 			if (Object.values(descriptors).some((item) => !("value" in item))) fail();
-			const target = check(descriptors.path?.value ?? ".");
+			const target = check(
+				descriptors.path ? descriptors.path.value : ".",
+				tool.name,
+			);
 			const call = [...args];
 			call[1] = { ...params, path: target };
 			// Retain the complete final result, not unvalidated partial updates.
 			call[3] = undefined;
 			const result = await tool.execute(...call);
-			check(target);
+			guard();
 			return result;
 		},
 	}));
@@ -447,11 +442,7 @@ async function run(request) {
 	)
 		fail();
 	const customTools = [
-		...scopedReadTools(modules.sdk.createReadOnlyTools(cwd), cwd, [
-			cwd,
-			sdkRoot,
-			toolRoot,
-		]),
+		...validatedReadTools(modules.sdk.createReadOnlyTools(cwd), cwd),
 		...safeTools,
 	];
 	const tools = customTools.map((tool) => tool.name);
