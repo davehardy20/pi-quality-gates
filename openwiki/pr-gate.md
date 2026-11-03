@@ -136,12 +136,23 @@ not an OS sandbox.
 bridge** binds `reviewer.ts` to `reviewer-sdk-spawn.ts`, which starts the fixed
 `reviewer-sdk-worker.mjs` in a Node child against the trusted installed Pi 1.3.0
 SDK. It uses explicit in-memory settings, credentials and session storage, closed
-resources, four scoped read tools and seven mandatory safe Git/validation tools.
+resources, four read-only inspection tools and seven mandatory safe Git/validation tools.
 Only the selected tool definitions and context redactor are retained; discovered
 extensions, commands, hooks, skills and prompt templates are not loaded. No CLI
 startup or Apple container is involved. `PI_PR_REVIEW_BRIDGE=orchestrator`
 opts into the orchestrator verifier bridge, which dispatches a host-side
 orchestrate `verifier`/`pr-review` child (no container is involved).
+
+The four inspection tools (`read`, `grep`, `find`, `ls`) can inspect code anywhere
+that the reviewer process can read it, including external SDK checkouts and
+symlinked dependencies. No code-root or file-extension allowlist applies.
+Relative paths resolve against the review checkout and symlinks resolve to
+canonical targets. Input bounds, file-kind checks and the deadline still apply:
+direct reads require regular files; searches and listings accept files or
+directories. Broken links, cycles and malformed paths fail safely. Secret
+redaction remains enabled; code inspection does not authorize execution,
+credential disclosure, mutation or publication. This is not an OS sandbox or
+protection against hostile concurrent writers.
 
 **Orchestrator bridge dispatch** (`PI_PR_REVIEW_BRIDGE=orchestrator`):
 - Creates a unique `PR_REVIEW_REQUEST_ID`.
