@@ -17,6 +17,7 @@ import {
 	type PrReviewDispatchInput,
 	resolveRuntimeReviewConfig,
 } from "../src/pr-gate/pr-review-dispatch.js";
+import { createReviewCoordinator } from "../src/pr-gate/review-coordinator.js";
 import type {
 	ReviewerExecution,
 	ReviewerResult,
@@ -532,7 +533,60 @@ describe("pr-review dispatch", () => {
 		}
 	});
 
-	it("blocks and sends a fix instruction when review finds issues", async () => {
+	for (const busy of [false, true]) {
+		it(`delivers actual ISSUES once after release (${busy ? "busy" : "idle"})`, async () => {
+			const pi = createMockPi();
+			const activations: Array<{
+				mode: string;
+				running: boolean;
+				content: unknown;
+			}> = [];
+			const legacyWakeups: string[] = [];
+			pi.sendMessage = (message, options) => {
+				// Model the installed Pi idle/streaming delivery branches.
+				if (busy ? options?.triggerTurn !== false : options?.triggerTurn) {
+					activations.push({
+						mode: busy ? (options?.deliverAs ?? "steer") : "turn",
+						running: coordinator.isInProgress(),
+						content: message.content,
+					});
+				}
+			};
+			pi.sendUserMessage = (message, options) => {
+				legacyWakeups.push(String(message));
+				if (busy && !options?.deliverAs)
+					throw new Error("Streaming user delivery needs a mode");
+				activations.push({
+					mode: busy ? (options?.deliverAs ?? "steer") : "turn",
+					running: coordinator.isInProgress(),
+					content: message,
+				});
+			};
+			const coordinator = createReviewCoordinator({
+				pi,
+				resolveHeadSha: () => HEAD_SHA,
+				dispatch: createPrReviewDispatch(createTestDeps(makeIssuesReport())),
+			});
+			coordinator.startReview({
+				ctx: createMockContext(),
+				state: createPrGateState(),
+				origin: "tool",
+			});
+			await vi.waitFor(() => expect(coordinator.isInProgress()).toBe(false));
+			expect(legacyWakeups).toEqual([]);
+			expect(activations).toHaveLength(1);
+			expect(activations[0]).toMatchObject({
+				mode: busy ? "followUp" : "turn",
+				running: false,
+			});
+			expect(activations[0].content).toContain("PR review found issues");
+			expect(activations[0].content).toContain("missing null check");
+			expect(activations[0].content).toContain("Affected files: src/x.ts");
+			coordinator.dispose();
+		});
+	}
+
+	it("returns findings and fix instructions without independently waking the agent", async () => {
 		const pi = createMockPi();
 		const dispatch = createPrReviewDispatch(createTestDeps(makeIssuesReport()));
 		const input = createInput(pi);
@@ -542,8 +596,8 @@ describe("pr-review dispatch", () => {
 		expect(result.stamped).toBe(false);
 		expect(result.blocked).toBe(true);
 		expect(result.escalated).toBe(false);
-		expect(pi.userMessages.length).toBe(1);
-		expect(pi.userMessages[0]).toContain("Fix the PR review findings");
+		expect(pi.userMessages).toEqual([]);
+		expect(result.message).toContain("Fix the PR review findings");
 		expect(result.message).toContain("issues");
 	});
 

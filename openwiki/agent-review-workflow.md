@@ -32,7 +32,10 @@ publication authority.
 > publishes. The agent remains the sole publisher, and the push gate stays
 > fail-closed until the exact HEAD has a PASS token.
 
-Everything else on this page follows from that rule.
+Call `pr_review` directly once scoped work is ready and the linter is clean.
+Normal startup has no separate human approval, validation proposal or approval
+expiry. This does not remove bounded validation, exact-HEAD checks or required
+review evidence.
 
 ## End-to-end workflow
 
@@ -64,12 +67,13 @@ Everything else on this page follows from that rule.
       orchestrator: matching tool_result handler parses the child's report
           │
           ▼
-   8. Completion message emitted
+   8. Coordinator clears running state, then emits a terminal follow-up
       pr-review-pass  │  pr-review-escalation  │  pr-review-status(blocked)
-          │
+          │  wakes an idle agent; queues a follow-up if busy
           ▼
-   9. Agent waits for the pass message, then re-checks, THEN publishes
-      via git_safe push / gh_safe pr_create (still gated on exact-HEAD PASS)
+   9. Agent handles the result without waiting for another user prompt
+      matching PASS → re-check, resume already-authorized publication
+      findings / failure → triage, fix within scope or escalate
 ```
 
 **Critical ordering invariant:** the agent must NOT call `git_safe push` /
@@ -120,6 +124,27 @@ command/tool parity.
    - `pr-review-escalation` — CRITICAL security finding; requires human ack.
    - `pr-review-status` — blocked (ISSUES / CANNOT_REVIEW / parse failure / error),
      with the reason in the message.
+
+Startup and command kickoff messages explicitly use `triggerTurn: false`, so
+progress stays passive even while Pi is busy. Dispatch returns findings and fix
+instructions together instead of independently activating the agent. Every
+terminal result requests one agent turn with `triggerTurn: true` and
+`deliverAs: "followUp"`; the coordinator releases
+its running state before sending it. A new review started by that follow-up
+keeps its own state, and shutdown suppresses late completion messages.
+
+On completion, the agent acts without another routine approval prompt:
+
+- **PASS:** match the message's `headSha` to current HEAD, re-check the gate,
+  then resume only publication already authorized by the user. A stale PASS
+  grants no permission.
+- **Failure or findings:** inspect the reason, make only authorized fixes,
+  validate, commit and re-review when needed. Keep critical escalations and
+  unresolved permission or safety decisions for the user.
+- **NITs:** use Pi-Kev when useful or reasoned agent judgment. Record why each
+  skipped or deferred item can wait. Re-review after changes or when required
+  gate evidence is missing, not just to repeat cosmetic feedback. Recording a
+  deferral never substitutes for a required exact-HEAD PASS token.
 
 A PASS report that omits the `### Test execution` section or reports `FAIL`/
 `NOT_RUN` is overridden to `CANNOT_REVIEW` and blocked — the agent cannot stamp a

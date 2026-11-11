@@ -231,6 +231,7 @@ export interface PrReviewDispatchInput {
 			autoPassOnNitOnly?: boolean;
 		};
 	};
+	/** Retained for caller compatibility; the coordinator owns message delivery. */
 	pi: ExtensionAPI;
 	baseRef?: string;
 	isReReview?: boolean;
@@ -776,7 +777,7 @@ export function createPrReviewDispatch(
 	async function dispatch(
 		input: PrReviewDispatchInput,
 	): Promise<PrReviewDispatchResult> {
-		const { ctx, state, pi } = input;
+		const { ctx, state } = input;
 
 		const headSha = deps.getHeadSha(ctx.cwd);
 		if (!headSha) {
@@ -1048,7 +1049,6 @@ export function createPrReviewDispatch(
 			}
 
 			const fixInstruction = buildFixInstruction(report);
-			pi.sendUserMessage(fixInstruction);
 
 			const truncationNote = report.diffCoverage?.truncated
 				? `\n\n⚠️ **Partial coverage:** the diff was truncated (${report.diffCoverage.omittedLines} lines omitted, ${diffCoveragePercent(report.diffCoverage)}% reviewed). This is a PARTIAL review.`
@@ -1059,7 +1059,7 @@ export function createPrReviewDispatch(
 				stamped: false,
 				escalated: false,
 				blocked: true,
-				message: `🚨 **PR review found issues** for HEAD ${headSha}.\n\n${formatReportForDisplay(report)}\n\nFix the findings, wait for lint-clean, then re-run /pr-review.${truncationNote}`,
+				message: `🚨 **PR review found issues** for HEAD ${headSha}.\n\n${formatReportForDisplay(report)}\n\n${fixInstruction}${truncationNote}`,
 			};
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);

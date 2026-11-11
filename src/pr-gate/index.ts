@@ -292,20 +292,23 @@ export default function prGateExtension(
 	);
 
 	function sendKickoffMessage(result: ReviewKickoffResult): void {
-		pi.sendMessage({
-			customType: "pr-review-status",
-			content: result.message,
-			display: true,
-			details: {
-				headSha: result.headSha,
-				baseRef: result.baseRef ?? null,
-				status: result.status,
-				started: result.started,
-				enabled: result.gateEnabled,
-				tokenCount: result.tokenCount,
-				startedAt: result.startedAt ?? null,
+		pi.sendMessage(
+			{
+				customType: "pr-review-status",
+				content: result.message,
+				display: true,
+				details: {
+					headSha: result.headSha,
+					baseRef: result.baseRef ?? null,
+					status: result.status,
+					started: result.started,
+					enabled: result.gateEnabled,
+					tokenCount: result.tokenCount,
+					startedAt: result.startedAt ?? null,
+				},
 			},
-		});
+			{ triggerTurn: false },
+		);
 	}
 
 	pi.registerCommand("pr-review", {
