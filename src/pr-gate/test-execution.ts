@@ -23,7 +23,8 @@ export type SafeRunnerTool =
 	| "run_typecheck"
 	| "run_pytest"
 	| "run_cargo_test"
-	| "run_node_test";
+	| "run_node_test"
+	| "run_ruff";
 
 export interface RecommendedTestCommand {
 	tool: SafeRunnerTool;
@@ -65,7 +66,7 @@ export interface TestExecutionPlan {
 }
 
 const RESULT_CONTRACT =
-	"For every required call, record bounded PASS/FAIL/NOT_RUN, requested/effective/elapsed budgets (ms), bounded redacted progress and any tool sidecar ref under Test execution. Use trusted runner evidence only; absent values are unknown. Progress/timeout is not completion; incomplete required calls remain FAIL/NOT_RUN. Do not paste raw logs.";
+	"For every required call, record bounded PASS/FAIL/NOT_RUN, requested/effective/elapsed budgets (ms), bounded redacted progress and any tool sidecar ref under Test execution. Use trusted runner evidence only; absent values are unknown. Progress/timeout is not completion; incomplete required calls remain FAIL/NOT_RUN. Overall Test execution can be PASS only when every required call completed with PASS. Do not paste raw logs.";
 
 /**
  * Detect the project ecosystem by looking for well-known manifest files.
@@ -304,7 +305,22 @@ export function recommendTestCommands(
 	policy: ReviewValidationPolicy = loadReviewValidationPolicy(),
 	unfilteredChangedFiles: string[] = files,
 ): TestExecutionPlan {
-	const plan = buildTestCommands(files, cwd, unfilteredChangedFiles);
+	// Validate before normalization, including review-filtered configuration paths.
+	if (unfilteredChangedFiles !== files)
+		existingChangedFiles(unfilteredChangedFiles, cwd);
+	const changedFiles = existingChangedFiles(files, cwd);
+	const plan = buildTestCommands(changedFiles, cwd, unfilteredChangedFiles);
+	const pythonFiles = changedFiles.filter((file) => /\.pyi?$/i.test(file));
+	if (pythonFiles.length > 0) {
+		plan.runnerCommands.push({
+			tool: "run_ruff",
+			args: pythonFiles,
+			command: command("run_ruff", pythonFiles),
+			scope: "format-lint",
+		});
+		plan.resultContract +=
+			" Required Ruff lint is independent of pytest; earlier post-turn lint cannot replace review-time Ruff evidence.";
+	}
 	const root =
 		Object.keys(policy.repoOverrides).length ||
 		Object.keys(policy.pytestPartitions).length
@@ -370,20 +386,15 @@ export function recommendTestCommands(
 }
 
 function buildTestCommands(
-	files: string[],
+	changedFiles: string[],
 	cwd: string,
 	unfilteredChangedFiles: string[],
 ): TestExecutionPlan {
 	const ecosystem = detectProjectEcosystem(cwd);
-	const testFiles = files.filter(isTestFile);
+	const testFiles = changedFiles.filter(isTestFile);
 
 	switch (ecosystem) {
 		case "typescript": {
-			// Validate before normalization, even when review filters hide a path.
-			// Discard the existing-only result: deleted config names still guard lint.
-			if (unfilteredChangedFiles !== files)
-				existingChangedFiles(unfilteredChangedFiles, cwd);
-			const changedFiles = existingChangedFiles(files, cwd);
 			const workspace = discoverWorkspaceValidationProjects(cwd);
 			const packageDirs = [...workspace.packages].sort(
 				(a, b) => b.length - a.length,

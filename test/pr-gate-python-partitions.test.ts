@@ -254,7 +254,7 @@ describe("exhaustive Python review plans", () => {
 		);
 	});
 
-	it("preserves whole-file overrides and counts both mandatory partitions in the aggregate deadline", () => {
+	it("preserves whole-file overrides and counts both mandatory partitions and Ruff in the aggregate deadline", () => {
 		const root = fixture();
 		const policy = parseReviewValidationPolicy(
 			settings(
@@ -275,14 +275,14 @@ describe("exhaustive Python review plans", () => {
 			}),
 		);
 		expect(reviewerTimeoutForPlan(plan.runnerCommands, policy, 2_700_000)).toBe(
-			2_910_000,
+			3_210_000,
 		);
 		expect(() =>
 			reviewerTimeoutForPlan(
 				plan.runnerCommands,
-				{ ...policy, maxReviewerTimeoutMs: 2_850_000 },
+				{ ...policy, maxReviewerTimeoutMs: 3_000_000 },
 				2_700_000,
 			),
-		).toThrow(/required 2910000.*2850000/);
+		).toThrow(/required 3210000.*3000000/);
 	});
 });

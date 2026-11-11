@@ -84,30 +84,34 @@ describe("trusted per-file validation budgets", () => {
 			"run_pytest",
 			"run_pytest",
 			"run_pytest",
+			"run_ruff",
 		]);
 		expect(plan.runnerCommands.map((call) => call.args)).toEqual([
 			[files[0]],
 			[files[1]],
 			[files[2]],
 			[],
+			files,
 		]);
 		expect(plan.runnerCommands.map((call) => call.scope)).toEqual([
 			"targeted",
 			"targeted",
 			"targeted",
 			"broad",
+			"format-lint",
 		]);
 		expect(plan.runnerCommands.map((call) => call.timeoutMs)).toEqual([
-			1_200_000, 900_000, 300_000, 300_000,
+			1_200_000, 900_000, 300_000, 300_000, 300_000,
 		]);
 		expect(plan.recommendedCommands).toEqual([
 			`run_pytest ${files[0]}`,
 			`run_pytest ${files[1]}`,
 			`run_pytest ${files[2]}`,
 			"run_pytest",
+			`run_ruff ${files.join(" ")}`,
 		]);
 		expect(reviewerTimeoutForPlan(plan.runnerCommands, policy, 2_700_000)).toBe(
-			3_300_000,
+			3_600_000,
 		);
 		const rendered = formatTestExecutionPlan(plan);
 		expect(rendered).toContain(
@@ -664,7 +668,11 @@ describe("recommendTestCommands", () => {
 	});
 
 	it("returns empty recommendations for unknown ecosystems", () => {
-		const plan = recommendTestCommands(["src/a.unknown"], "/tmp/not-a-repo");
+		const cwd = withTestFiles(
+			fs.mkdtempSync(path.join(os.tmpdir(), "pi-qg-unknown-")),
+			["src/a.unknown"],
+		);
+		const plan = recommendTestCommands(["src/a.unknown"], cwd);
 		expect(plan.ecosystem).toBe("unknown");
 		expect(plan.recommendedCommands).toEqual([]);
 		expect(plan.executionSandbox).toBe("repository-checkout");
