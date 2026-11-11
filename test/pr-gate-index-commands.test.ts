@@ -119,6 +119,7 @@ describe("pr-gate command registration", () => {
 
 	it("/pr-review and pr_review share one coordinator (command kickoff then tool in-progress)", async () => {
 		const { pi, commands, tools } = createMockPi();
+		const sendMessage = vi.spyOn(pi, "sendMessage");
 		let resolveDispatch: (value: unknown) => void = () => {};
 		const dispatch = vi.fn(
 			() =>
@@ -150,6 +151,10 @@ describe("pr-gate command registration", () => {
 		};
 		expect(execResult.details.status).toBe("in-progress");
 		expect(dispatch).toHaveBeenCalledTimes(1);
+		expect(sendMessage).toHaveBeenCalledTimes(2);
+		for (const call of sendMessage.mock.calls) {
+			expect(call[1]).toEqual({ triggerTurn: false });
+		}
 
 		resolveDispatch({
 			report: null,

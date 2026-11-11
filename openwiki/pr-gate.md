@@ -112,7 +112,7 @@ Tokens are stored in-memory via `PassTokenStore` (`src/pr-gate/pass-token-store.
    - **PASS but diff truncated** (`diffCoverage.truncated`) → **PARTIAL**: block, no stamp; surface omitted lines and coverage %.
    - PASS (full coverage) → stamp token, return `stamped=true`.
    - CANNOT_REVIEW → block.
-   - ISSUES → build fix instruction, inject as user message via `pi.sendUserMessage()`, block.
+   - ISSUES → block and return the report plus fix instructions together. The coordinator releases running state, then delivers one terminal `sendMessage` with `triggerTurn: true` and `deliverAs: "followUp"`.
 
 ### `isLinterClean`
 

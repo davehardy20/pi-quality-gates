@@ -138,20 +138,36 @@ export function createReviewCoordinator(
 		const controller = new AbortController();
 		activeController = controller;
 		inProgress = true;
+		function releaseReview(): void {
+			// A completion handler may immediately start another review. Only
+			// release this run; its finally must not clear the next run's state.
+			if (activeController !== controller) return;
+			activeController = undefined;
+			inProgress = false;
+		}
+		function sendCompletion(
+			message: Parameters<ExtensionAPI["sendMessage"]>[0],
+		): void {
+			releaseReview();
+			pi.sendMessage(message, { triggerTurn: true, deliverAs: "followUp" });
+		}
 		setStatus(ctx, `PR review: running ${headSha.slice(0, 8) || "unknown"}`);
-		pi.sendMessage({
-			customType: "pr-review-status",
-			content: `PR review started for HEAD ${headSha}${dispatchInput.baseRef ? ` against ${dispatchInput.baseRef}` : ""}. This runs in the background and may take several minutes. Start time: ${formatStartTime()}.`,
-			details: {
-				headSha,
-				baseRef: dispatchInput.baseRef ?? null,
-				enabled: state.config.enabled,
-				tokenCount: state.tokens.size,
-				status: "running",
-				startedAt: Date.now(),
+		pi.sendMessage(
+			{
+				customType: "pr-review-status",
+				content: `PR review started for HEAD ${headSha}${dispatchInput.baseRef ? ` against ${dispatchInput.baseRef}` : ""}. This runs in the background and may take several minutes. Start time: ${formatStartTime()}.`,
+				details: {
+					headSha,
+					baseRef: dispatchInput.baseRef ?? null,
+					enabled: state.config.enabled,
+					tokenCount: state.tokens.size,
+					status: "running",
+					startedAt: Date.now(),
+				},
+				display: true,
 			},
-			display: true,
-		});
+			{ triggerTurn: false },
+		);
 		void (async () => {
 			try {
 				const result: PrReviewDispatchResult = await deps.dispatch.dispatch({
@@ -167,7 +183,7 @@ export function createReviewCoordinator(
 							? `PR review: blocked ${headSha.slice(0, 8)}`
 							: `PR review: complete ${headSha.slice(0, 8)}`;
 				setStatus(ctx, statusText);
-				pi.sendMessage({
+				sendCompletion({
 					customType: result.escalated
 						? "pr-review-escalation"
 						: result.stamped
@@ -190,7 +206,7 @@ export function createReviewCoordinator(
 				if (disposed) return;
 				const message = error instanceof Error ? error.message : String(error);
 				setStatus(ctx, `PR review: failed ${headSha.slice(0, 8) || "unknown"}`);
-				pi.sendMessage({
+				sendCompletion({
 					customType: "pr-review-status",
 					content: `PR review gate: review failed — ${message}`,
 					display: true,
@@ -203,8 +219,7 @@ export function createReviewCoordinator(
 					},
 				});
 			} finally {
-				if (!disposed) inProgress = false;
-				if (activeController === controller) activeController = undefined;
+				releaseReview();
 			}
 		})();
 	}

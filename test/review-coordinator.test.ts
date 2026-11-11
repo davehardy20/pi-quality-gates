@@ -281,6 +281,135 @@ describe("createReviewCoordinator (shared by /pr-review and pr_review)", () => {
 		);
 	});
 
+	for (const outcome of ["pass", "findings", "escalation", "error"] as const) {
+		it(`wakes the agent after releasing review state: ${outcome}`, async () => {
+			const dispatch = vi.fn(async (): Promise<PrReviewDispatchResult> => {
+				if (outcome === "error") throw new Error("fixture dispatch failure");
+				return {
+					report: null,
+					stamped: outcome === "pass",
+					escalated: outcome === "escalation",
+					blocked: outcome !== "pass",
+					message:
+						outcome === "findings" ? "NIT: assess this finding" : outcome,
+				};
+			});
+			const { coordinator, state, pi } = createCoordinator({ dispatch });
+			const runningAtCompletion: boolean[] = [];
+			pi.sendMessage.mockImplementation((_message, options) => {
+				if (options?.triggerTurn)
+					runningAtCompletion.push(coordinator.isInProgress());
+			});
+			const kickoff = coordinator.startReview({
+				ctx: createContext(),
+				state,
+				origin: "tool",
+			});
+			expect(kickoff.status).toBe("started");
+			expect(pi.sendMessage.mock.calls[0][1]?.triggerTurn).toBe(false);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			const terminal = pi.sendMessage.mock.calls.filter(
+				(call) => call[1]?.triggerTurn,
+			);
+			expect(terminal).toHaveLength(1);
+			expect(terminal[0][1]).toEqual({
+				triggerTurn: true,
+				deliverAs: "followUp",
+			});
+			expect(terminal[0][0].customType).toBe(
+				outcome === "pass"
+					? "pr-review-pass"
+					: outcome === "escalation"
+						? "pr-review-escalation"
+						: "pr-review-status",
+			);
+			expect(runningAtCompletion).toEqual([false]);
+			expect(state.tokens.size).toBe(0);
+			expect(pi.sendUserMessage).not.toHaveBeenCalled();
+		});
+	}
+
+	it("does not release a new review started from the completion handler", async () => {
+		const completed: PrReviewDispatchResult = {
+			report: null,
+			stamped: true,
+			escalated: false,
+			blocked: false,
+			message: "PASS",
+		};
+		let resolveSecond: (value: PrReviewDispatchResult) => void = () => {};
+		const dispatch = vi
+			.fn()
+			.mockResolvedValueOnce(completed)
+			.mockImplementationOnce(
+				() =>
+					new Promise<PrReviewDispatchResult>((resolve) => {
+						resolveSecond = resolve;
+					}),
+			);
+		const { coordinator, state, pi } = createCoordinator({ dispatch });
+		let nextKickoff: ReviewKickoffResult | undefined;
+		pi.sendMessage.mockImplementation((message, options) => {
+			if (message.customType === "pr-review-pass" && options?.triggerTurn) {
+				nextKickoff = coordinator.startReview({
+					ctx: createContext(),
+					state,
+					origin: "tool",
+				});
+			}
+		});
+		coordinator.startReview({ ctx: createContext(), state, origin: "tool" });
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(nextKickoff?.status).toBe("started");
+		expect(dispatch).toHaveBeenCalledTimes(2);
+		expect(coordinator.isInProgress()).toBe(true);
+		coordinator.dispose();
+		resolveSecond(completed);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(
+			pi.sendMessage.mock.calls.filter((call) => call[1]?.triggerTurn),
+		).toHaveLength(1);
+	});
+
+	for (const outcome of ["resolve", "reject"] as const) {
+		it(`never wakes a disposed session after late ${outcome}`, async () => {
+			let resolveDispatch: (value: PrReviewDispatchResult) => void = () => {};
+			let rejectDispatch: (error: Error) => void = () => {};
+			const dispatch = vi.fn(
+				() =>
+					new Promise<PrReviewDispatchResult>((resolve, reject) => {
+						resolveDispatch = resolve;
+						rejectDispatch = reject;
+					}),
+			);
+			const { coordinator, state, pi } = createCoordinator({ dispatch });
+			coordinator.startReview({ ctx: createContext(), state, origin: "tool" });
+			coordinator.dispose();
+			if (outcome === "resolve") {
+				resolveDispatch({
+					report: null,
+					stamped: true,
+					escalated: false,
+					blocked: false,
+					message: "late PASS",
+				});
+			} else {
+				rejectDispatch(new Error("late fixture failure"));
+			}
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			expect(pi.sendMessage).toHaveBeenCalledTimes(1);
+			expect(pi.sendMessage.mock.calls[0][1]?.triggerTurn).toBe(false);
+			expect(
+				coordinator.startReview({
+					ctx: createContext(),
+					state,
+					origin: "tool",
+				}).status,
+			).toBe("blocked");
+			expect(dispatch).toHaveBeenCalledTimes(1);
+		});
+	}
+
 	it("returns a compact result with no bulky report content", () => {
 		const { coordinator } = createCoordinator();
 		const result: ReviewKickoffResult = coordinator.startReview({

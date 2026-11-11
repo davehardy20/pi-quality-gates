@@ -48,6 +48,22 @@ describe("pr_review custom tool", () => {
 		).toBe(true);
 	});
 
+	it("keeps direct review startup free of approval-proposal parameters", () => {
+		const { tool } = buildTool();
+		expect(Object.keys(tool.parameters.properties)).toEqual(["baseRef"]);
+	});
+
+	it("guides immediate PASS and findings handling without another approval", () => {
+		const { tool } = buildTool();
+		const guidance = tool.promptGuidelines.join("\n");
+		expect(guidance).toMatch(/already-authorized publication/);
+		expect(guidance).toMatch(/do not wait for.*user/i);
+		expect(guidance).toMatch(/NIT.*Pi-Kev/);
+		expect(guidance).toMatch(/judgment/);
+		expect(guidance).toMatch(/reason.*skip/);
+		expect(guidance).toMatch(/failures.*findings/i);
+	});
+
 	it("advertises an honest reviewer bridge (no container claims)", () => {
 		const { tool } = buildTool();
 		const description = String(tool.description);

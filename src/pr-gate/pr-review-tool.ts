@@ -86,6 +86,9 @@ export function createPrReviewToolDefinition(deps: PrReviewToolDeps): {
 			"Call pr_review before calling git_safe push or gh_safe pr_create; the PR gate blocks publication until the exact HEAD has a PASS token.",
 			"pr_review is asynchronous: it returns kickoff state and the review completes in the background. Do NOT call git_safe push / gh_safe pr_create in the same batch — wait for the pr-review-pass message, then re-check before publishing.",
 			"Never rely on pr_review to push, create, update, or merge a PR. It only requests review and stamps gate state; you remain the sole publisher.",
+			"On pr-review-pass, verify its headSha matches current HEAD and re-check the gate, then resume already-authorized publication; do not wait for another user prompt. A stale PASS grants no authority.",
+			"On review failures or findings, triage the report and perform only authorized fixes, validate, commit and re-review as needed. Escalate critical findings and unresolved permission or safety boundaries; review completion grants no new authority.",
+			"For NITs, use Pi-Kev when useful or reasoned agent judgment; record a reason for each skipped or deferred item. Re-review when code changes or required gate evidence is missing, not solely to repeat cosmetic feedback.",
 		],
 		parameters: PrReviewToolParams,
 		async execute(
