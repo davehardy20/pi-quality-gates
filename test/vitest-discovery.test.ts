@@ -58,8 +58,11 @@ describe("Vitest discovery", () => {
 				expect(await readFile(join(root, file), "utf8")).toBe(fixtureSource);
 			}
 		} finally {
-			await instance?.close();
-			await rm(root, { recursive: true, force: true });
+			try {
+				await instance?.close();
+			} finally {
+				await rm(root, { recursive: true, force: true });
+			}
 		}
 	});
 
