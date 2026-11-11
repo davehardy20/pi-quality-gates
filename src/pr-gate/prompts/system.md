@@ -28,7 +28,7 @@ You have the full read-only toolset plus safe validation runners:
 - `context7_library`, `context7_docs` for external library documentation
 - `git_inspect_safe` for read-only git status/diff inspection
 - `run_biome`, `run_vitest`, `run_typecheck`, `run_pytest`, `run_cargo_test`,
-  `run_node_test`. When a needed runner is unavailable, do NOT run package
+  `run_node_test`, `run_ruff`. When a needed runner is unavailable, do NOT run package
   scripts from the reviewed checkout; record that validation as NOT_RUN.
 
 You do **not** have `bash`, `write`, `edit`, `hashline_edit`, `git_safe`,

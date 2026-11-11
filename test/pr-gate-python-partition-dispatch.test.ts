@@ -27,6 +27,8 @@ import {
 
 // Inert protocol fixtures only: no real reviewers, SDK, credentials or Git.
 const roots: string[] = [];
+const ruffCall =
+	'run_ruff {"paths":["pkg/tests/test_guard.py"],"timeoutMs":300000}';
 function fixture(maxReviewerTimeoutMs = 7_200_000) {
 	const cwd = fs.realpathSync(
 		fs.mkdtempSync(path.join(os.tmpdir(), "qg-python-dispatch-")),
@@ -85,7 +87,7 @@ function syntheticReport(status: "PASS" | "FAIL" | "NOT_RUN"): ReviewReport {
 			status,
 			summary:
 				status === "PASS"
-					? "synthetic fixture: targeted and both full-suite calls complete"
+					? "synthetic fixture: targeted, both full-suite calls and Ruff complete"
 					: "synthetic fixture: matching partition incomplete",
 		},
 		summary: "synthetic protocol fixture, not actual validation evidence",
@@ -144,17 +146,36 @@ describe("Python partition plan transport and gate", () => {
 		expect(d.runAttempt).toHaveBeenCalledOnce();
 		const attempt = d.runAttempt.mock.calls[0][0];
 		expect(attempt.testPlan).toBe(f.input.testPlan);
-		expect(attempt.config.timeoutMs).toBe(2_910_000);
+		expect(attempt.testPlan).toContain(ruffCall);
+		expect(attempt.config.timeoutMs).toBe(3_210_000);
 		expect(result.stamped).toBe(status === "PASS");
 		expect(result.blocked).toBe(status !== "PASS");
 		expect(d.tokens.hasPass(DISPATCH_HEAD_SHA)).toBe(status === "PASS");
 	});
 
-	it("refuses the total partition budget before invoking any reviewer", async () => {
-		const d = dispatchFixture(fixture(2_850_000), syntheticReport("PASS"));
+	it.each([
+		["Ruff is unavailable", "NOT_RUN"],
+		["Ruff bootstrap fails", "NOT_RUN"],
+		["Ruff is not dispatched", "NOT_RUN"],
+		["Ruff times out", "NOT_RUN"],
+		["Ruff reports progress only", "NOT_RUN"],
+		["Ruff fails", "FAIL"],
+		["only earlier post-turn lint passed", "NOT_RUN"],
+	] as const)("withholds PASS when %s", async (reason, status) => {
+		const report = syntheticReport(status);
+		report.testExecution = { status, summary: `synthetic fixture: ${reason}` };
+		const d = dispatchFixture(fixture(), report);
 		const result = await d.run();
 		expect(result.blocked).toBe(true);
-		expect(result.message).toMatch(/required 2910000.*2850000/);
+		expect(result.stamped).toBe(false);
+		expect(d.tokens.hasPass(DISPATCH_HEAD_SHA)).toBe(false);
+	});
+
+	it("refuses the total partition and Ruff budget before invoking any reviewer", async () => {
+		const d = dispatchFixture(fixture(3_000_000), syntheticReport("PASS"));
+		const result = await d.run();
+		expect(result.blocked).toBe(true);
+		expect(result.message).toMatch(/required 3210000.*3000000/);
 		expect(d.runAttempt).not.toHaveBeenCalled();
 		expect(d.tokens.hasPass(DISPATCH_HEAD_SHA)).toBe(false);
 	});
@@ -172,6 +193,7 @@ describe("Python partition plan transport and gate", () => {
 			f.input.testPlan,
 		);
 		expect(task).toContain(f.input.testPlan);
+		expect(task).toContain(ruffCall);
 		expect(task).toContain('"keyword":"not (fresh_installed)"');
 		expect(task).toContain('"keyword":"fresh_installed"');
 	});
@@ -197,6 +219,7 @@ describe("Python partition plan transport and gate", () => {
 			expect(sendUserMessage).toHaveBeenCalledOnce();
 			const instruction = String(sendUserMessage.mock.calls[0][0]);
 			expect(instruction).toContain(f.input.testPlan);
+			expect(instruction).toContain(ruffCall);
 			controller.abort();
 			expect((await pending).report).toBeNull();
 		} finally {

@@ -28,6 +28,7 @@ export const CLOSED_REVIEWER_TOOLS = Object.freeze([
 	"run_pytest",
 	"run_cargo_test",
 	"run_node_test",
+	"run_ruff",
 	"compact_plus_query_tool_output",
 ]);
 
@@ -40,6 +41,7 @@ export const CLOSED_REVIEWER_SAFE_TOOLS = Object.freeze([
 	"run_pytest",
 	"run_cargo_test",
 	"run_node_test",
+	"run_ruff",
 ]);
 
 /** SDK ports only. This module does not import Pi, discover resources, obtain

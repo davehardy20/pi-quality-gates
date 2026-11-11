@@ -5,7 +5,7 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { createPrGateState, resolveHeadSha } from "../src/pr-gate/index.js";
 import { createOrchestratorReviewerExecution } from "../src/pr-gate/orchestrator-reviewer-execution.js";
 import {
@@ -31,6 +31,13 @@ import {
 	createDispatchFixture as createPrReviewDispatch,
 	DISPATCH_HEAD_SHA,
 } from "./dispatch-fixtures.js";
+
+const FIXTURE_CWD = fs.realpathSync(
+	fs.mkdtempSync(path.join(os.tmpdir(), "qg-review-dispatch-fixture-")),
+);
+afterAll(() => {
+	fs.rmSync(FIXTURE_CWD, { recursive: true, force: true });
+});
 
 const HEAD_SHA = DISPATCH_HEAD_SHA;
 const BASE_REF = "origin/master";
@@ -71,7 +78,7 @@ function createMockContext(
 			details: { status: "clean" },
 		});
 	}
-	return createDispatchContext("/repo", { branch, model });
+	return createDispatchContext(FIXTURE_CWD, { branch, model });
 }
 
 function makePassReport(summary = "clean"): ReviewReport {
@@ -883,7 +890,7 @@ describe("pr-review dispatch", () => {
 
 		await dispatch.dispatch(input);
 
-		expect(listChangedFiles).toHaveBeenCalledWith("/repo", "feature/base");
+		expect(listChangedFiles).toHaveBeenCalledWith(FIXTURE_CWD, "feature/base");
 	});
 
 	it("applies skip filters before repository-direct review scope", async () => {
@@ -926,12 +933,12 @@ describe("pr-review dispatch", () => {
 		expect(result.stamped).toBe(true);
 		expect(applyDiffFilters).toHaveBeenCalledWith(
 			["src/a.ts", "generated/vendor.js"],
-			"/repo",
+			FIXTURE_CWD,
 			expect.objectContaining({ respectGitignore: true }),
 		);
 		expect(countDiffLines).toHaveBeenCalledWith(
 			["src/a.ts"],
-			"/repo",
+			FIXTURE_CWD,
 			"origin/main",
 		);
 		expect(gatherDiff).not.toHaveBeenCalled();
@@ -942,7 +949,7 @@ describe("pr-review dispatch", () => {
 				files: ["src/a.ts"],
 				headSha: HEAD_SHA,
 			}),
-			expect.objectContaining({ cwd: "/repo" }),
+			expect.objectContaining({ cwd: FIXTURE_CWD }),
 		);
 	});
 
@@ -1017,15 +1024,15 @@ describe("C5 incremental review (lastPassSha..HEAD scoping)", () => {
 		const result = await dispatch.dispatch(input);
 
 		expect(result.stamped).toBe(true);
-		expect(listChangedFiles).toHaveBeenCalledWith("/repo", OLD_PASS_SHA);
+		expect(listChangedFiles).toHaveBeenCalledWith(FIXTURE_CWD, OLD_PASS_SHA);
 		expect(countDiffLines).toHaveBeenCalledWith(
 			["src/a.ts"],
-			"/repo",
+			FIXTURE_CWD,
 			OLD_PASS_SHA,
 		);
 		expect(gatherDiff).toHaveBeenCalledWith(
 			["src/a.ts"],
-			"/repo",
+			FIXTURE_CWD,
 			PR_REVIEW_CONFIG.maxDiffLines,
 			OLD_PASS_SHA,
 			expect.objectContaining({ respectGitignore: true }),
@@ -1059,7 +1066,7 @@ describe("C5 incremental review (lastPassSha..HEAD scoping)", () => {
 
 		await dispatch.dispatch(input);
 
-		expect(listChangedFiles).toHaveBeenCalledWith("/repo", BASE_REF);
+		expect(listChangedFiles).toHaveBeenCalledWith(FIXTURE_CWD, BASE_REF);
 	});
 
 	it("prefers an explicit base ref over incremental scoping", async () => {
@@ -1075,7 +1082,7 @@ describe("C5 incremental review (lastPassSha..HEAD scoping)", () => {
 
 		await dispatch.dispatch(input);
 
-		expect(listChangedFiles).toHaveBeenCalledWith("/repo", "feature/base");
+		expect(listChangedFiles).toHaveBeenCalledWith(FIXTURE_CWD, "feature/base");
 	});
 
 	it("falls back to the default base when the last-PASS sha IS the current HEAD (re-review)", async () => {
@@ -1092,7 +1099,7 @@ describe("C5 incremental review (lastPassSha..HEAD scoping)", () => {
 		const result = await dispatch.dispatch(input);
 
 		expect(result.stamped).toBe(true);
-		expect(listChangedFiles).toHaveBeenCalledWith("/repo", BASE_REF);
+		expect(listChangedFiles).toHaveBeenCalledWith(FIXTURE_CWD, BASE_REF);
 	});
 
 	it("falls back to the default base when the last-PASS sha no longer resolves", async () => {
@@ -1113,7 +1120,7 @@ describe("C5 incremental review (lastPassSha..HEAD scoping)", () => {
 
 		await dispatch.dispatch(input);
 
-		expect(listChangedFiles).toHaveBeenCalledWith("/repo", BASE_REF);
+		expect(listChangedFiles).toHaveBeenCalledWith(FIXTURE_CWD, BASE_REF);
 		expect(log).toHaveBeenCalledWith(
 			expect.stringContaining("no longer resolves"),
 		);
@@ -1137,7 +1144,7 @@ describe("C5 incremental review (lastPassSha..HEAD scoping)", () => {
 
 		await dispatch.dispatch(input);
 
-		expect(listChangedFiles).toHaveBeenCalledWith("/repo", BASE_REF);
+		expect(listChangedFiles).toHaveBeenCalledWith(FIXTURE_CWD, BASE_REF);
 		expect(log).toHaveBeenCalledWith(
 			expect.stringContaining("not an ancestor of HEAD"),
 		);
@@ -1150,7 +1157,7 @@ describe("C5 incremental review (lastPassSha..HEAD scoping)", () => {
 
 		await dispatch.dispatch(createInput(pi));
 
-		expect(listChangedFiles).toHaveBeenCalledWith("/repo", BASE_REF);
+		expect(listChangedFiles).toHaveBeenCalledWith(FIXTURE_CWD, BASE_REF);
 	});
 });
 

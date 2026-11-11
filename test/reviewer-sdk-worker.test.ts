@@ -31,6 +31,17 @@ const noFallbackKey = ["$", "{PI_REVIEWER_NO_FALLBACK_AUTH}"].join("");
 const report =
 	"## Review Report\nSTATUS: PASS\nCONFIDENCE: HIGH\n### Findings\nNone.\n### Test execution\n- **Status:** PASS\n- **Summary:** fixed fixture\n### Summary\nfixed fixture";
 
+const fixtureSafeTools = [
+	"git_inspect_safe",
+	"run_biome",
+	"run_vitest",
+	"run_typecheck",
+	"run_pytest",
+	"run_cargo_test",
+	"run_node_test",
+	"run_ruff",
+];
+
 afterEach(() => {
 	for (const root of roots.splice(0))
 		rmSync(root, { recursive: true, force: true });
@@ -64,7 +75,8 @@ function fixture(
 		injectedExtension?: boolean;
 		echoKey?: boolean;
 		oauthOnly?: boolean;
-		missingRunner?: boolean;
+		missingRunner?: boolean | "run_ruff";
+		missingMetadata?: "run_ruff";
 		readPath?: unknown;
 		readTool?: "read" | "grep" | "find" | "ls";
 		assistantMessages?: {
@@ -165,7 +177,7 @@ function fixture(
 			export async function loadExtensions(paths) {
 				note("explicit-tools");
 				return { errors: ${JSON.stringify(options.extensionError ? [{ error: options.extensionError }] : [])}, extensions: [
-					{ resolvedPath: paths[0], tools: new Map(["git_inspect_safe", "run_biome", "run_vitest", "run_typecheck", "run_pytest", "run_cargo_test", "run_node_test"].filter(name => !${Boolean(options.missingRunner)} || name !== "run_node_test").map(name => [name, { definition: { name, execute: async () => ({}) } }])) },
+					{ resolvedPath: paths[0], tools: new Map(${JSON.stringify(fixtureSafeTools)}.filter(name => !${Boolean(options.missingRunner)} || name !== ${JSON.stringify(options.missingRunner === "run_ruff" ? "run_ruff" : "run_node_test")}).map(name => [name, { definition: { name, execute: async () => ({}) } }])) },
 					{ path: paths[1], resolvedPath: paths[1], sourceInfo: {}, handlers: new Map([["context", [async event => ({ messages: event.messages })]]]), tools: new Map(), commands: new Map(), flags: new Map(), shortcuts: new Map(), messageRenderers: new Map() }
 				] };
 			}`,
@@ -330,18 +342,12 @@ function supervisedFixture(
 	const spawnProcess = vi.fn(spawn);
 	const launcher = createSdkReviewerLauncher(
 		() =>
-			[
-				"git_inspect_safe",
-				"run_biome",
-				"run_vitest",
-				"run_typecheck",
-				"run_pytest",
-				"run_cargo_test",
-				"run_node_test",
-			].map((name) => ({
-				name,
-				sourceInfo: { scope: "user", path: f.request.toolSource },
-			})),
+			fixtureSafeTools
+				.filter((name) => name !== options.missingMetadata)
+				.map((name) => ({
+					name,
+					sourceInfo: { scope: "user", path: f.request.toolSource },
+				})),
 		{
 			resolveSdkRoot: () => f.request.sdkRoot,
 			spawnProcess: spawnProcess as unknown as typeof spawn,
@@ -407,7 +413,8 @@ describe("supervised SDK route using only owned fabricated SDK modules", () => {
 		expect(result.stderr).not.toContain("refused");
 		expect(result.report?.status).toBe("PASS");
 		expect(result.terminationConfirmed).toBe(true);
-		expect(result.startupIdentity?.tools).toHaveLength(11);
+		expect(result.startupIdentity?.tools).toHaveLength(12);
+		expect(result.startupIdentity?.tools).toContain("run_ruff");
 		expect(f.resolveAuth).toHaveBeenCalledOnce();
 		const call = f.spawnProcess.mock.calls[0];
 		expect(call?.[0]).toBe(realpathSync(process.execPath));
@@ -418,6 +425,15 @@ describe("supervised SDK route using only owned fabricated SDK modules", () => {
 		expect(observed.temporaryRoot).toBe(observed.agentDir);
 		expect(observed.agentDir).not.toBe(f.request.agentDir);
 		expect(existsSync(observed.agentDir)).toBe(false);
+	});
+
+	it("refuses absent Ruff registration before requesting credentials or spawning", async () => {
+		const f = supervisedFixture(false, { missingMetadata: "run_ruff" });
+		const result = await f.run();
+		if (result.sidecarPath) roots.push(result.sidecarPath);
+		expect(result.report).toBeNull();
+		expect(f.resolveAuth).not.toHaveBeenCalled();
+		expect(f.spawnProcess).not.toHaveBeenCalled();
 	});
 
 	it("refuses custom native provider behavior rather than silently replacing it", async () => {
@@ -895,6 +911,7 @@ describe("fixed SDK worker with owned fabricated modules", () => {
 				"run_pytest",
 				"run_cargo_test",
 				"run_node_test",
+				"run_ruff",
 			]);
 			expect(result.stdout).not.toContain(f.request.auth.apiKey);
 			expect(result.stderr).not.toContain(f.request.auth.apiKey);
@@ -954,6 +971,14 @@ describe("fixed SDK worker with owned fabricated modules", () => {
 
 	it("refuses missing mandatory validation tools before prompting", async () => {
 		const f = fixture({ missingRunner: true });
+		const result = await launch(f.request);
+		expect(result.code).toBe(1);
+		expect(result.stdout).toBe("");
+		expect(readFileSync(f.log, "utf8")).not.toContain("prompt");
+	});
+
+	it("refuses a missing Ruff runner before any model prompt", async () => {
+		const f = fixture({ missingRunner: "run_ruff" });
 		const result = await launch(f.request);
 		expect(result.code).toBe(1);
 		expect(result.stdout).toBe("");

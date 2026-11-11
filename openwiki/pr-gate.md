@@ -209,8 +209,16 @@ Legacy direct child capture is also pre-close bounded: 1,048,576 characters per 
 
 `src/pr-gate/pr-review-config.ts` defines review limits and uses the same fixed
 `CLOSED_REVIEWER_TOOLS` list as the SDK session: read, grep, find, ls,
-`git_inspect_safe`, and the six safe validation runners. The blocklist remains
-an independent startup check. No publication or general shell tool is granted.
+`git_inspect_safe`, and trusted validation runners including `run_ruff`. The
+blocklist remains an independent startup check. No publication or general shell
+tool is granted.
+
+The SDK launcher requires Ruff registration and successful tool loading before
+model prompting, even for non-Python reviews. The orchestrator bridge forwards
+the required Ruff call but cannot change the external verifier profile's grants.
+An unavailable runner cannot be replaced with a shell command or package script.
+Updating the active SafeTools checkout and reloading Pi requires owner approval;
+this source integration does not change global settings or grant tools.
 
 **`PR_REVIEW_CONFIG`** (source: `src/pr-gate/pr-review-config.ts`):
 - Model: **resolved at review time**, not hardcoded. `resolvePrReviewConfig()` (`resolveReviewerModelConfig`) reads the `worker` profile from `~/.pi/agent/model-fallbacks.json`; when that config is missing/malformed it falls back to the active parent-session model plus its scoped retry candidates (`ctx.model` + `ctx.scopedModels`, via `resolveRuntimeReviewConfig` / `resolveSessionFallbackModels`). Without either, Pi's own default selection is the fail-closed review attempt. The `PR_REVIEW_CONFIG.model` literal is `null` and is only a source placeholder.
@@ -256,9 +264,23 @@ Discovery accepts contained file symlinks without traversing them; metadata cons
 |---|---|---|
 | TypeScript (vitest) | `run_vitest <test-files>` → `run_typecheck` → `run_biome src test` | Targeted first |
 | TypeScript (`node --test`) | `run_node_test <test-files>` → `run_typecheck` → `run_biome src test` | Targeted first |
-| Python | `run_pytest <test-files>` → broad `run_pytest` | Targeted first |
+| Python | `run_pytest <test-files>` → broad `run_pytest` → `run_ruff <changed-python-files>` | Targeted tests plus required lint |
 | Rust | `run_cargo_test` | All |
 | Go | No runner commands, discovery only | — |
+
+Every ecosystem, including mixed-language and otherwise unknown projects, also
+requires `run_ruff` for filtered changed existing `.py`/`.pyi` files. Paths are
+normalized and deduplicated; deleted files and directories are omitted. Invalid
+paths and existing symlinks escaping the workspace fail planning. Review-excluded
+paths never become lint arguments. Calls use JSON `paths` and an explicit trusted
+default timeout, independently of targeted pytest overrides and partitions; Ruff
+also counts toward the aggregate review deadline.
+
+Each required call must complete with PASS during the review. Pytest success and
+earlier post-turn lint do not replace Ruff evidence. Unavailable or incomplete
+lint remains NOT_RUN; executed lint failures remain FAIL. The existing report gate
+refuses PASS for missing or non-PASS Test execution. This remains a planning and
+review-report contract, not independently collected per-call execution telemetry.
 
 ### Exhaustive Python partitions (opt-in)
 
@@ -305,9 +327,9 @@ reviewer startup. Inactive repository entries get syntax/budget validation,
 not filesystem inspection, just like `repoOverrides`.
 
 This is a planning contract, not per-test execution telemetry or subprocess
-isolation. Existing reviewer evidence, exact-HEAD and startup-admission checks
-still apply. This example is not activation approval and does not add Ruff
-access; that capability requires its separate implementation and admission.
+isolation. Existing reviewer evidence and exact-HEAD checks still apply. Tool
+availability and external verifier grants remain separate from partition
+configuration.
 
 **Invariant**: A PASS requires successful completion of every proposed validation
 call. If the parent's generated plan contains exactly zero calls and no

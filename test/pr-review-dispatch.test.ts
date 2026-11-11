@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import {
 	mkdirSync,
 	mkdtempSync,
+	realpathSync,
 	rmSync,
 	symlinkSync,
 	writeFileSync,
@@ -9,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { createPassTokenStore } from "../src/pr-gate/pass-token-store.js";
 import {
 	defaultIsWorktreeClean,
@@ -21,6 +22,13 @@ import {
 	createDispatchFixture as createPrReviewDispatch,
 	DISPATCH_HEAD_SHA,
 } from "./dispatch-fixtures.js";
+
+const FIXTURE_CWD = realpathSync(
+	mkdtempSync(join(tmpdir(), "qg-dispatch-fixture-")),
+);
+afterAll(() => {
+	rmSync(FIXTURE_CWD, { recursive: true, force: true });
+});
 
 describe("createPrReviewDispatch", () => {
 	it("surfaces a sidecar path when the reviewer returns unparsable output", async () => {
@@ -108,14 +116,14 @@ describe("createPrReviewDispatch", () => {
 		});
 
 		const result = await dispatch.dispatch({
-			ctx: createDispatchContext("/repo"),
+			ctx: createDispatchContext(FIXTURE_CWD),
 			state: { tokens, config: { enabled: true } },
 			pi: {} as ExtensionAPI,
 		});
 
 		expect(runAttempt).toHaveBeenCalledWith(
 			expect.objectContaining({ headSha: DISPATCH_HEAD_SHA }),
-			expect.objectContaining({ cwd: "/repo" }),
+			expect.objectContaining({ cwd: FIXTURE_CWD }),
 		);
 		expect(result.blocked).toBe(true);
 		expect(result.stamped).toBe(false);
@@ -154,7 +162,7 @@ describe("createPrReviewDispatch", () => {
 			reviewerExecution: createFixtureReviewerExecution(runAttempt),
 		});
 		const result = await dispatch.dispatch({
-			ctx: createDispatchContext("/repo"),
+			ctx: createDispatchContext(FIXTURE_CWD),
 			state: { tokens: createPassTokenStore(), config: { enabled: true } },
 			pi: {} as ExtensionAPI,
 		});
@@ -198,7 +206,7 @@ describe("createPrReviewDispatch", () => {
 			reviewerExecution: createFixtureReviewerExecution(runAttempt),
 		});
 		const result = await dispatch.dispatch({
-			ctx: createDispatchContext("/repo"),
+			ctx: createDispatchContext(FIXTURE_CWD),
 			state: { tokens, config: { enabled: true } },
 			pi: {} as ExtensionAPI,
 		});
@@ -244,7 +252,7 @@ describe("createPrReviewDispatch", () => {
 			reviewerExecution: createFixtureReviewerExecution(runAttempt),
 		});
 		const result = await dispatch.dispatch({
-			ctx: createDispatchContext("/repo"),
+			ctx: createDispatchContext(FIXTURE_CWD),
 			state: { tokens, config: { enabled: true } },
 			pi: {} as ExtensionAPI,
 			signal: controller.signal,

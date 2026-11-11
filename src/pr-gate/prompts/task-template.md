@@ -38,8 +38,8 @@
   `git_safe`, `gh_safe`, or any mutating Seeds/Mulch tools.
 - Do not use `container_safe`; this reviewer runs host-side with no container.
 - Use only the safe validation runners (`run_biome`, `run_vitest`,
-  `run_typecheck`, `run_pytest`, `run_cargo_test`, `run_node_test`) to execute
-  project tests.
+  `run_typecheck`, `run_pytest`, `run_cargo_test`, `run_node_test`, `run_ruff`) to
+  execute the required validation. Python Ruff lint is separate from pytest.
 - Include bounded test results in `### Test execution`; cite any sidecar ref
   instead of pasting raw logs. Incomplete or unavailable required validation
   stays `NOT_RUN`; executed failures stay `FAIL`. A passing subset cannot
