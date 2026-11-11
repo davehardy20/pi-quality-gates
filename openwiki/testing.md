@@ -15,7 +15,9 @@ npm run mutation    # stryker run — mutation testing (see below)
 
 **Stryker mutation testing**: `stryker.config.json` runs the Vitest runner against `src/**/*.ts` (per-test coverage analysis, thresholds 60/80, no `break`). It is expensive (full suite per mutant) — run it locally for targeted CRAP-risk work, not on every change.
 
-Formatting/linting is via Biome (config in `/biome.json`); the `npm run lint` script runs `biome check src test` — the same gate CI and `/pr-review` use.
+Formatting/linting is via Biome **2.6.6** (exact package pin and matching `/biome.json` schema); the `npm run lint` script runs `biome check src test` — the same gate CI and `/pr-review` use. Keep a PATH-installed Biome on the same version when using it for post-turn checks to avoid contradictory formatting results.
+
+Markdown formatting stays with markdownlint; Biome's new Markdown formatter is disabled so it does not rewrite review templates. Preserve the lockfile's existing two-space indentation when updating dependencies. Biome treats lockfiles as protected files and cannot format them, even with an explicit path or formatter override.
 
 ### Optional SDK authentication contract
 
@@ -63,6 +65,8 @@ Files with 2-space indent (biome.json override):
 ## Test file map
 
 ### Linter tests
+
+`test/biome-config.test.ts` checks the exact Biome pin/lock/schema agreement and Markdown formatting ownership while keeping source linting and formatting enabled.
 
 | File | Type | Coverage |
 |---|---|---|
