@@ -44,7 +44,7 @@ function createContext(opts?: {
 function createCoordinator(opts?: {
 	state?: PrGateState;
 	headSha?: string;
-	dispatch?: ReturnType<typeof vi.fn>;
+	dispatch?: (input: PrReviewDispatchInput) => Promise<PrReviewDispatchResult>;
 	pi?: FakePi;
 }) {
 	const state = opts?.state ?? createPrGateState();
