@@ -29,9 +29,9 @@ These are bounded persistence checkpoints, not proof against transient writes or
 
 ## Framework
 
-- **Vitest 3.2.4** — all tests use explicit imports: `import { describe, expect, it } from "vitest"` (with `vi` for mocking).
+- **Vitest 4.1.12** with matching **@vitest/coverage-v8 4.1.12** — both packages are pinned exactly. All tests use explicit imports: `import { describe, expect, it } from "vitest"` (with `vi` for mocking).
 - Globals are available via `tsconfig.json` types: `["node", "vitest/globals"]`, but explicit imports are used everywhere.
-- Config: `/vitest.config.ts` — minimal (`environment: "node"`, no aliases, no coverage).
+- Config: `/vitest.config.ts` — Node environment, no aliases or coverage settings. Retains all Vitest defaults and explicitly excludes `**/dist/**` and `.seeds/**`; Vitest 4 no longer excludes `dist` by default.
 
 ## Mocking strategy
 
@@ -67,6 +67,8 @@ Files with 2-space indent (biome.json override):
 ### Linter tests
 
 `test/biome-config.test.ts` checks the exact Biome pin/lock/schema agreement and Markdown formatting ownership while keeping source linting and formatting enabled.
+
+`test/vitest-package-contract.test.ts` checks exact paired Vitest/coverage pins, every resolved Vitest/coverage/mocker copy, and removal of Tinypool after the Vitest 4 pool migration. Review this contract alongside the dependency graph when upgrading again. `test/vitest-discovery.test.ts` exercises real discovery without importing fixtures: legitimate tests remain visible while archived Seeds tests, dependencies and built output stay excluded. Temporary roots are canonicalized before discovery so macOS symlink aliases do not change path comparisons.
 
 | File | Type | Coverage |
 |---|---|---|

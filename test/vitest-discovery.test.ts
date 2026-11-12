@@ -1,4 +1,11 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+	mkdir,
+	mkdtemp,
+	readFile,
+	realpath,
+	rm,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -27,7 +34,9 @@ const fixtureSource = 'throw new Error("Discovery imported a test fixture");\n';
 
 describe("Vitest discovery", () => {
 	it("ignores archived Seeds tests without hiding legitimate project tests", async () => {
-		const root = await mkdtemp(join(tmpdir(), "quality-gates-discovery-"));
+		const root = await mkdtemp(
+			join(await realpath(tmpdir()), "quality-gates-discovery-"),
+		);
 		let instance: Awaited<ReturnType<typeof createVitest>> | undefined;
 		try {
 			for (const file of [
