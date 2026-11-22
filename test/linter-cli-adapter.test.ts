@@ -23,6 +23,24 @@ const ruffLinter: CliLinterDefinition = {
   name: "Ruff",
 };
 
+/**
+ * Real temporary directories with no BIOME_ROOT_MARKERS ancestor, so the
+ * no-marker-root branches are exercised without assuming host /tmp layout.
+ */
+function makeNoMarkerRoots(label: string): {
+  repoDir: string;
+  scratchDir: string;
+} {
+  const tempDir = mkdtempSync(
+    join(tmpdir(), `pi-quality-gates-biome-${label}-`),
+  );
+  const repoDir = join(tempDir, "repo");
+  const scratchDir = join(tempDir, "scratch");
+  mkdirSync(join(repoDir, "src"), { recursive: true });
+  mkdirSync(scratchDir, { recursive: true });
+  return { repoDir, scratchDir };
+}
+
 describe("linter cli adapter", () => {
   it("runs per-file Biome checks from the file project root", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "pi-quality-gates-biome-root-"));
@@ -54,32 +72,58 @@ describe("linter cli adapter", () => {
   });
 
   it("never gives Biome a cwd that excludes an out-of-tree file", () => {
-    // Scratch files written outside any project (e.g. /tmp/probe.cjs) have no
-    // BIOME_ROOT_MARKERS ancestor. Handing them to the caller's Biome run
-    // crashes it: "path is expected to be under the root".
-    const filePath = "/tmp/pi-quality-gates-out-of-tree/probe.cjs";
+    // Scratch files written outside any project have no BIOME_ROOT_MARKERS
+    // ancestor. Handing them to the caller's Biome run crashes it:
+    // "path is expected to be under the root".
+    const { repoDir, scratchDir } = makeNoMarkerRoots("out-of-tree");
+    const filePath = join(scratchDir, "probe.cjs");
+    writeFileSync(filePath, "export const value = 1;\n");
 
     const executionCwd = cliAdapterTest.resolvePerFileExecutionCwd(
       filePath,
-      "/Users/dave/tools/pi-compact-plus",
+      repoDir,
       biomeLinter,
     );
 
-    expect(executionCwd).not.toBe("/Users/dave/tools/pi-compact-plus");
+    expect(executionCwd).not.toBe(repoDir);
     // The chosen cwd must contain the file Biome is asked to check.
-    expect(filePath.startsWith(`${executionCwd}/`)).toBe(true);
+    expect(executionCwd).toBe(scratchDir);
   });
 
   it("keeps an in-tree Biome file with no marker root on the caller cwd", () => {
-    const filePath = "/tmp/pi-quality-gates-in-tree/src/index.ts";
+    const { repoDir } = makeNoMarkerRoots("in-tree");
+    const filePath = join(repoDir, "src", "index.ts");
+    writeFileSync(filePath, "export const value = 1;\n");
 
     expect(
-      cliAdapterTest.resolvePerFileExecutionCwd(
-        filePath,
-        "/tmp/pi-quality-gates-in-tree",
-        biomeLinter,
-      ),
-    ).toBe("/tmp/pi-quality-gates-in-tree");
+      cliAdapterTest.resolvePerFileExecutionCwd(filePath, repoDir, biomeLinter),
+    ).toBe(repoDir);
+  });
+
+  it("does not treat a same-prefix sibling directory as inside the caller cwd", () => {
+    // A directory named <repoDir>-sibling shares the caller cwd's string
+    // prefix but is not inside it; Biome would still crash on it.
+    const { repoDir } = makeNoMarkerRoots("prefix");
+    const siblingDir = `${repoDir}-sibling`;
+    mkdirSync(siblingDir, { recursive: true });
+    const filePath = join(siblingDir, "probe.cjs");
+    writeFileSync(filePath, "export const value = 1;\n");
+
+    expect(
+      cliAdapterTest.resolvePerFileExecutionCwd(filePath, repoDir, biomeLinter),
+    ).toBe(siblingDir);
+  });
+
+  it("keeps a dot-dot-prefixed subdirectory inside the caller cwd", () => {
+    const { repoDir } = makeNoMarkerRoots("dot-dot-prefix");
+    const nestedDir = join(repoDir, "..unusual");
+    const filePath = join(nestedDir, "probe.cjs");
+    mkdirSync(nestedDir, { recursive: true });
+    writeFileSync(filePath, "export const value = 1;\n");
+
+    expect(
+      cliAdapterTest.resolvePerFileExecutionCwd(filePath, repoDir, biomeLinter),
+    ).toBe(repoDir);
   });
 
   it("normalizes gofmt file output into actionable findings", () => {

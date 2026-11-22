@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { normalizeAndSortPaths } from "../../shared/path-utils.js";
 import type { CliLinterDefinition, ValidationOutcome } from "../types.js";
 import type { LinterAdapter } from "./types.js";
@@ -165,7 +165,12 @@ function resolvePerFileExecutionCwd(
 /** True when filePath resolves inside directory, not to the directory itself. */
 function isWithinDirectory(filePath: string, directory: string): boolean {
   const rel = relative(resolve(directory), resolve(filePath));
-  return rel.length > 0 && !rel.startsWith("..") && !isAbsolute(rel);
+  return (
+    rel.length > 0 &&
+    rel !== ".." &&
+    !rel.startsWith(`..${sep}`) &&
+    !isAbsolute(rel)
+  );
 }
 
 function groupFilesByRoot(
