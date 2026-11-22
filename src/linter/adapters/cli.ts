@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { normalizeAndSortPaths } from "../../shared/path-utils.js";
 import type { CliLinterDefinition, ValidationOutcome } from "../types.js";
 import type { LinterAdapter } from "./types.js";
@@ -146,10 +146,38 @@ function resolvePerFileExecutionCwd(
   filePath: string,
   defaultCwd: string,
   linter: CliLinterDefinition,
+  findMarkerRoot: MarkerRootLookup = findNearestProjectRoot,
 ): string {
   if (linter.command !== "biome") return defaultCwd;
+  const markerRoot = findMarkerRoot(dirname(filePath), BIOME_ROOT_MARKERS);
+  if (markerRoot) return markerRoot;
+  // Biome aborts with "path is expected to be under the root" when an argument
+  // lies outside its working directory, so a fallback cwd must still contain
+  // the file: the caller cwd when the file lives under it, otherwise the
+  // file's own directory.
+  return isWithinDirectory(filePath, defaultCwd)
+    ? defaultCwd
+    : dirname(filePath);
+}
+
+/**
+ * Marker-root lookup seam. Production uses findNearestProjectRoot; tests can
+ * inject a lookup that reports no marker so the fallback paths stay reachable
+ * regardless of whether the host temp directory sits inside a checkout.
+ */
+type MarkerRootLookup = (
+  startDir: string,
+  marker?: string | string[],
+) => string | null;
+
+/** True when filePath resolves inside directory, not to the directory itself. */
+function isWithinDirectory(filePath: string, directory: string): boolean {
+  const rel = relative(resolve(directory), resolve(filePath));
   return (
-    findNearestProjectRoot(dirname(filePath), BIOME_ROOT_MARKERS) ?? defaultCwd
+    rel.length > 0 &&
+    rel !== ".." &&
+    !rel.startsWith(`..${sep}`) &&
+    !isAbsolute(rel)
   );
 }
 
