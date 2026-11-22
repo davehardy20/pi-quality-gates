@@ -24,10 +24,12 @@ const ruffLinter: CliLinterDefinition = {
 };
 
 /**
- * Real temporary directories with no BIOME_ROOT_MARKERS ancestor, so the
- * no-marker-root branches are exercised without assuming host /tmp layout.
+ * Temporary directory roots for the cwd fallback cases. Marker-free-ness comes
+ * from the injected lookup below, not from the host temp directory layout, so
+ * these stay valid when TMPDIR points inside a checkout.
  */
-function makeNoMarkerRoots(label: string): {
+function makeTempRoots(label: string): {
+  tempDir: string;
   repoDir: string;
   scratchDir: string;
 } {
@@ -38,7 +40,12 @@ function makeNoMarkerRoots(label: string): {
   const scratchDir = join(tempDir, "scratch");
   mkdirSync(join(repoDir, "src"), { recursive: true });
   mkdirSync(scratchDir, { recursive: true });
-  return { repoDir, scratchDir };
+  return { tempDir, repoDir, scratchDir };
+}
+
+/** Marker-root lookup reporting no marker, isolating the fallback paths. */
+function noMarkerRoot(): string | null {
+  return null;
 }
 
 describe("linter cli adapter", () => {
@@ -75,7 +82,7 @@ describe("linter cli adapter", () => {
     // Scratch files written outside any project have no BIOME_ROOT_MARKERS
     // ancestor. Handing them to the caller's Biome run crashes it:
     // "path is expected to be under the root".
-    const { repoDir, scratchDir } = makeNoMarkerRoots("out-of-tree");
+    const { repoDir, scratchDir } = makeTempRoots("out-of-tree");
     const filePath = join(scratchDir, "probe.cjs");
     writeFileSync(filePath, "export const value = 1;\n");
 
@@ -83,6 +90,7 @@ describe("linter cli adapter", () => {
       filePath,
       repoDir,
       biomeLinter,
+      noMarkerRoot,
     );
 
     expect(executionCwd).not.toBe(repoDir);
@@ -91,39 +99,76 @@ describe("linter cli adapter", () => {
   });
 
   it("keeps an in-tree Biome file with no marker root on the caller cwd", () => {
-    const { repoDir } = makeNoMarkerRoots("in-tree");
+    const { repoDir } = makeTempRoots("in-tree");
     const filePath = join(repoDir, "src", "index.ts");
     writeFileSync(filePath, "export const value = 1;\n");
 
     expect(
-      cliAdapterTest.resolvePerFileExecutionCwd(filePath, repoDir, biomeLinter),
+      cliAdapterTest.resolvePerFileExecutionCwd(
+        filePath,
+        repoDir,
+        biomeLinter,
+        noMarkerRoot,
+      ),
     ).toBe(repoDir);
   });
 
   it("does not treat a same-prefix sibling directory as inside the caller cwd", () => {
     // A directory named <repoDir>-sibling shares the caller cwd's string
     // prefix but is not inside it; Biome would still crash on it.
-    const { repoDir } = makeNoMarkerRoots("prefix");
+    const { repoDir } = makeTempRoots("prefix");
     const siblingDir = `${repoDir}-sibling`;
     mkdirSync(siblingDir, { recursive: true });
     const filePath = join(siblingDir, "probe.cjs");
     writeFileSync(filePath, "export const value = 1;\n");
 
     expect(
-      cliAdapterTest.resolvePerFileExecutionCwd(filePath, repoDir, biomeLinter),
+      cliAdapterTest.resolvePerFileExecutionCwd(
+        filePath,
+        repoDir,
+        biomeLinter,
+        noMarkerRoot,
+      ),
     ).toBe(siblingDir);
   });
 
   it("keeps a dot-dot-prefixed subdirectory inside the caller cwd", () => {
-    const { repoDir } = makeNoMarkerRoots("dot-dot-prefix");
+    const { repoDir } = makeTempRoots("dot-dot-prefix");
     const nestedDir = join(repoDir, "..unusual");
     const filePath = join(nestedDir, "probe.cjs");
     mkdirSync(nestedDir, { recursive: true });
     writeFileSync(filePath, "export const value = 1;\n");
 
     expect(
-      cliAdapterTest.resolvePerFileExecutionCwd(filePath, repoDir, biomeLinter),
+      cliAdapterTest.resolvePerFileExecutionCwd(
+        filePath,
+        repoDir,
+        biomeLinter,
+        noMarkerRoot,
+      ),
     ).toBe(repoDir);
+  });
+
+  it("does not rely on the host temp directory being free of marker ancestors", () => {
+    // If TMPDIR points inside a checkout, an ancestor marker root exists above
+    // these paths and marker discovery wins. The injected lookup, not the host
+    // layout, is what keeps the fallback cases above reachable.
+    const { tempDir, repoDir, scratchDir } = makeTempRoots("ancestor-marker");
+    writeFileSync(join(tempDir, "package.json"), '{"name":"ancestor"}\n');
+    const filePath = join(scratchDir, "probe.cjs");
+    writeFileSync(filePath, "export const value = 1;\n");
+
+    expect(
+      cliAdapterTest.resolvePerFileExecutionCwd(filePath, repoDir, biomeLinter),
+    ).toBe(tempDir);
+    expect(
+      cliAdapterTest.resolvePerFileExecutionCwd(
+        filePath,
+        repoDir,
+        biomeLinter,
+        noMarkerRoot,
+      ),
+    ).toBe(scratchDir);
   });
 
   it("normalizes gofmt file output into actionable findings", () => {
