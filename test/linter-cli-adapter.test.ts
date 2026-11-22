@@ -53,6 +53,35 @@ describe("linter cli adapter", () => {
     ).toBe("/caller/repo");
   });
 
+  it("never gives Biome a cwd that excludes an out-of-tree file", () => {
+    // Scratch files written outside any project (e.g. /tmp/probe.cjs) have no
+    // BIOME_ROOT_MARKERS ancestor. Handing them to the caller's Biome run
+    // crashes it: "path is expected to be under the root".
+    const filePath = "/tmp/pi-quality-gates-out-of-tree/probe.cjs";
+
+    const executionCwd = cliAdapterTest.resolvePerFileExecutionCwd(
+      filePath,
+      "/Users/dave/tools/pi-compact-plus",
+      biomeLinter,
+    );
+
+    expect(executionCwd).not.toBe("/Users/dave/tools/pi-compact-plus");
+    // The chosen cwd must contain the file Biome is asked to check.
+    expect(filePath.startsWith(`${executionCwd}/`)).toBe(true);
+  });
+
+  it("keeps an in-tree Biome file with no marker root on the caller cwd", () => {
+    const filePath = "/tmp/pi-quality-gates-in-tree/src/index.ts";
+
+    expect(
+      cliAdapterTest.resolvePerFileExecutionCwd(
+        filePath,
+        "/tmp/pi-quality-gates-in-tree",
+        biomeLinter,
+      ),
+    ).toBe("/tmp/pi-quality-gates-in-tree");
+  });
+
   it("normalizes gofmt file output into actionable findings", () => {
     expect(
       cliAdapterTest.normalizeCliOutput("gofmt", "/tmp/project/main.go\n", 0),

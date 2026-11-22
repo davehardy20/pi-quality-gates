@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { normalizeAndSortPaths } from "../../shared/path-utils.js";
 import type { CliLinterDefinition, ValidationOutcome } from "../types.js";
 import type { LinterAdapter } from "./types.js";
@@ -148,9 +148,24 @@ function resolvePerFileExecutionCwd(
   linter: CliLinterDefinition,
 ): string {
   if (linter.command !== "biome") return defaultCwd;
-  return (
-    findNearestProjectRoot(dirname(filePath), BIOME_ROOT_MARKERS) ?? defaultCwd
+  const markerRoot = findNearestProjectRoot(
+    dirname(filePath),
+    BIOME_ROOT_MARKERS,
   );
+  if (markerRoot) return markerRoot;
+  // Biome aborts with "path is expected to be under the root" when an argument
+  // lies outside its working directory, so a fallback cwd must still contain
+  // the file: the caller cwd when the file lives under it, otherwise the
+  // file's own directory.
+  return isWithinDirectory(filePath, defaultCwd)
+    ? defaultCwd
+    : dirname(filePath);
+}
+
+/** True when filePath resolves inside directory, not to the directory itself. */
+function isWithinDirectory(filePath: string, directory: string): boolean {
+  const rel = relative(resolve(directory), resolve(filePath));
+  return rel.length > 0 && !rel.startsWith("..") && !isAbsolute(rel);
 }
 
 function groupFilesByRoot(

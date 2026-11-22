@@ -78,7 +78,7 @@ Spawns CLI linters as child processes. Three execution modes:
 
 Exit-code semantics: 0 → `clean`; non-zero → `findings`; spawn error/timeout → `tool-error`.
 
-**Biome special handling**: `BIOME_ROOT_MARKERS` and `groupFilesByExecutionCwd` ensure Biome runs from the directory containing `biome.json`.
+**Biome special handling**: `BIOME_ROOT_MARKERS` (`biome.json`, `biome.jsonc`, `package.json`, `.git`) and `groupFilesByExecutionCwd` run Biome from the project root holding its config. That cwd must always contain the file: Biome aborts with an internal `ignore` crate panic (`Message: path is expected to be under the root`) when an argument lies outside its working directory, and because that crash output carries no path-localized findings the report degrades to a phantom affected file (`Affected files: Source Location: /Users/runner/.cargo/...`). When no marker root exists, the caller cwd is used only if the file lives under it, otherwise the file's own directory — so scratch files written outside any project (for example under `/tmp`) get linted rather than crashing the run.
 
 **cppcheck environmental suppressions**: The default C-family args (`.c/.cpp/.cc/.h/.hpp`) append `--suppress=missingIncludeSystem --suppress=checkersReport`. cppcheck runs without system include paths, so every `#include <...>` would otherwise report `missingIncludeSystem`, and `--enable=all` emits an informational `checkersReport` banner; both are environmental false positives that count as findings and latch the findings state (and the PR-review lint gate) on C-file edit turns.
 
