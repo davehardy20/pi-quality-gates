@@ -73,6 +73,15 @@ function externalCode() {
 function fixture(
 	options: {
 		injectedExtension?: boolean;
+		selectedConfig?:
+			| "pass"
+			| "skips"
+			| "mismatch"
+			| "empty"
+			| "wrong-file"
+			| "missing-evidence"
+			| "not-run"
+			| "unavailable";
 		echoKey?: boolean;
 		oauthOnly?: boolean;
 		missingRunner?: boolean | "run_ruff";
@@ -105,6 +114,12 @@ function fixture(
 	for (const path of [sdkRoot, workspace, agentDir])
 		mkdirSync(path, { mode: 0o700 });
 	writeFileSync(join(workspace, "fixed.ts"), "owned fixture data");
+	for (const name of [
+		"config.ts",
+		"test.test.ts",
+		"test.test.ts.other.test.ts",
+	])
+		writeFileSync(join(workspace, name), "");
 	const log = join(root, "effects.log");
 	const record = `import { appendFileSync } from "node:fs"; const log = ${JSON.stringify(log)}; const note = s => appendFileSync(log, s + "\\n");`;
 	function file(path: string, value: string) {
@@ -177,7 +192,56 @@ function fixture(
 			export async function loadExtensions(paths) {
 				note("explicit-tools");
 				return { errors: ${JSON.stringify(options.extensionError ? [{ error: options.extensionError }] : [])}, extensions: [
-					{ resolvedPath: paths[0], tools: new Map(${JSON.stringify(fixtureSafeTools)}.filter(name => !${Boolean(options.missingRunner)} || name !== ${JSON.stringify(options.missingRunner === "run_ruff" ? "run_ruff" : "run_node_test")}).map(name => [name, { definition: { name, execute: async () => ({}) } }])) },
+					{ resolvedPath: paths[0], tools: new Map(${JSON.stringify(fixtureSafeTools)}.filter(name => !${Boolean(options.missingRunner)} || name !== ${JSON.stringify(options.missingRunner === "run_ruff" ? "run_ruff" : "run_node_test")}).map(name => [name, { definition: {
+						name,
+						parameters: { type: "object", properties: ${options.selectedConfig === "unavailable" ? "{}" : '{ config: { type: "string" } }'} },
+						execute: async () => ({ details: {
+							toolName: name, cwd: ${JSON.stringify(workspace)},
+							command: ${JSON.stringify(options.selectedConfig === "mismatch" ? "vitest run test.test.ts" : "vitest run --reporter=verbose --config config.ts test.test.ts")},
+							exitCode: 0, success: true, timedOut: false, aborted: false, spawnError: false,
+							validation: { passed: true }, requestedTimeoutMs: 1000, effectiveTimeoutMs: 1000, elapsedMs: 1,
+							vitestCollection: ${JSON.stringify(
+								options.selectedConfig === "missing-evidence"
+									? null
+									: {
+											version: 1,
+											source: "vitest-json-reporter",
+											status:
+												options.selectedConfig === "empty"
+													? "empty"
+													: "complete",
+											request: {
+												cwd: workspace,
+												config:
+													options.selectedConfig === "mismatch"
+														? "other.ts"
+														: "config.ts",
+												paths: ["test.test.ts"],
+												testNamePattern: null,
+											},
+											files:
+												options.selectedConfig === "empty"
+													? []
+													: [
+															{
+																path:
+																	options.selectedConfig === "wrong-file"
+																		? "test.test.ts.other.test.ts"
+																		: "test.test.ts",
+																passed:
+																	options.selectedConfig === "skips" ? 0 : 1,
+																failed: 0,
+																skipped:
+																	options.selectedConfig === "skips" ? 1 : 0,
+																todo: 0,
+															},
+														],
+											reportBytes: 512,
+											reportSha256: "a".repeat(64),
+										},
+							)},
+						} }),
+					} }])) },
 					{ path: paths[1], resolvedPath: paths[1], sourceInfo: {}, handlers: new Map([["context", [async event => ({ messages: event.messages })]]]), tools: new Map(), commands: new Map(), flags: new Map(), shortcuts: new Map(), messageRenderers: new Map() }
 				] };
 			}`,
@@ -219,6 +283,7 @@ function fixture(
 							const auth = await options.modelRuntime.getAuth(options.model);
 							if (auth?.auth.apiKey !== options.modelRuntime.key) throw Error("request authentication missing");
 							${throwAt("prompt")}
+							${options.selectedConfig && !["not-run", "unavailable"].includes(options.selectedConfig) ? `await options.customTools.find(tool => tool.name === "run_vitest").execute("selected-config", { cwd: ${JSON.stringify(workspace)}, config: "config.ts", paths: ["test.test.ts"], timeoutMs: 1000 });` : ""}
 							${options.readPath === undefined ? "" : `await options.customTools.find(tool => tool.name === ${JSON.stringify(options.readTool ?? "read")}).execute("fixture-call", { path: ${JSON.stringify(options.readPath)} });`}
 							for (const message of ${JSON.stringify(options.assistantMessages ?? [{ stopReason: "stop", text: report }])}) {
 								listener({ type: "message_start", message: { role: "assistant" } });
@@ -273,6 +338,18 @@ function fixture(
 		},
 		systemPrompt: "fixed system prompt",
 		task: "fixed task",
+		...(options.selectedConfig
+			? {
+					requiredVitestCalls: [
+						{
+							cwd: workspace,
+							config: "config.ts",
+							paths: ["test.test.ts"],
+							timeoutMs: 1000,
+						},
+					],
+				}
+			: {}),
 	};
 	return { root, log, request };
 }
@@ -338,6 +415,7 @@ function supervisedFixture(
 		files: ["fixed.ts"],
 		cwd: f.request.cwd,
 		config,
+		requiredVitestCalls: f.request.requiredVitestCalls,
 	};
 	const spawnProcess = vi.fn(spawn);
 	const launcher = createSdkReviewerLauncher(
@@ -644,6 +722,31 @@ describe("SDK worker failure diagnostics", () => {
 });
 
 describe("fixed SDK worker with owned fabricated modules", () => {
+	for (const selectedConfig of [
+		"pass",
+		"skips",
+		"mismatch",
+		"empty",
+		"wrong-file",
+		"missing-evidence",
+		"not-run",
+		"unavailable",
+	] as const) {
+		const passes = selectedConfig === "pass" || selectedConfig === "skips";
+		it(`enforces selected-config evidence through worker IPC: ${selectedConfig}`, async () => {
+			const f = fixture({ selectedConfig });
+			const result = await launch(f.request);
+			expect(result.code === 0).toBe(passes);
+			if (!passes) expect(result.stdout).not.toContain("## Review Report");
+		});
+		it(`enforces selected-config evidence through the supervised launcher: ${selectedConfig}`, async () => {
+			const f = supervisedFixture(false, { selectedConfig });
+			const result = await f.run();
+			expect(result.report !== null).toBe(passes);
+			if (!passes) expect(result.rawOutput).not.toContain("## Review Report");
+		});
+	}
+
 	for (const stopReason of [
 		"error",
 		"aborted",

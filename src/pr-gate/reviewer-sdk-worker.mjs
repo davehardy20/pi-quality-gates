@@ -462,6 +462,7 @@ async function run(request) {
 			systemPrompt: request.systemPrompt,
 			tools,
 			customTools,
+			requiredVitestCalls: request.requiredVitestCalls,
 			contextPolicies: [contextPolicy],
 			guard,
 		},

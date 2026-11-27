@@ -21,6 +21,7 @@ import { parseReviewReport } from "../shared/review-report.js";
 import { type DiffFilterOptions, gatherDiff } from "../shared/review-scope.js";
 import { hasFindingsAboveThreshold } from "../shared/review-severity.js";
 import type { DiffCoverage, ReviewReport } from "../shared/review-types.js";
+import type { RequiredVitestCall } from "./reviewer-closed-session.js";
 import {
   ReviewerFailureOutputError,
   writeReviewerFailureOutput,
@@ -120,6 +121,8 @@ export interface ReviewerAttemptInput {
   testPlan?: string;
   /** Structured parent plan size, never inferred from reviewer prose. */
   requiredTestCommandCount?: number;
+  /** Trusted, structured config calls; never reconstructed from model prose. */
+  requiredVitestCalls?: RequiredVitestCall[];
   /** Base ref for repository-direct review execution. */
   baseRef?: string;
   signal?: AbortSignal;
@@ -419,6 +422,17 @@ export function createReviewerExecution(
         };
       }
       if (deadline.remainingMs() <= 0) return reviewDeadlineExceeded(deadline);
+      if (input.requiredVitestCalls?.length && !deps.bindHostSpawner) {
+        return {
+          report: null,
+          rawOutput: "",
+          stderr:
+            "Required selected-config Vitest validation needs the guarded host spawner (NOT_RUN).",
+          exitCode: 1,
+          timedOut: false,
+          command: "(not spawned)",
+        };
+      }
       if (deps.bindHostSpawner && !ctx) {
         return {
           report: null,

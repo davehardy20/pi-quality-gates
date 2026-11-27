@@ -15,7 +15,7 @@ const refused: ReviewerResult = {
 	timedOut: false,
 	command: "fixed fixture; no process",
 };
-function fixture(task = "fixed task") {
+function fixture(task = "fixed task", guarded = true) {
 	const ctx = { cwd: "/owned-binding-fixture" } as ExtensionContext;
 	const input: ReviewerAttemptInput = {
 		task,
@@ -35,7 +35,7 @@ function fixture(task = "fixed task") {
 		renderSystemPrompt: (value) => value,
 		renderTaskTemplate: () => task,
 		spawnReviewer: legacy,
-		bindHostSpawner,
+		...(guarded ? { bindHostSpawner } : {}),
 	});
 	return { ctx, input, launch, legacy, bindHostSpawner, execution };
 }
@@ -58,6 +58,22 @@ describe("host SDK binding with inert owned execution ports", () => {
 		expect(result.stderr).toContain("caller context");
 		expect(f.bindHostSpawner).not.toHaveBeenCalled();
 		expect(f.launch).not.toHaveBeenCalled();
+		expect(f.legacy).not.toHaveBeenCalled();
+	});
+
+	it("refuses selected-config obligations without a guarded host spawner", async () => {
+		const f = fixture("fixed task", false);
+		f.input.requiredVitestCalls = [
+			{
+				cwd: f.ctx.cwd,
+				config: "config.ts",
+				paths: ["fixed.test.ts"],
+				timeoutMs: 1000,
+			},
+		];
+		const result = await f.execution.runAttempt(f.input, f.ctx);
+		expect(result.report).toBeNull();
+		expect(result.stderr).toContain("selected-config");
 		expect(f.legacy).not.toHaveBeenCalled();
 	});
 

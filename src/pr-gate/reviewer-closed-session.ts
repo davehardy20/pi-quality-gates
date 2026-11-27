@@ -1,4 +1,5 @@
-import { isAbsolute, normalize } from "node:path";
+import { realpathSync, statSync } from "node:fs";
+import { isAbsolute, join, normalize, posix, relative } from "node:path";
 import { types } from "node:util";
 
 /** Fixed read-only reviewer tools, shared with the normal PR configuration. */
@@ -86,6 +87,207 @@ interface ClosedReviewerTool {
 	readonly [key: string]: unknown;
 }
 
+export interface RequiredVitestCall {
+	cwd: string;
+	config: string;
+	paths: string[];
+	timeoutMs: number;
+}
+
+const configRefusal = () =>
+	new Error("Required selected-config Vitest validation is NOT_RUN.");
+const object = (value: unknown): Record<string, unknown> | undefined =>
+	value !== null && typeof value === "object" && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: undefined;
+
+/** Resolve identities without importing configs or running discovery/scripts. */
+function canonicalFile(root: string, value: unknown): string {
+	if (
+		typeof value !== "string" ||
+		!value ||
+		value.length > 512 ||
+		posix.normalize(value) !== value ||
+		isAbsolute(value) ||
+		/^[A-Za-z]:/.test(value) ||
+		/[\\*?[\]{}\p{Cc}]/u.test(value) ||
+		value.split("/").some((part) => part === ".." || part.startsWith("-"))
+	)
+		throw configRefusal();
+	const file = realpathSync(join(root, value));
+	const identity = relative(root, file);
+	if (
+		!identity ||
+		identity === ".." ||
+		identity.startsWith("../") ||
+		isAbsolute(identity) ||
+		!statSync(file).isFile()
+	)
+		throw configRefusal();
+	return identity;
+}
+
+function collectedRequiredFile(
+	value: unknown,
+	call: RequiredVitestCall & { root: string; identity: string },
+): boolean {
+	try {
+		const receipt = object(value);
+		const request = object(receipt?.request);
+		if (
+			receipt?.version !== 1 ||
+			receipt.source !== "vitest-json-reporter" ||
+			receipt.status !== "complete" ||
+			request?.cwd !== call.root ||
+			request.config !== call.config ||
+			JSON.stringify(request.paths) !== JSON.stringify(call.paths) ||
+			request.testNamePattern !== null ||
+			!Number.isSafeInteger(receipt.reportBytes) ||
+			(receipt.reportBytes as number) <= 0 ||
+			(receipt.reportBytes as number) > 4 * 1024 * 1024 ||
+			typeof receipt.reportSha256 !== "string" ||
+			!/^[a-f0-9]{64}$/.test(receipt.reportSha256) ||
+			!Array.isArray(receipt.files) ||
+			!receipt.files.length ||
+			receipt.files.length > 2048 ||
+			canonicalFile(call.root, call.paths[0]) !== call.identity
+		)
+			return false;
+		const identities = new Set<string>();
+		let total = 0;
+		let found = false;
+		for (const value of receipt.files) {
+			const file = object(value);
+			if (!file) return false;
+			const identity = canonicalFile(call.root, file.path);
+			if (identity !== file.path || identities.has(identity)) return false;
+			identities.add(identity);
+			let count = 0;
+			for (const key of ["passed", "failed", "skipped", "todo"]) {
+				const counter = file[key];
+				if (
+					!Number.isSafeInteger(counter) ||
+					(counter as number) < 0 ||
+					(counter as number) > 100_000
+				)
+					return false;
+				count += counter as number;
+			}
+			total += count;
+			if (file.failed !== 0 || total > 100_000) return false;
+			if (identity === call.identity && count > 0) found = true;
+		}
+		return found;
+	} catch {
+		return false;
+	}
+}
+
+/** Only awaited trusted tool results count, never model text or stdout names.
+ * Version-1 collection binds the exact request to canonical same-run files.
+ * Skipped/todo collection is valid but does not prove test-body execution. */
+export function createVitestConfigGuard<T extends Readonly<ClosedReviewerTool>>(
+	tools: readonly T[],
+	required: readonly RequiredVitestCall[],
+) {
+	if (!Array.isArray(required)) throw configRefusal();
+	if (!required.length) return { tools, assertComplete() {} };
+	if (required.length > 2048) throw configRefusal();
+	const runners = tools.filter((tool) => tool.name === "run_vitest");
+	const schema = object(runners[0]?.parameters);
+	const properties = object(schema?.properties);
+	if (runners.length !== 1 || object(properties?.config)?.type !== "string")
+		throw configRefusal();
+	const complete = required.map(() => false);
+	const attempts = required.map(() => 0);
+	const selected = required.map((call: RequiredVitestCall) => {
+		if (
+			!call ||
+			typeof call.cwd !== "string" ||
+			!isAbsolute(call.cwd) ||
+			normalize(call.cwd) !== call.cwd ||
+			typeof call.config !== "string" ||
+			!call.config ||
+			isAbsolute(call.config) ||
+			call.config.includes("\\") ||
+			call.config.split("/").some((part) => part === ".." || !part) ||
+			!Array.isArray(call.paths) ||
+			call.paths.length !== 1 ||
+			typeof call.paths[0] !== "string" ||
+			!call.paths[0] ||
+			!Number.isSafeInteger(call.timeoutMs) ||
+			call.timeoutMs < 1000
+		)
+			throw configRefusal();
+		try {
+			const root = realpathSync(call.cwd);
+			canonicalFile(root, call.config);
+			return {
+				...call,
+				paths: [...call.paths],
+				root,
+				identity: canonicalFile(root, call.paths[0]),
+			};
+		} catch {
+			throw configRefusal();
+		}
+	});
+	return {
+		tools: tools.map((tool) =>
+			tool.name !== "run_vitest"
+				? tool
+				: {
+						...tool,
+						async execute(...args: never[]) {
+							const params = object(args[1]);
+							if (!params || params.env !== undefined) throw configRefusal();
+							const index = selected.findIndex(
+								(call) =>
+									(params.cwd ?? call.cwd) === call.cwd &&
+									params.config === call.config &&
+									params.timeoutMs === call.timeoutMs &&
+									JSON.stringify(params.paths) === JSON.stringify(call.paths) &&
+									Object.keys(params).every((key) =>
+										["cwd", "config", "paths", "timeoutMs"].includes(key),
+									),
+							);
+							const attempt = index >= 0 ? ++attempts[index] : 0;
+							if (index >= 0) complete[index] = false;
+							const result = await tool.execute(...args);
+							if (index >= 0 && attempts[index] === attempt) {
+								const detail = object(object(result)?.details);
+								const call = selected[index];
+								complete[index] = Boolean(
+									detail &&
+										detail.toolName === "run_vitest" &&
+										detail.cwd === call.cwd &&
+										collectedRequiredFile(detail.vitestCollection, call) &&
+										detail.exitCode === 0 &&
+										detail.success === true &&
+										detail.timedOut === false &&
+										detail.aborted === false &&
+										detail.spawnError === false &&
+										object(detail.validation)?.passed === true &&
+										detail.requestedTimeoutMs === call.timeoutMs &&
+										typeof detail.effectiveTimeoutMs === "number" &&
+										Number.isSafeInteger(detail.effectiveTimeoutMs) &&
+										detail.effectiveTimeoutMs >= 1000 &&
+										detail.effectiveTimeoutMs <= call.timeoutMs &&
+										typeof detail.elapsedMs === "number" &&
+										Number.isFinite(detail.elapsedMs) &&
+										detail.elapsedMs >= 0,
+								);
+							}
+							return result;
+						},
+					},
+		),
+		assertComplete() {
+			if (complete.some((passed) => !passed)) throw configRefusal();
+		},
+	};
+}
+
 export interface ClosedReviewerSessionOptions {
 	cwd: string;
 	agentDir: string;
@@ -131,6 +333,7 @@ export interface ClosedReviewerSessionInput {
 	tools: readonly string[];
 	/** Trusted tool definitions supplied by the supervisor, not repository data. */
 	customTools: readonly Readonly<ClosedReviewerTool>[];
+	requiredVitestCalls?: readonly RequiredVitestCall[];
 	/** Fixed redaction policy only; no lifecycle or registered tools/commands. */
 	contextPolicies?: readonly ClosedReviewerContextPolicy[];
 	signal?: AbortSignal;
@@ -223,6 +426,10 @@ export async function createClosedReviewerSession(
 				Object.defineProperties({}, descriptors),
 			) as Readonly<ClosedReviewerTool>;
 		});
+		const configValidation = createVitestConfigGuard(
+			customTools,
+			input.requiredVitestCalls ?? [],
+		);
 		const customNames = customTools.map((tool) => tool.name);
 		if (
 			new Set(customNames).size !== customNames.length ||
@@ -324,7 +531,7 @@ export async function createClosedReviewerSession(
 			resourceLoader,
 			noTools: "all",
 			tools,
-			customTools,
+			customTools: [...configValidation.tools],
 			// Match the SDK's documented default, not a startup-canary shortcut.
 			thinkingLevel: "medium",
 		});
@@ -372,6 +579,7 @@ export async function createClosedReviewerSession(
 						throw refused();
 					await boundSession.prompt(task);
 					verifyTools();
+					configValidation.assertComplete();
 				} catch (error) {
 					failed = true;
 					throw refused(error);
