@@ -343,6 +343,7 @@ export function createSdkReviewerLauncher(
 					},
 					task,
 					systemPrompt,
+					requiredVitestCalls: attempt.requiredVitestCalls,
 				};
 				if (Buffer.byteLength(JSON.stringify(packet)) > 2_097_152) fail();
 				const environment: Record<string, string> = {

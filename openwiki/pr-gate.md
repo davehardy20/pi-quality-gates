@@ -280,7 +280,86 @@ Each required call must complete with PASS during the review. Pytest success and
 earlier post-turn lint do not replace Ruff evidence. Unavailable or incomplete
 lint remains NOT_RUN; executed lint failures remain FAIL. The existing report gate
 refuses PASS for missing or non-PASS Test execution. This remains a planning and
-review-report contract, not independently collected per-call execution telemetry.
+review-report contract for ordinary calls, not independently collected per-call
+execution telemetry. Selected-config Vitest calls additionally use the trusted
+host completion guard described below.
+
+### Explicit Vitest config ownership
+
+`vitest-routing.ts` reads the optional repository-root `.pi/vitest-routing.json`:
+
+```json
+{
+  "version": 1,
+  "routes": [
+    { "files": ["test/active.test.ts"], "config": null },
+    { "files": ["test/legacy-a.test.ts", "test/legacy-b.test.ts"], "config": "vitest.legacy.config.ts" },
+    { "files": ["test/guarded.live.test.ts"], "config": "vitest.live.config.ts" }
+  ]
+}
+```
+
+This is untrusted ownership metadata, not permission to relax required checks,
+run scripts or activate guests. Unknown keys (including `env`), malformed JSON,
+duplicate JSON keys, unsupported versions, missing files and unsafe paths block
+review. Bounds: 64 KiB JSON, 128 routes, 2,048 total exact test files and 512
+characters per path. No globs, absolute paths, traversal, backslashes, controls,
+option-like components or external symlink targets. Test aliases (including
+hardlinks) cannot acquire multiple owners. The descriptor read is bounded and
+checked for concurrent changes. Config contents are never read or evaluated by
+planning; ownership is declared explicitly, not inferred from names or scripts.
+
+With a declaration, every changed Vitest entry needs exactly one owner, including
+an explicit `null` for default-config entries. All declarations must name existing
+test entries and config files; maintain them when deleting or renaming files.
+Invalid metadata blocks even when only source/config files changed. Required
+entries remain in the plan as NOT_RUN; the dispatcher refuses the plan before
+starting a reviewer, independently of any model claim. Without a declaration,
+existing default-only projects retain their calls. An explicit `--config`/`-c`
+script flag is only a signal to require ownership, never proof of membership.
+This does not statically discover every alternative CLI spelling or custom test
+entry; the reviewer must still inspect custom discovery and source/helper changes.
+
+Configs must be contained both lexically and physically in the selected owning
+runner directory. Declaration paths are repository-relative; structured required
+tool JSON carries `config` relative to the selected `cwd`, separately from
+`paths`. Per-file ordering, Node loaders, independent typechecks/lint and trusted
+repository-relative timeout keys are unchanged. No environment settings are
+copied from package scripts or metadata.
+
+The host transports selected-config calls separately from the prompt into the
+closed reviewer session. It verifies the loaded runner's string `config` schema
+before prompting, wraps only `run_vitest`, and requires private completion records
+for all selected-config calls before accepting the terminal answer. The awaited
+trusted result must contain `details.vitestCollection` version 1, source
+`vitest-json-reporter`, status `complete`, with the exact canonical cwd, selected
+config, whole-file paths and null test-name filter. Every collected identity must
+be a canonical contained file; duplicates, malformed counters, failures and totals
+over 100,000 assertions are rejected. Collection is bounded to 2,048 files and
+requires a SHA-256/size receipt for a report of at most 4 MiB. The exact required
+file must have at least one passed, skipped or todo assertion; a different file
+matching a substring and `passWithNoTests` empty success do not qualify.
+
+Successful exit, completed validation, requested timeout and timing fields remain
+required. Private reporter arguments are not parsed from display commands.
+Text-only PASS, default-config fallback, extra filters, timeouts and missing calls
+cannot satisfy the guard. A failed rerun revokes completion; stale concurrent
+success cannot replace a newer attempt. Unsupported receipt versions fail closed.
+No environment opt-in is permitted. Unguarded legacy host spawners and the
+orchestrator bridge refuse selected-config obligations. Ordinary calls retain
+the existing report contract.
+
+The orchestrator bridge has no equivalent trusted receipt interface and therefore
+returns NOT_RUN for selected-config plans without dispatching a reviewer; use the
+host bridge. This is not a source-only claim that external verifier capabilities
+have changed. SafeTools removes inherited `PI_*` activation flags before spawning
+Vitest. Selected config collection can legitimately produce only skips: report
+those skips plainly, never as actual guest/container/model readiness or acceptance.
+
+Runtime proof used generated, subsequently deleted harmless files: explicit legacy
+config collected two passing cases; guarded config collected one skipped case
+(exit 0, no sentinel body); the same file under default config collected zero
+cases (exit 1). No live workload was activated.
 
 ### Exhaustive Python partitions (opt-in)
 
@@ -553,6 +632,7 @@ return even when the HEAD already has a token.
 | `src/pr-gate/reviewer-skip.ts` | `.pi/reviewer.skip` parser |
 | `src/pr-gate/test-execution.ts` | Ecosystem detection and test command recommendation |
 | `src/pr-gate/workspace-validation.ts` | Bounded static workspace and TypeScript project discovery |
+| `src/pr-gate/vitest-routing.ts` | Bounded explicit test/config ownership; no config evaluation |
 | `src/pr-gate/review-coordinator.ts` | Shared review-start coordinator (`/pr-review` + `pr_review`) |
 | `src/pr-gate/pr-review-tool.ts` | Agent-callable `pr_review` custom tool definition |
 | `src/pr-gate/prompts/system.md` | Reviewer system prompt |

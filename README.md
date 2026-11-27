@@ -144,6 +144,41 @@ not permission to skip validation. Lint paths and trusted timeout keys remain
 repository-relative. No package scripts or executable configuration are run
 for discovery. See [discovery limits](openwiki/pr-gate.md#test-execution-plan).
 
+#### Explicit Vitest configs
+
+For tests excluded by the default config, declare exact ownership in
+`.pi/vitest-routing.json`. Planning reads JSON only; it never evaluates configs
+or package scripts. Paths below are repository-relative:
+
+```json
+{
+  "version": 1,
+  "routes": [
+    { "files": ["test/active.test.ts"], "config": null },
+    { "files": ["test/legacy-a.test.ts", "test/legacy-b.test.ts"], "config": "vitest.legacy.config.ts" },
+    { "files": ["test/guarded.live.test.ts"], "config": "vitest.live.config.ts" }
+  ]
+}
+```
+
+Once declared, every changed Vitest entry needs one owner; `null` explicitly
+selects the default. Missing, duplicate, unknown or unsafe ownership blocks
+review as NOT_RUN, retaining every required entry. Existing default-only projects
+need no declaration. Explicit `--config`/`-c` script flags without a declaration
+block changed Vitest tests; scripts identify no file membership.
+The selected config must stay inside its owning runner's directory, and becomes
+a separate `config` tool argument relative to that directory.
+
+The host reviewer requires a config-capable trusted runner and version-1
+`vitestCollection` evidence for every selected-config call: matching request,
+canonical exact-file collection, bounded counts and successful completion.
+Command success alone, empty collection, substring matches and model prose cannot
+complete these calls. The orchestrator bridge currently blocks them because it
+lacks that trusted evidence interface; use the host bridge. No live environment is
+emitted. SafeTools strips inherited `PI_*` activation variables from Vitest
+children. A collected skipped-only file is **not** live/guest acceptance.
+See [ownership limits](openwiki/pr-gate.md#explicit-vitest-config-ownership).
+
 #### Trusted validation budgets
 
 Only user-global `~/.pi/agent/settings.json` is read for validation policy;

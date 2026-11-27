@@ -682,6 +682,21 @@ export function createPrReviewDispatch(
 			policy,
 			unfilteredChangedFiles,
 		);
+		const blockedCall = plan.runnerCommands.find((call) => call.blockedReason);
+		const planningBlocker = plan.blockedReason ?? blockedCall?.blockedReason;
+		if (planningBlocker) throw new Error(planningBlocker);
+		const requiredVitestCalls = plan.runnerCommands.flatMap((call) =>
+			call.tool === "run_vitest" && call.config
+				? [
+						{
+							cwd: call.cwd ?? cwd,
+							config: call.config,
+							paths: call.args,
+							timeoutMs: call.timeoutMs ?? policy.defaultTimeoutMs,
+						},
+					]
+				: [],
+		);
 		const timeoutMs = reviewerTimeoutForPlan(
 			plan.runnerCommands,
 			policy,
@@ -757,6 +772,7 @@ export function createPrReviewDispatch(
 				baseRef,
 				testPlan,
 				requiredTestCommandCount: plan.runnerCommands.length,
+				requiredVitestCalls,
 				headSha: reviewedHeadSha,
 				signal: input.signal,
 				deadline,

@@ -448,6 +448,12 @@ export function createOrchestratorReviewerExecution(
 		reviewerExecution: {
 			inspectRepositoryDirectly: true,
 			async runAttempt(input): Promise<ReviewerResult> {
+				// The external verifier has no trusted selected-config receipt port.
+				// Do not silently rely on prose or discard the parent's obligations.
+				if (input.requiredVitestCalls?.length)
+					return unavailableResult(
+						"Required selected-config Vitest validation is NOT_RUN: this bridge cannot verify config capability/completion. Use the host bridge.",
+					);
 				const deadline =
 					input.deadline ?? createReviewDeadline(input.config.timeoutMs);
 				if (deadline.remainingMs() <= 0)

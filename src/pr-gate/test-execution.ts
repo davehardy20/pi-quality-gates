@@ -5,6 +5,7 @@ import {
 	type ReviewValidationPolicy,
 } from "../shared/review-validation-policy.js";
 import { scopeBiomeValidation } from "./biome-validation-scope.js";
+import { routeVitestTests } from "./vitest-routing.js";
 import { discoverWorkspaceValidationProjects } from "./workspace-validation.js";
 
 /**
@@ -35,6 +36,10 @@ export interface RecommendedTestCommand {
 	cwd?: string;
 	/** TypeScript configuration relative to the repository root */
 	project?: string;
+	/** Explicit Vitest config relative to the selected runner cwd. */
+	config?: string;
+	/** Retained required entry that cannot safely be executed. */
+	blockedReason?: string;
 	/** Explicit initial budget; never rely on the safe runner's 60s default. */
 	timeoutMs?: number;
 	/**
@@ -49,6 +54,8 @@ export interface RecommendedTestCommand {
 
 export interface TestExecutionPlan {
 	ecosystem: ProjectEcosystem;
+	/** Invalid ownership metadata blocks even when no changed test is executable. */
+	blockedReason?: string;
 	/** Commands the reviewer should execute, narrowest first. */
 	recommendedCommands: string[];
 	/** Structured command mapping for unit/policy tests and future dispatch. */
@@ -278,9 +285,12 @@ function makePlan(
 }
 
 function formatRunnerCommand(cmd: RecommendedTestCommand): string {
+	if (cmd.blockedReason)
+		return `NOT_RUN ${cmd.tool} ${JSON.stringify(cmd.args)}: ${cmd.blockedReason}`;
 	const params = {
 		...(cmd.cwd ? { cwd: cmd.cwd } : {}),
 		...(cmd.project ? { project: cmd.project } : {}),
+		...(cmd.config ? { config: cmd.config } : {}),
 		...(cmd.args.length > 0 ? { paths: cmd.args } : {}),
 		...(cmd.import ? { import: cmd.import } : {}),
 		...(cmd.keyword ? { keyword: cmd.keyword } : {}),
@@ -427,6 +437,12 @@ function buildTestCommands(
 				cwd,
 				unfilteredChangedFiles.map((file) => path.posix.normalize(file)),
 			);
+			const routing = routeVitestTests(
+				workspace.root,
+				changedTests
+					.filter((test) => test.framework === "vitest")
+					.map((test) => ({ file: test.file, cwd: test.packageCwd })),
+			);
 			const runnerCommands: RecommendedTestCommand[] = [];
 			for (const test of changedTests) {
 				const testRunner: SafeRunnerTool =
@@ -448,7 +464,10 @@ function buildTestCommands(
 							.split(path.sep)
 							.join("/")
 					: test.file;
-				const cmdArgs = loader ? ["--import", loader, file] : [file];
+				const route = routing.routes.get(test.file);
+				const cmdArgs = loader
+					? ["--import", loader, file]
+					: [...(route?.config ? ["--config", route.config] : []), file];
 				runnerCommands.push({
 					tool: testRunner,
 					args: [file],
@@ -459,6 +478,7 @@ function buildTestCommands(
 					scope: "targeted",
 					...(test.runnerDir ? { cwd: test.packageCwd } : {}),
 					...(loader ? { import: loader } : {}),
+					...route,
 				});
 			}
 			if (
@@ -509,7 +529,7 @@ function buildTestCommands(
 						? `node --test --import ${loader} -- preserves the project runtime on each test call`
 						: "node --test -- discovers *.test.* / node:test files"
 					: "run_vitest -- test discovery handled by Vitest project config";
-			return makePlan(
+			const plan = makePlan(
 				"typescript",
 				runnerCommands,
 				`${discovery}. Filename selection is conservative; inspect project ` +
@@ -518,6 +538,8 @@ function buildTestCommands(
 					"configured tests; do not execute config or package scripts directly." +
 					(biomeScope.note ? ` ${biomeScope.note}` : ""),
 			);
+			if (routing.blockedReason) plan.blockedReason = routing.blockedReason;
+			return plan;
 		}
 		case "python": {
 			const runnerCommands: RecommendedTestCommand[] = [];
@@ -570,7 +592,12 @@ export function formatTestExecutionPlan(plan: TestExecutionPlan): string {
 		`**Result contract:** ${plan.resultContract}`,
 	];
 
-	if (plan.recommendedCommands.length === 0) {
+	if (plan.blockedReason) lines.push("", `**NOT_RUN:** ${plan.blockedReason}`);
+	if (plan.recommendedCommands.length === 0 && plan.blockedReason) {
+		lines.push(
+			"Validation planning is blocked; no completion claim is available.",
+		);
+	} else if (plan.recommendedCommands.length === 0) {
 		lines.push(
 			"",
 			"No validation calls are proposed. Inspect the changed files and relevant test configuration. If no executable validation applies (for example, a documentation-only bootstrap), report Test execution as NOT_APPLICABLE and explain why; this does not claim that tests ran. If relevant validation is unavailable or incomplete, report NOT_RUN instead. Required checks, failures and timeouts can never be NOT_APPLICABLE.",
